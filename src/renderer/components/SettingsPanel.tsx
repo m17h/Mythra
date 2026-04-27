@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { AppSettings, ModelInfo, ProviderKind, SessionMode } from '@shared/types';
+import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SessionMode } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getPromptPreset } from '@shared/prompt-presets';
 import { PromptPresetMenu, type PresetPatchOptions } from './PromptPresetMenu';
@@ -319,24 +319,29 @@ export function SettingsPanel({
               <span>Model</span>
               {modelOptions.length > 0 ? (
                 <ModelSearch
-                  favoriteIds={settings.ui.favoriteModels[settings.selectedProvider] ?? []}
+                  favoriteIds={settings.ui.favoriteModels?.[settings.selectedProvider] ?? []}
                   models={modelOptions}
                   onChange={(id) => updateProvider({ model: id })}
                   onToggleFavorite={(id) => {
                     const k = settings.selectedProvider;
-                    const nextSet = new Set(settings.ui.favoriteModels[k] ?? []);
+                    const baseFav =
+                      settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                    const nextSet = new Set(baseFav[k] ?? []);
                     if (nextSet.has(id)) nextSet.delete(id);
                     else nextSet.add(id);
-                    onChange({
+                    const next: AppSettings = {
                       ...settings,
                       ui: {
                         ...settings.ui,
                         favoriteModels: {
-                          ...settings.ui.favoriteModels,
+                          ...baseFav,
                           [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
                         }
                       }
-                    });
+                    };
+                    onChange(next);
+                    // Same as web search / custom presets: persist immediately so favorites survive restart (dev or prod).
+                    void onPresetPersist(next);
                   }}
                   value={provider.model}
                 />

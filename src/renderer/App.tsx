@@ -459,7 +459,7 @@ export function App() {
       await persistSettingsToDisk(next);
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
-      setSettingsStatus(`Custom presets could not be saved: ${m}`);
+      setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
 
