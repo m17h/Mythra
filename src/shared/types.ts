@@ -2,6 +2,12 @@ import { getPromptPreset } from './prompt-presets';
 
 export type ProviderKind = 'lmstudio' | 'openrouter';
 
+/** Per saved chat: route API calls through this provider + model instead of app Settings. */
+export interface ChatModelOverride {
+  provider: ProviderKind;
+  model: string;
+}
+
 export interface CustomPromptPreset {
   id: string;
   name: string;
@@ -162,6 +168,13 @@ export interface SavedChat {
   timeline: ChatTimelineEntry[];
   createdAt: number;
   updatedAt: number;
+  /** Shown at the top of the chat list when true. */
+  pinned?: boolean;
+  /**
+   * When set, `streamChat` uses this provider + model for this thread (API keys/base URLs still come from Settings).
+   * Omitted or `null` = use the app’s selected provider and model from Settings.
+   */
+  modelOverride?: ChatModelOverride | null;
 }
 
 export interface SavedChatMeta {
@@ -170,6 +183,8 @@ export interface SavedChatMeta {
   titleOverride?: string | null;
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean;
+  modelOverride?: ChatModelOverride | null;
 }
 
 export const defaultSettings: AppSettings = {

@@ -53,14 +53,21 @@ export class ChatStore {
           title: chat.title,
           titleOverride: chat.titleOverride ?? null,
           createdAt: chat.createdAt,
-          updatedAt: chat.updatedAt
+          updatedAt: chat.updatedAt,
+          pinned: chat.pinned ?? false,
+          modelOverride: chat.modelOverride ?? null
         });
       } catch {
         // skip corrupted files
       }
     }
 
-    return metas.sort((a, b) => b.updatedAt - a.updatedAt);
+    return metas.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return b.updatedAt - a.updatedAt;
+    });
   }
 
   async loadChat(id: string): Promise<SavedChat | null> {

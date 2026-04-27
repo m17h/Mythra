@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { ChatActivity, ChatAttachment, ChatTimelineEntry, SessionMode } from '@shared/types';
 import { ChatMarkdown } from './ChatMarkdown';
 
@@ -92,7 +92,7 @@ function buildRenderChunks(timeline: ChatTimelineEntry[]): RenderChunk[] {
 const activityDetailsStartOpen = (kind: ChatActivity['kind']) =>
   kind === 'error' || kind === 'stopped' || kind === 'warning';
 
-function CollapsibleActivityBlock({ activity }: { activity: ChatActivity }) {
+function CollapsibleActivityBlock({ activity, onDetailsToggle }: { activity: ChatActivity; onDetailsToggle?: () => void }) {
   const [open, setOpen] = useState(() => activityDetailsStartOpen(activity.kind));
   const label = activityLabelMap[activity.kind];
   return (
@@ -104,7 +104,10 @@ function CollapsibleActivityBlock({ activity }: { activity: ChatActivity }) {
     >
       <details
         className={`chat-activity chat-activity--collapsible chat-activity--${activity.kind}`}
-        onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+        onToggle={(e) => {
+          setOpen((e.currentTarget as HTMLDetailsElement).open);
+          onDetailsToggle?.();
+        }}
         open={open}
       >
         <summary className="chat-activity__summary">{label}</summary>
@@ -116,7 +119,7 @@ function CollapsibleActivityBlock({ activity }: { activity: ChatActivity }) {
   );
 }
 
-function ToolActivityGroup({ items }: { items: ActivityTimelineEntry[] }) {
+function ToolActivityGroup({ items, onDetailsToggle }: { items: ActivityTimelineEntry[]; onDetailsToggle?: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <motion.div
@@ -127,7 +130,10 @@ function ToolActivityGroup({ items }: { items: ActivityTimelineEntry[] }) {
     >
       <details
         className="chat-activity chat-activity--collapsible chat-activity--grouped-tools"
-        onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+        onToggle={(e) => {
+          setOpen((e.currentTarget as HTMLDetailsElement).open);
+          onDetailsToggle?.();
+        }}
         open={open}
       >
         <summary className="chat-activity__summary">
@@ -146,6 +152,38 @@ function ToolActivityGroup({ items }: { items: ActivityTimelineEntry[] }) {
         </div>
       </details>
     </motion.div>
+  );
+}
+
+function ThinkingBlock({ reasoning }: { reasoning: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`chat-thinking ${open ? 'is-open' : ''}`}>
+      <button
+        className="chat-thinking__summary"
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
+        type="button"
+      >
+        <span className="chat-thinking__chevron" aria-hidden>&#x25B6;</span>
+        Thinking
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="thinking-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <pre className="chat-thinking__body">{reasoning}</pre>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -170,13 +208,88 @@ export function ChatPanel({
   onStop
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** User is within this many px of the bottom, or we just forced scroll (e.g. new content). */
+  const userNearBottomRef = useRef(true);
 
-  useEffect(() => {
+  const clampAndMaybeStickToBottom = useCallback(() => {
     const node = scrollRef.current;
     if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [timeline]);
+    const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (node.scrollTop > max) {
+      node.scrollTop = max;
+    }
+    if (userNearBottomRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, []);
+
+  /** Collapsible <details> toggles (Thinking, tool blocks) do not change React state; the scroll range can go stale. */
+  const afterCollapsibleLayout = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        clampAndMaybeStickToBottom();
+      });
+    });
+  }, [clampAndMaybeStickToBottom]);
+
+  const handleScroll = useCallback(() => {
+    const n = scrollRef.current;
+    if (!n) return;
+    const nearBottom = n.scrollHeight - n.clientHeight - n.scrollTop < 120;
+    userNearBottomRef.current = nearBottom;
+  }, []);
+
+  useLayoutEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const n = scrollRef.current;
+        if (!n) return;
+        n.scrollTop = n.scrollHeight;
+        userNearBottomRef.current = true;
+      });
+    });
+  }, [timeline, isStreaming]);
+
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+    /** Batched scroll fix: avoid pinning “to bottom” on every sub-frame of a height animation (e.g. Thinking collapse) — that fight causes the bubble to shudder. */
+    let raf = 0;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const scheduleClamp = () => {
+      if (isStreaming) {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          clampAndMaybeStickToBottom();
+        });
+        return;
+      }
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(
+        () => {
+          debounce = undefined;
+          requestAnimationFrame(() => {
+            clampAndMaybeStickToBottom();
+          });
+        },
+        100
+      );
+    };
+    const ro = new ResizeObserver(() => {
+      scheduleClamp();
+    });
+    ro.observe(inner);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      if (debounce) clearTimeout(debounce);
+    };
+  }, [clampAndMaybeStickToBottom, isStreaming, timeline.length]);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -240,7 +353,8 @@ export function ChatPanel({
         </div>
       </div>
 
-      <div className="chat-scroll" ref={scrollRef}>
+      <div className="chat-scroll" onScroll={handleScroll} ref={scrollRef}>
+        <div className="chat-scroll__inner" ref={innerRef}>
         {timeline.length === 0 ? (
           <div className="chat-empty">
             <div className="chat-empty__icon">
@@ -264,10 +378,16 @@ export function ChatPanel({
 
         {renderChunks.map((chunk) => {
           if (chunk.type === 'activity-group') {
-            return <ToolActivityGroup key={chunk.id} items={chunk.items} />;
+            return <ToolActivityGroup key={chunk.id} items={chunk.items} onDetailsToggle={afterCollapsibleLayout} />;
           }
           if (chunk.type === 'activity-solo') {
-            return <CollapsibleActivityBlock key={chunk.entry.id} activity={chunk.entry.activity} />;
+            return (
+              <CollapsibleActivityBlock
+                key={chunk.entry.id}
+                activity={chunk.entry.activity}
+                onDetailsToggle={afterCollapsibleLayout}
+              />
+            );
           }
 
           const { entry } = chunk;
@@ -292,10 +412,7 @@ export function ChatPanel({
             >
               <header>{message.role === 'user' ? 'You' : 'Assistant'}</header>
               {message.role === 'assistant' && message.reasoning?.trim() ? (
-                <details className="chat-thinking">
-                  <summary>Thinking</summary>
-                  <pre className="chat-thinking__body">{message.reasoning.trim()}</pre>
-                </details>
+                <ThinkingBlock reasoning={message.reasoning.trim()} />
               ) : null}
               {message.attachments?.length ? (
                 <div className="chat-attachments">
@@ -315,6 +432,7 @@ export function ChatPanel({
             </motion.article>
           );
         })}
+        </div>
       </div>
 
       <div className="chat-compose">

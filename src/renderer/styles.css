@@ -387,6 +387,158 @@ html[data-platform='darwin'] .app-shell {
   line-height: 1.5;
 }
 
+/* Per-thread model override (sidebar, collapsible) */
+.chat-thread-options {
+  margin: 0 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme='ice-station'] .chat-thread-options {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.chat-thread-options__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.chat-thread-options__header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme='ice-station'] .chat-thread-options__header:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.chat-thread-options__header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-thread-options__chevron {
+  color: var(--text-2);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chat-thread-options.is-expanded .chat-thread-options__chevron {
+  transform: rotate(90deg);
+}
+
+.chat-thread-options__title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: 0.02em;
+}
+
+.chat-thread-options__badge {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb, 120, 90, 255), 0.12);
+  padding: 2px 7px;
+  border-radius: 999px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thread-options__body {
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Same control as .chat-panel__web-toggle; layout only: label left, track right */
+.chat-thread-options__web-toggle {
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Provider + model fields */
+.chat-thread-options__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-thread-options__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-thread-options__field-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-thread-options__select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-0);
+  font-size: 0.76rem;
+}
+
+:root[data-theme='ice-station'] .chat-thread-options__select {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.chat-thread-options .model-search__input {
+  font-size: 0.74rem;
+  padding: 6px 8px;
+}
+
+.model-search__dropdown--portal {
+  z-index: 10000;
+  max-height: 240px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateY(-6px) scaleY(0.96);
+  transform-origin: top center;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.model-search__dropdown--portal.is-open {
+  opacity: 1;
+  transform: translateY(0) scaleY(1);
+  pointer-events: auto;
+}
+
+.model-search__dropdown--portal.is-exiting {
+  opacity: 0;
+  transform: translateY(-6px) scaleY(0.96);
+  pointer-events: none;
+}
+
 /* Chat list */
 .chat-list {
   display: flex;
@@ -414,6 +566,10 @@ html[data-platform='darwin'] .app-shell {
 
 .chat-list__item.is-active {
   background: var(--accent-subtle);
+}
+
+.chat-list__item.is-pinned {
+  border-left: 2px solid var(--accent-light, #a5b4fc);
 }
 
 .chat-list__content {
@@ -471,6 +627,29 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .chat-list__item:hover .chat-list__row-actions { opacity: 1; }
+
+.chat-list__pin {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-list__pin:hover {
+  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-list__pin.is-active {
+  color: var(--accent-light);
+}
 
 .chat-list__rename,
 .chat-list__delete {
@@ -735,13 +914,23 @@ html[data-platform='darwin'] .app-shell {
 
 /* Chat scroll area */
 .chat-scroll {
+  display: flex;
   flex: 1;
   min-height: 0;
-  display: flex;
   flex-direction: column;
-  gap: 8px;
   padding: 16px 18px;
   overflow-y: auto;
+  /* Avoid browser scroll-anchoring fighting <details> open/close (could clip max scroll). */
+  overflow-anchor: none;
+}
+
+.chat-scroll__inner {
+  display: flex;
+  min-width: 0;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
 }
 
 /* Chat empty state */
@@ -1121,15 +1310,20 @@ details.chat-activity--collapsible {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.12);
+  contain: layout;
 }
 
 :root[data-theme='ice-station'] .chat-thinking {
   background: rgba(0, 0, 0, 0.04);
 }
 
-.chat-thinking summary {
+.chat-thinking__summary {
+  display: flex;
+  align-items: center;
+  width: 100%;
   padding: 6px 10px;
-  list-style: none;
+  border: none;
+  background: none;
   color: var(--text-2);
   font-size: 0.74rem;
   font-weight: 600;
@@ -1137,20 +1331,19 @@ details.chat-activity--collapsible {
   text-transform: uppercase;
   cursor: pointer;
   user-select: none;
+  text-align: left;
+  font-family: inherit;
 }
 
-.chat-thinking summary::-webkit-details-marker { display: none; }
-
-.chat-thinking summary::before {
-  content: '\25B6';
+.chat-thinking__chevron {
   display: inline-block;
   margin-right: 6px;
   font-size: 0.56rem;
   opacity: 0.5;
-  transition: transform var(--transition-fast);
+  transition: transform 0.2s ease;
 }
 
-.chat-thinking[open] summary::before { transform: rotate(90deg); }
+.chat-thinking.is-open .chat-thinking__chevron { transform: rotate(90deg); }
 
 .chat-thinking__body {
   margin: 0;

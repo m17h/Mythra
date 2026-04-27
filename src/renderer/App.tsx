@@ -1,24 +1,29 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import openkiwiLogo from '@renderer/assets/openkiwi.png';
+import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { ChatPanel } from './components/ChatPanel';
 import { CommandDeck } from './components/CommandDeck';
+import { ModelSearch } from './components/ModelSearch';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
 import { OpenKiwiMark } from './components/OpenKiwiMark';
 import { SettingsPanel } from './components/SettingsPanel';
-import type {
-  AppSettings,
-  ChatActivity,
-  ChatAttachment,
-  ChatMessage,
-  ChatTimelineEntry,
-  CommandResult,
-  ModelInfo,
-  OpenFile,
-  SavedChat,
-  SavedChatMeta,
-  WorkspaceNode
+import {
+  defaultSettings,
+  type AppSettings,
+  type ChatActivity,
+  type ChatAttachment,
+  type ChatMessage,
+  type ChatModelOverride,
+  type ChatTimelineEntry,
+  type CommandResult,
+  type ModelInfo,
+  type OpenFile,
+  type ProviderKind,
+  type SavedChat,
+  type SavedChatMeta,
+  type WorkspaceNode
 } from '@shared/types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -103,6 +108,10 @@ export function App() {
 
   const [activeChatId, setActiveChatId] = useState<string>();
   const [chatList, setChatList] = useState<SavedChatMeta[]>([]);
+  /** Provider whose catalog to show in “This chat” model override (when enabled). */
+  const [overrideModelProvider, setOverrideModelProvider] = useState<ProviderKind>('lmstudio');
+  const [overrideModels, setOverrideModels] = useState<ModelInfo[]>([]);
+  const [chatModelExpanded, setChatModelExpanded] = useState(false);
 
   const [commandInput, setCommandInput] = useState('git status');
   const [commandLogs, setCommandLogs] = useState('');
@@ -134,14 +143,25 @@ export function App() {
     setChatList(list);
   }, []);
 
+  const activeChatMeta = useMemo(
+    () => (activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined),
+    [activeChatId, chatList]
+  );
+
   const chatSessionSubheading = useMemo(() => {
     if (chatMessages.length === 0) return 'New conversation';
     if (activeChatId) {
       const meta = chatList.find((c) => c.id === activeChatId);
-      if (meta?.title) return meta.title;
+      if (meta?.title) {
+        const base = meta.title;
+        if (meta.modelOverride?.model) {
+          return `${base} · ${formatOverrideLabel(meta.modelOverride, pathLabel)}`;
+        }
+        return base;
+      }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, chatList, chatMessages]);
+  }, [activeChatId, chatList, chatMessages, pathLabel]);
 
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
@@ -169,7 +189,9 @@ export function App() {
         messages: msgs,
         timeline: tl,
         createdAt,
-        updatedAt: now
+        updatedAt: now,
+        pinned: disk?.pinned ?? existing?.pinned ?? false,
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? null
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -211,6 +233,28 @@ export function App() {
     if (!settings) return;
     void refreshModels(settings);
   }, [settings?.selectedProvider, openRouterKeyForEffect]);
+
+  useEffect(() => {
+    if (!settings || !activeChatId) {
+      return;
+    }
+    const p = activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider;
+    setOverrideModelProvider(p);
+  }, [activeChatId, activeChatMeta?.modelOverride?.provider, settings]);
+
+  useEffect(() => {
+    if (!settings || !activeChatId) {
+      setOverrideModels([]);
+      return;
+    }
+    let cancelled = false;
+    void window.electronAPI.listModels(settings, overrideModelProvider).then((list) => {
+      if (!cancelled) setOverrideModels(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings, activeChatId, overrideModelProvider]);
 
   useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
@@ -551,6 +595,28 @@ export function App() {
     setEditingTitleDraft('');
   };
 
+  const saveChatModelOverride = useCallback(
+    async (override: ChatModelOverride | null) => {
+      if (!activeChatId) return;
+      const full = await window.electronAPI.loadChat(activeChatId);
+      if (!full) return;
+      await window.electronAPI.saveChat({ ...full, modelOverride: override, updatedAt: full.updatedAt });
+      await refreshChatList();
+    },
+    [activeChatId, refreshChatList]
+  );
+
+  const togglePinChat = useCallback(
+    async (e: MouseEvent, id: string) => {
+      e.stopPropagation();
+      const full = await window.electronAPI.loadChat(id);
+      if (!full) return;
+      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, updatedAt: Date.now() });
+      await refreshChatList();
+    },
+    [refreshChatList]
+  );
+
   const commitRenameChat = async (id: string, draft: string) => {
     if (skipNextRenameCommitRef.current) {
       skipNextRenameCommitRef.current = false;
@@ -614,13 +680,22 @@ export function App() {
         messages: [...nextHistory, assistantMessage],
         timeline: [],
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        pinned: false,
+        modelOverride: null
       };
       await window.electronAPI.saveChat(chat);
       await refreshChatList();
     }
 
-    await window.electronAPI.streamChat(requestId, sendSettings, nextHistory, {
+    let perChatModelOverride: ChatModelOverride | null = null;
+    if (activeChatId) {
+      const loaded = await window.electronAPI.loadChat(activeChatId);
+      perChatModelOverride = loaded?.modelOverride ?? null;
+    }
+    const streamSettings = applyChatModelOverride(sendSettings, perChatModelOverride);
+
+    await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
       workspaceRoot: workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current
@@ -754,6 +829,143 @@ export function App() {
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                   >
+                    {activeChatId && settings ? (
+                      <div className={`chat-thread-options ${chatModelExpanded ? 'is-expanded' : ''}`}>
+                        <button
+                          className="chat-thread-options__header"
+                          onClick={() => setChatModelExpanded((v) => !v)}
+                          type="button"
+                        >
+                          <span className="chat-thread-options__header-left">
+                            <svg
+                              className="chat-thread-options__chevron"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 12 12"
+                              fill="none"
+                              aria-hidden
+                            >
+                              <path d="M4 2.5L7.5 6 4 9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            <span className="chat-thread-options__title">Model override</span>
+                          </span>
+                          {activeChatMeta?.modelOverride && !chatModelExpanded ? (
+                            <span className="chat-thread-options__badge">
+                              {pathLabel(activeChatMeta.modelOverride.model)}
+                            </span>
+                          ) : null}
+                        </button>
+
+                        <AnimatePresence initial={false}>
+                          {chatModelExpanded && (
+                            <motion.div
+                              key="override-body"
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                              style={{ overflow: 'hidden' }}
+                            >
+                              <div className="chat-thread-options__body">
+                                <label
+                                  className={`chat-panel__web-toggle chat-thread-options__web-toggle ${activeChatMeta?.modelOverride ? 'is-on' : ''}`}
+                                >
+                                  <input
+                                    checked={Boolean(activeChatMeta?.modelOverride)}
+                                    onChange={async (e) => {
+                                      if (!settings) return;
+                                      if (e.target.checked) {
+                                        const list = await window.electronAPI.listModels(settings, overrideModelProvider);
+                                        const model = pickDefaultModel(list, list[0]?.id);
+                                        if (model) {
+                                          await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                        }
+                                      } else {
+                                        await saveChatModelOverride(null);
+                                      }
+                                    }}
+                                    type="checkbox"
+                                  />
+                                  <span>Use a specific model</span>
+                                  <span className="chat-panel__web-toggle-track">
+                                    <span className="chat-panel__web-toggle-knob" />
+                                  </span>
+                                </label>
+
+                                <AnimatePresence initial={false}>
+                                  {activeChatMeta?.modelOverride ? (
+                                    <motion.div
+                                      key="override-fields"
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: 'auto', opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                                      style={{ overflow: 'hidden' }}
+                                    >
+                                      <div className="chat-thread-options__fields">
+                                        <label className="chat-thread-options__field">
+                                          <span className="chat-thread-options__field-label">Provider</span>
+                                          <select
+                                            className="chat-thread-options__select"
+                                            onChange={async (e) => {
+                                              const p = e.target.value as ProviderKind;
+                                              setOverrideModelProvider(p);
+                                              if (!settings) return;
+                                              const list = await window.electronAPI.listModels(settings, p);
+                                              const model = pickDefaultModel(list, undefined);
+                                              if (model) {
+                                                await saveChatModelOverride({ provider: p, model });
+                                              }
+                                            }}
+                                            value={overrideModelProvider}
+                                          >
+                                            <option value="lmstudio">LM Studio</option>
+                                            <option value="openrouter">OpenRouter</option>
+                                          </select>
+                                        </label>
+                                        <div className="chat-thread-options__field">
+                                          <span className="chat-thread-options__field-label">Model</span>
+                                          <ModelSearch
+                                            models={overrideModels}
+                                            value={activeChatMeta.modelOverride.model}
+                                            favoriteIds={settings.ui.favoriteModels?.[overrideModelProvider] ?? []}
+                                            portalDropdown
+                                            onChange={async (model) => {
+                                              if (model) {
+                                                await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                              }
+                                            }}
+                                            onToggleFavorite={(id) => {
+                                              if (!settings) return;
+                                              const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                                              const nextSet = new Set(baseFav[overrideModelProvider] ?? []);
+                                              if (nextSet.has(id)) nextSet.delete(id);
+                                              else nextSet.add(id);
+                                              const next: AppSettings = {
+                                                ...settings,
+                                                ui: {
+                                                  ...settings.ui,
+                                                  favoriteModels: {
+                                                    ...baseFav,
+                                                    [overrideModelProvider]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                                                  }
+                                                }
+                                              };
+                                              setSettings(next);
+                                              void persistSettingsToDisk(next);
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+                                    </motion.div>
+                                  ) : null}
+                                </AnimatePresence>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    ) : null}
                     {chatList.length === 0 ? (
                       <div className="sidebar-empty">
                         <p>No conversations yet. Start a new chat to begin.</p>
@@ -763,7 +975,7 @@ export function App() {
                         {chatList.map((chat) => (
                           <div
                             key={chat.id}
-                            className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''}`}
+                            className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
                             onClick={() => loadChat(chat.id)}
                           >
                             {editingTitleId === chat.id ? (
@@ -796,6 +1008,22 @@ export function App() {
                             )}
                             {editingTitleId === chat.id ? null : (
                               <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  className={`chat-list__pin ${chat.pinned ? 'is-active' : ''}`}
+                                  onClick={(e) => void togglePinChat(e, chat.id)}
+                                  type="button"
+                                  title={chat.pinned ? 'Unpin' : 'Pin to top'}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                    <path
+                                      d="M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z"
+                                      fill={chat.pinned ? 'currentColor' : 'none'}
+                                      stroke="currentColor"
+                                      strokeLinejoin="round"
+                                      strokeWidth="1.1"
+                                    />
+                                  </svg>
+                                </button>
                                 <button
                                   className="chat-list__rename"
                                   onClick={(e) => beginRenameChat(e, chat.id, chat.title)}

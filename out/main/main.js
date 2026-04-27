@@ -54,12 +54,19 @@ class ChatStore {
           title: chat.title,
           titleOverride: chat.titleOverride ?? null,
           createdAt: chat.createdAt,
-          updatedAt: chat.updatedAt
+          updatedAt: chat.updatedAt,
+          pinned: chat.pinned ?? false,
+          modelOverride: chat.modelOverride ?? null
         });
       } catch {
       }
     }
-    return metas.sort((a, b) => b.updatedAt - a.updatedAt);
+    return metas.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return b.updatedAt - a.updatedAt;
+    });
   }
   async loadChat(id) {
     try {
@@ -288,6 +295,21 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
+function mergeStreamingToolDelta(acc, delta) {
+  const i = delta.index;
+  const cur = acc.get(i) ?? { id: "", name: "", args: "" };
+  if (delta.id) cur.id = delta.id;
+  if (delta.function?.name) cur.name = delta.function.name;
+  if (delta.function?.arguments) cur.args += delta.function.arguments;
+  acc.set(i, cur);
+}
+function streamingToolAccToFunctionCalls(acc) {
+  return [...acc.entries()].sort((a, b) => a[0] - b[0]).map(([i, { id, name, args }]) => ({
+    id: id || `call_${i}`,
+    type: "function",
+    function: { name, arguments: args }
+  }));
+}
 const extractModelReasoning = (message) => {
   if (!message || typeof message !== "object") {
     return;
@@ -387,29 +409,60 @@ class ModelService {
       const maxAutoSteps = Math.max(4, settings.agent.maxAutoSteps || 24);
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
-        const completion = await client.chat.completions.create(
+        const stream = await client.chat.completions.create(
           {
             model: provider.model,
             messages: apiMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : void 0,
-            tool_choice: toolDefinitions.length > 0 ? "auto" : void 0
+            tool_choice: toolDefinitions.length > 0 ? "auto" : void 0,
+            stream: true
           },
           {
             signal: controller.signal
           }
         );
-        this.assertNotStopped(requestId);
-        const assistantMessage = completion.choices[0]?.message;
-        if (!assistantMessage) {
-          throw new Error("The model returned no message.");
+        let assembled = "";
+        let assembledReasoning = "";
+        const toolAcc = /* @__PURE__ */ new Map();
+        let lastFinish = null;
+        for await (const chunk of stream) {
+          this.assertNotStopped(requestId);
+          const ch = chunk.choices[0];
+          if (!ch) {
+            continue;
+          }
+          if (ch.finish_reason) {
+            lastFinish = ch.finish_reason;
+          }
+          const { delta } = ch;
+          if (typeof delta.content === "string" && delta.content.length > 0) {
+            assembled += delta.content;
+            window.webContents.send("chat:delta", { requestId, delta: delta.content });
+          }
+          const dAny = delta;
+          if (typeof dAny.reasoning === "string" && dAny.reasoning.length > 0) {
+            const r = dAny.reasoning;
+            assembledReasoning += r;
+            window.webContents.send("chat:delta", { requestId, delta: "", reasoningDelta: r });
+          }
+          if (delta.tool_calls?.length) {
+            for (const tc of delta.tool_calls) {
+              mergeStreamingToolDelta(toolAcc, tc);
+            }
+          }
         }
-        if (assistantMessage.tool_calls?.length) {
+        this.assertNotStopped(requestId);
+        const toolCallsFromStream = streamingToolAccToFunctionCalls(toolAcc);
+        if (lastFinish === "tool_calls" && toolCallsFromStream.length === 0) {
+          throw new Error("The model requested tools but the streamed tool payload was incomplete. Try again.");
+        }
+        if (toolCallsFromStream.length) {
           apiMessages.push({
             role: "assistant",
-            content: assistantMessage.content ?? null,
-            tool_calls: assistantMessage.tool_calls
+            content: assembled || null,
+            tool_calls: toolCallsFromStream
           });
-          for (const toolCall of assistantMessage.tool_calls) {
+          for (const toolCall of toolCallsFromStream) {
             if (toolCall.type !== "function") {
               continue;
             }
@@ -430,12 +483,12 @@ class ModelService {
           }
           continue;
         }
-        const content = contentToString(assistantMessage.content);
+        const content = contentToString(assembled);
         const normalizedContent = normalizeAssistantContent(content);
         if (!normalizedContent) {
           apiMessages.push({
             role: "assistant",
-            content: assistantMessage.content ?? ""
+            content: assembled
           });
           apiMessages.push({
             role: "user",
@@ -448,7 +501,7 @@ class ModelService {
         const done2 = {
           requestId,
           content: normalizedContent,
-          reasoning: extractModelReasoning(assistantMessage)
+          reasoning: assembledReasoning.trim() || void 0
         };
         window.webContents.send("chat:done", done2);
         this.activeRequests.delete(requestId);
