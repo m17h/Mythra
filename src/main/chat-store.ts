@@ -1,14 +1,40 @@
-import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app } from 'electron';
 import type { SavedChat, SavedChatMeta } from '@shared/types';
 
-const CHATS_DIR = 'pixel-forge-chats';
+const CHATS_DIR = 'openkiwi-chats';
+const LEGACY_CHATS_DIR = 'pixel-forge-chats';
 
 export class ChatStore {
-  private readonly dir = join(app.getPath('userData'), CHATS_DIR);
+  private readonly userData = app.getPath('userData');
+  private readonly dir = join(this.userData, CHATS_DIR);
+  private readonly legacyDir = join(this.userData, LEGACY_CHATS_DIR);
+  private legacyMigrated = false;
+
+  private async migrateLegacyChatsIfNeeded() {
+    if (this.legacyMigrated) return;
+    this.legacyMigrated = true;
+    try {
+      const newHas =
+        existsSync(this.dir) && (await readdir(this.dir)).some((f) => f.endsWith('.json'));
+      if (newHas) return;
+      if (!existsSync(this.legacyDir)) return;
+      const files = (await readdir(this.legacyDir)).filter((f) => f.endsWith('.json'));
+      if (files.length === 0) return;
+      await mkdir(this.dir, { recursive: true });
+      for (const f of files) {
+        const dst = join(this.dir, f);
+        if (!existsSync(dst)) await copyFile(join(this.legacyDir, f), dst);
+      }
+    } catch {
+      // non-fatal
+    }
+  }
 
   private async ensureDir() {
+    await this.migrateLegacyChatsIfNeeded();
     await mkdir(this.dir, { recursive: true });
   }
 

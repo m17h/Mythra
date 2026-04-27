@@ -1,9 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { CommandDeck } from './components/CommandDeck';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
+import { OpenKiwiMark } from './components/OpenKiwiMark';
 import { SettingsPanel } from './components/SettingsPanel';
 import type {
   AppSettings,
@@ -77,6 +78,19 @@ export function App() {
   const [activeFilePath, setActiveFilePath] = useState<string>();
   const [models, setModels] = useState<ModelInfo[]>([]);
 
+  /** Latest values each render so send uses up-to-date system prompt, workspace, and active file (no new chat required). */
+  const settingsRef = useRef<AppSettings | null>(null);
+  const workspaceRootRef = useRef<string | undefined>(undefined);
+  const activeFilePathRef = useRef<string | undefined>(undefined);
+  const chatSessionIdRef = useRef<string>('');
+  settingsRef.current = settings;
+  workspaceRootRef.current = workspaceRoot;
+  activeFilePathRef.current = activeFilePath;
+
+  /** New id on “New chat”; matches saved chat id when a thread is loaded — sent to the model as a fresh thread boundary. */
+  const [chatSessionId, setChatSessionId] = useState(() => uid());
+  chatSessionIdRef.current = chatSessionId;
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatTimeline, setChatTimeline] = useState<ChatTimelineEntry[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -116,6 +130,15 @@ export function App() {
     const list = await window.electronAPI.listChats();
     setChatList(list);
   }, []);
+
+  const chatSessionSubheading = useMemo(() => {
+    if (chatMessages.length === 0) return 'New conversation';
+    if (activeChatId) {
+      const meta = chatList.find((c) => c.id === activeChatId);
+      if (meta?.title) return meta.title;
+    }
+    return chatTitle(chatMessages);
+  }, [activeChatId, chatList, chatMessages]);
 
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
@@ -248,10 +271,37 @@ export function App() {
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
     });
-    const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(async ({ root }) => {
-      const latestTree = await window.electronAPI.getWorkspaceTree(root);
-      setWorkspaceTree(latestTree);
-    });
+    const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
+      async ({ root, fileWritten, fileDeleted }) => {
+        const latestTree = await window.electronAPI.getWorkspaceTree(root);
+        setWorkspaceTree(latestTree);
+
+        if (fileDeleted) {
+          setBuffers((c) => {
+            const key = Object.keys(c).find((k) => k === fileDeleted || c[k].path === fileDeleted);
+            if (key == null) return c;
+            const { [key]: _removed, ...rest } = c;
+            setActiveFilePath((a) => (a != null && (a === key || a === fileDeleted) ? undefined : a));
+            return rest;
+          });
+        }
+
+        if (fileWritten) {
+          try {
+            const reloaded = await window.electronAPI.openFile(root, fileWritten);
+            setBuffers((current) => {
+              const key = Object.keys(current).find(
+                (k) => k === fileWritten || k === reloaded.path || current[k].path === reloaded.path
+              );
+              if (key == null) return current;
+              return { ...current, [key]: { path: reloaded.path, content: reloaded.content, dirty: false } };
+            });
+          } catch {
+            // File may be missing or not UTF-8; tree is already up to date
+          }
+        }
+      }
+    );
     return () => {
       offChunk();
       offDone();
@@ -365,11 +415,43 @@ export function App() {
     }
   };
 
+  const persistSettingsToDisk = async (next: AppSettings) => {
+    const saved = await window.electronAPI.saveSettings(next);
+    setSettings(saved);
+  };
+
+  const handleWebSearchChange = useCallback(async (next: boolean) => {
+    const s = settingsRef.current;
+    if (!s) return;
+    const updated: AppSettings = { ...s, ui: { ...s.ui, webSearch: next } };
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Web search setting not saved: ${m}`);
+    }
+  }, []);
+
+  const persistAfterPresetAction = async (next: AppSettings) => {
+    try {
+      await persistSettingsToDisk(next);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Custom presets could not be saved: ${m}`);
+    }
+  };
+
   const saveSettings = async () => {
     if (!settings) return;
-    const saved = await window.electronAPI.saveSettings(settings);
-    setSettings(saved);
-    setSettingsStatus('Profile saved.');
+    try {
+      await persistSettingsToDisk(settings);
+      setSettingsStatus('Profile saved.');
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Profile save failed: ${m}`);
+      throw e;
+    }
   };
 
   const addChatAttachments = async (files: FileList | null) => {
@@ -402,6 +484,9 @@ export function App() {
     setChatStreaming(false);
     setActiveRequestId(undefined);
     setActiveChatId(undefined);
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
   };
 
   const loadChat = async (id: string) => {
@@ -415,6 +500,8 @@ export function App() {
     setChatMessages(chat.messages);
     setChatTimeline(chat.timeline);
     setActiveChatId(chat.id);
+    setChatSessionId(chat.id);
+    chatSessionIdRef.current = chat.id;
     setChatInput('');
     setChatAttachments([]);
     setChatStreaming(false);
@@ -465,7 +552,8 @@ export function App() {
   };
 
   const sendChat = async () => {
-    if (!settings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
+    const sendSettings = settingsRef.current;
+    if (!sendSettings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
     const userMessage: ChatMessage = {
       id: uid(),
       role: 'user',
@@ -479,7 +567,7 @@ export function App() {
       role: 'assistant',
       content: '',
       status: 'streaming',
-      reasoning: settings.ui.sessionMode === 'talk' ? '' : undefined
+      reasoning: sendSettings.ui.sessionMode === 'talk' ? '' : undefined
     };
     const nextHistory = [...chatMessages, userMessage];
     setChatMessages([...nextHistory, assistantMessage]);
@@ -496,6 +584,8 @@ export function App() {
     if (!activeChatId) {
       const newId = uid();
       setActiveChatId(newId);
+      setChatSessionId(newId);
+      chatSessionIdRef.current = newId;
       const chat: SavedChat = {
         id: newId,
         title: chatTitle([...nextHistory, assistantMessage]),
@@ -509,7 +599,11 @@ export function App() {
       await refreshChatList();
     }
 
-    await window.electronAPI.streamChat(requestId, settings, nextHistory, { workspaceRoot, activeFilePath });
+    await window.electronAPI.streamChat(requestId, sendSettings, nextHistory, {
+      workspaceRoot: workspaceRootRef.current,
+      activeFilePath: activeFilePathRef.current,
+      conversationId: chatSessionIdRef.current
+    });
   };
 
   const stopChat = async () => {
@@ -538,10 +632,12 @@ export function App() {
   const providerConnected = models.length > 0 && Boolean(selectedProvider?.model);
   const selectedProviderLabel = settings?.selectedProvider === 'openrouter' ? 'OpenRouter' : 'LM Studio';
   const sessionMode = settings?.ui.sessionMode ?? 'agent';
+  const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
 
   return (
     <div className="app-shell">
       <div className="background-grid" />
+      {isDarwin ? <div aria-hidden className="app-titlebar" /> : null}
       <main className="layout layout--atomic">
         <motion.aside
           animate={{ opacity: 1, x: 0 }}
@@ -551,9 +647,11 @@ export function App() {
         >
           <div className="sidebar-card">
             <div className="sidebar-brand">
-              <div className="sidebar-brand__badge">PF</div>
+              <div className="sidebar-brand__badge">OK</div>
               <div>
-                <div className="sidebar-brand__title">Pixel Forge</div>
+                <div className="sidebar-brand__title">
+                  <OpenKiwiMark />
+                </div>
                 <div className="sidebar-brand__copy">Local AI workspace</div>
               </div>
             </div>
@@ -750,6 +848,7 @@ export function App() {
             attachments={chatAttachments}
             input={chatInput}
             isStreaming={chatStreaming}
+            sessionSubheading={chatSessionSubheading}
             timeline={chatTimeline}
             onAttachImages={addChatAttachments}
             onInputChange={setChatInput}
@@ -757,6 +856,9 @@ export function App() {
             onSend={sendChat}
             onStop={stopChat}
             providerConnected={providerConnected}
+            webSearch={settings?.ui.webSearch ?? false}
+            webSearchDisabled={!settings}
+            onWebSearchChange={handleWebSearchChange}
             sessionMode={sessionMode}
             selectedModel={selectedProvider?.model ?? ''}
             selectedProviderLabel={selectedProviderLabel}
@@ -832,6 +934,7 @@ export function App() {
                   <SettingsPanel
                     modelOptions={models}
                     onChange={setSettings}
+                    onPresetPersist={persistAfterPresetAction}
                     onRefreshModels={refreshModels}
                     onSave={saveSettings}
                     settings={settings}

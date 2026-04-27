@@ -18,9 +18,11 @@ function buttonLabel(provider: ProviderProfile) {
   return 'Custom';
 }
 
+export type PresetPatchOptions = { persist?: boolean };
+
 interface PromptPresetMenuProps {
   provider: ProviderProfile;
-  onPatch: (patch: Partial<ProviderProfile>) => void;
+  onPatch: (patch: Partial<ProviderProfile>, opts?: PresetPatchOptions) => void;
 }
 
 const FLYOUT_W = 292;
@@ -118,12 +120,15 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
       prompt: '',
       updatedAt: Date.now()
     };
-    onPatch({
-      promptPresetId: 'custom',
-      activeCustomPresetId: newPreset.id,
-      systemPrompt: '',
-      customPromptPresets: [...provider.customPromptPresets, newPreset]
-    });
+    onPatch(
+      {
+        promptPresetId: 'custom',
+        activeCustomPresetId: newPreset.id,
+        systemPrompt: '',
+        customPromptPresets: [...provider.customPromptPresets, newPreset]
+      },
+      { persist: true }
+    );
     setMainOpen(false);
     setSubOpen(false);
   };
@@ -149,11 +154,14 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
       prompt: provider.systemPrompt,
       updatedAt: Date.now()
     };
-    onPatch({
-      promptPresetId: 'custom',
-      activeCustomPresetId: newPreset.id,
-      customPromptPresets: [...provider.customPromptPresets, newPreset]
-    });
+    onPatch(
+      {
+        promptPresetId: 'custom',
+        activeCustomPresetId: newPreset.id,
+        customPromptPresets: [...provider.customPromptPresets, newPreset]
+      },
+      { persist: true }
+    );
     setNameForNewOpen(false);
     setMainOpen(false);
     setSubOpen(false);
@@ -166,12 +174,15 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
   const savePresetFromEditor = () => {
     if (provider.activeCustomPresetId) {
       const id = provider.activeCustomPresetId;
-      onPatch({
-        promptPresetId: 'custom',
-        customPromptPresets: provider.customPromptPresets.map((c) =>
-          c.id === id ? { ...c, prompt: provider.systemPrompt, updatedAt: Date.now() } : c
-        )
-      });
+      onPatch(
+        {
+          promptPresetId: 'custom',
+          customPromptPresets: provider.customPromptPresets.map((c) =>
+            c.id === id ? { ...c, prompt: provider.systemPrompt, updatedAt: Date.now() } : c
+          )
+        },
+        { persist: true }
+      );
       return;
     }
     openNameForNewPreset();
@@ -189,7 +200,7 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     if (provider.activeCustomPresetId === id) {
       patch.activeCustomPresetId = null;
     }
-    onPatch(patch);
+    onPatch(patch, { persist: true });
   };
 
   const startRename = (c: CustomPromptPreset) => {
@@ -204,11 +215,14 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
   const commitRename = (id: string) => {
     const t = renameDraft.trim();
     if (t) {
-      onPatch({
-        customPromptPresets: provider.customPromptPresets.map((c) =>
-          c.id === id ? { ...c, name: t, updatedAt: Date.now() } : c
-        )
-      });
+      onPatch(
+        {
+          customPromptPresets: provider.customPromptPresets.map((c) =>
+            c.id === id ? { ...c, name: t, updatedAt: Date.now() } : c
+          )
+        },
+        { persist: true }
+      );
     }
     setRenamingId(null);
   };

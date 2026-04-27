@@ -7,11 +7,17 @@ interface ChatPanelProps {
   timeline: ChatTimelineEntry[];
   input: string;
   attachments: ChatAttachment[];
+  /** e.g. “New conversation” or the saved chat title */
+  sessionSubheading: string;
   selectedProviderLabel: string;
   selectedModel: string;
   sessionMode: SessionMode;
   providerConnected: boolean;
   isStreaming: boolean;
+  webSearch: boolean;
+  onWebSearchChange: (next: boolean) => void;
+  /** True while settings have not loaded yet */
+  webSearchDisabled?: boolean;
   onInputChange: (value: string) => void;
   onAttachImages: (files: FileList | null) => void;
   onRemoveAttachment: (id: string) => void;
@@ -145,11 +151,15 @@ export function ChatPanel({
   timeline,
   input,
   attachments,
+  sessionSubheading,
   selectedProviderLabel,
   selectedModel,
   sessionMode,
   providerConnected,
   isStreaming,
+  webSearch,
+  onWebSearchChange,
+  webSearchDisabled = false,
   onInputChange,
   onAttachImages,
   onRemoveAttachment,
@@ -184,12 +194,34 @@ export function ChatPanel({
     <section className="chat-panel">
       <div className="chat-panel__header">
         <div className="chat-panel__header-left">
-          <h2 className="chat-panel__title">{isTalk ? 'Chat' : 'Agent'}</h2>
-          <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+          <div className="chat-panel__header-titles">
+            <h2 className="chat-panel__title">{isTalk ? 'Chat' : 'Agent'}</h2>
+            <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+          </div>
+          <span className="chat-panel__session" title={sessionSubheading}>
+            {sessionSubheading}
+          </span>
         </div>
-        <div className={`chat-panel__status ${isStreaming || providerConnected ? 'is-live' : ''}`}>
-          <span className="chat-panel__status-dot" />
-          {isStreaming ? 'Working' : providerConnected ? 'Connected' : 'Waiting'}
+        <div className="chat-panel__header-right">
+          <label
+            className={`chat-panel__web-toggle ${webSearchDisabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
+            title="Allow the model to call web_search (DuckDuckGo) in Talk or Agent"
+          >
+            <input
+              checked={webSearch}
+              disabled={webSearchDisabled}
+              onChange={(e) => onWebSearchChange(e.target.checked)}
+              type="checkbox"
+            />
+            <span className="chat-panel__web-toggle-track">
+              <span className="chat-panel__web-toggle-knob" />
+            </span>
+            <span>Web</span>
+          </label>
+          <div className={`chat-panel__status ${isStreaming || providerConnected ? 'is-live' : ''}`}>
+            <span className="chat-panel__status-dot" />
+            {isStreaming ? 'Working' : providerConnected ? 'Connected' : 'Waiting'}
+          </div>
         </div>
       </div>
 

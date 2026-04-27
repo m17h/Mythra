@@ -1,14 +1,37 @@
 import { fileURLToPath } from "node:url";
 import { join, relative, dirname, basename, resolve, sep } from "node:path";
 import { app, dialog, BrowserWindow, ipcMain } from "electron";
-import { mkdir, readdir, readFile, writeFile, unlink, stat, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
-const CHATS_DIR = "pixel-forge-chats";
+const CHATS_DIR = "openkiwi-chats";
+const LEGACY_CHATS_DIR = "pixel-forge-chats";
 class ChatStore {
-  dir = join(app.getPath("userData"), CHATS_DIR);
+  userData = app.getPath("userData");
+  dir = join(this.userData, CHATS_DIR);
+  legacyDir = join(this.userData, LEGACY_CHATS_DIR);
+  legacyMigrated = false;
+  async migrateLegacyChatsIfNeeded() {
+    if (this.legacyMigrated) return;
+    this.legacyMigrated = true;
+    try {
+      const newHas = existsSync(this.dir) && (await readdir(this.dir)).some((f) => f.endsWith(".json"));
+      if (newHas) return;
+      if (!existsSync(this.legacyDir)) return;
+      const files = (await readdir(this.legacyDir)).filter((f) => f.endsWith(".json"));
+      if (files.length === 0) return;
+      await mkdir(this.dir, { recursive: true });
+      for (const f of files) {
+        const dst = join(this.dir, f);
+        if (!existsSync(dst)) await copyFile(join(this.legacyDir, f), dst);
+      }
+    } catch {
+    }
+  }
   async ensureDir() {
+    await this.migrateLegacyChatsIfNeeded();
     await mkdir(this.dir, { recursive: true });
   }
   async listChats() {
@@ -174,6 +197,57 @@ class CommandService {
     return true;
   }
 }
+async function searchWeb(query) {
+  const q = query.trim();
+  if (!q) {
+    return "Error: empty search query.";
+  }
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+  let data;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "OpenKiwi/0.1 (https://github.com) desktop assistant" }
+    });
+    if (!res.ok) {
+      return `Web search request failed (HTTP ${res.status}). You can try again or share a direct link.`;
+    }
+    data = await res.json();
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    return `Web search failed: ${m}`;
+  }
+  const d = data;
+  const lines = [];
+  if (typeof d.Heading === "string" && d.Heading.trim()) {
+    lines.push(`Topic: ${d.Heading.trim()}`);
+  }
+  if (typeof d.AbstractText === "string" && d.AbstractText.trim()) {
+    lines.push(d.AbstractText.trim());
+    if (typeof d.AbstractURL === "string" && d.AbstractURL.trim()) {
+      lines.push(`Source: ${d.AbstractURL.trim()}`);
+    }
+  }
+  const related = d.RelatedTopics;
+  if (Array.isArray(related) && related.length > 0) {
+    lines.push("Related:");
+    let count = 0;
+    for (const item of related) {
+      if (count >= 6) break;
+      if (item && typeof item === "object" && "Text" in item && typeof item.Text === "string") {
+        lines.push(`- ${item.Text}`);
+        count += 1;
+      }
+    }
+  }
+  if (lines.length === 0) {
+    return [
+      `DuckDuckGo returned no instant answer for: "${q}"`,
+      "The topic may need a more specific query, or you can open a search manually.",
+      `Example: https://duckduckgo.com/?q=${encodeURIComponent(q)}`
+    ].join("\n");
+  }
+  return lines.join("\n\n");
+}
 const normalizeBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
   if (kind !== "lmstudio") {
@@ -185,7 +259,7 @@ const createClient = (settings, kind = settings.selectedProvider) => {
   const provider = settings.providers[kind];
   const headers = kind === "openrouter" ? {
     "HTTP-Referer": provider.appUrl || "https://example.local",
-    "X-OpenRouter-Title": provider.appName || "Pixel Forge"
+    "X-OpenRouter-Title": provider.appName || "OpenKiwi"
   } : void 0;
   return new OpenAI({
     baseURL: normalizeBaseUrl(kind, provider.baseUrl),
@@ -208,7 +282,6 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
-const startsWithMarker = (content, marker) => new RegExp(`^\\s*${marker}\\b`, "i").test(content);
 const extractModelReasoning = (message) => {
   if (!message || typeof message !== "object") {
     return;
@@ -300,12 +373,12 @@ class ModelService {
         { role: "system", content: sessionContext },
         ...messages.map((message) => toApiMessage(message))
       ];
-      if (isTalk) {
+      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
+      if (isTalk && toolDefinitions.length === 0) {
         await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
         return;
       }
       const maxAutoSteps = Math.max(4, settings.agent.maxAutoSteps || 24);
-      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
         const completion = await client.chat.completions.create(
@@ -360,48 +433,30 @@ class ModelService {
           });
           apiMessages.push({
             role: "user",
-            content: `Your last response was blank to the user. Respond with a visible user-facing update.
-Summarize what you did and what happens next.
-If complete, begin with ${COMPLETION_MARKER}. If blocked, begin with ${INPUT_MARKER}.`
+            content: `Your last assistant message was empty in the user’s chat. Write a short, natural visible reply. If you just used tools, summarize what you found or did in plain language.`
           });
           this.emitActivity(window, requestId, "warning", "The model returned a blank message. Requesting a visible summary.");
           continue;
         }
         lastVisibleAssistantContent = normalizedContent;
-        if (!settings.agent.autoContinue || startsWithMarker(content, COMPLETION_MARKER) || startsWithMarker(content, INPUT_MARKER)) {
-          if (startsWithMarker(content, INPUT_MARKER)) {
-            this.emitActivity(window, requestId, "warning", "Model needs user input.");
-          }
-          const done2 = {
-            requestId,
-            content: normalizedContent,
-            reasoning: extractModelReasoning(assistantMessage)
-          };
-          window.webContents.send("chat:done", done2);
-          this.activeRequests.delete(requestId);
-          return;
-        }
-        apiMessages.push({
-          role: "assistant",
-          content: assistantMessage.content ?? normalizedContent
-        });
-        apiMessages.push({
-          role: "user",
-          content: `Continue working autonomously.
-Only stop when the task is complete or you truly need user input.
-When complete, begin your response with ${COMPLETION_MARKER}.
-If blocked and you need the user, begin your response with ${INPUT_MARKER}.`
-        });
+        const done2 = {
+          requestId,
+          content: normalizedContent,
+          reasoning: extractModelReasoning(assistantMessage)
+        };
+        window.webContents.send("chat:done", done2);
+        this.activeRequests.delete(requestId);
+        return;
       }
       this.emitActivity(
         window,
         requestId,
         "warning",
-        `Autonomous step limit reached after ${maxAutoSteps} steps. Returning the latest visible progress instead of hard failing.`
+        `Step limit (${maxAutoSteps} tool rounds) reached. Returning the latest reply instead of failing.`
       );
       const done = {
         requestId,
-        content: lastVisibleAssistantContent || `I made progress, but I hit the autonomous step limit after ${maxAutoSteps} steps before producing a final stopping message. Ask me to continue and I can keep going from here.`
+        content: lastVisibleAssistantContent || `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`
       };
       window.webContents.send("chat:done", done);
       this.activeRequests.delete(requestId);
@@ -494,14 +549,37 @@ If blocked and you need the user, begin your response with ${INPUT_MARKER}.`
     const payload = { requestId, error: message };
     window.webContents.send("chat:error", payload);
   }
+  buildWebSearchTool() {
+    return {
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "Search the public web for current or general knowledge (news, documentation, error messages, best practices). Use a focused query. Does not read the user’s workspace; use file tools in Agent mode for local code.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Search query in plain language, specific enough to get useful results."
+            }
+          },
+          required: ["query"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildToolDefinitions(settings, workspaceRoot) {
+    const tools = [];
+    if (settings.ui.webSearch) {
+      tools.push(this.buildWebSearchTool());
+    }
     if (settings.ui.sessionMode === "talk") {
-      return [];
+      return tools;
     }
     if (!workspaceRoot) {
-      return [];
+      return tools;
     }
-    const tools = [];
     if (settings.tools.workspaceSearch) {
       tools.push({
         type: "function",
@@ -602,52 +680,79 @@ If blocked and you need the user, begin your response with ${INPUT_MARKER}.`
     }
     return tools;
   }
+  threadPreamble(runtime) {
+    const id = runtime.conversationId?.trim();
+    if (!id) return "";
+    return [
+      `[OpenKiwi] Thread id: ${id}. The messages in this request are the only history you see for this turn—other saved chats in the app are not included.`,
+      "If the user just started a new chat, this thread is a fresh session; there are no prior turns in this list unless the user (or you in this thread) put them there.",
+      ""
+    ].join("\n");
+  }
   async buildSessionContext(settings, runtime) {
     if (settings.ui.sessionMode === "talk") {
-      return [
-        "You are in Talk mode: a normal back-and-forth chat.",
-        "No file, workspace, or shell tools are available in this session, even if a folder is open in the app UI (ignore it for this chat).",
-        "Reply naturally. Do not begin your message with TASK_COMPLETE or NEEDS_INPUT.",
-        "If the system preset above describes coding agents or workspace mounting, treat this as casual conversation unless the user clearly asks for hands-on help with a repo (they should use Agent mode for that)."
+      const toolLine = settings.ui.webSearch ? 'Talk mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Talk mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
+      return this.threadPreamble(runtime) + [
+        '[OpenKiwi model routing — Talk mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms (e.g. "switch Session mode to Agent in Settings" if they need file or shell help).]',
+        toolLine,
+        "For editing files, running commands, or searching the open project, Agent mode in Settings is required. If the user needs that, say so in plain language.",
+        "Reply in normal prose. Do not begin with TASK_COMPLETE or NEEDS_INPUT.",
+        "The first system message is the user’s preset; follow it except where this block defines tool and mode behavior."
       ].join("\n");
     }
-    return this.buildWorkspaceContext(settings, runtime);
+    return this.threadPreamble(runtime) + await this.buildWorkspaceContext(settings, runtime);
   }
   async buildWorkspaceContext(settings, runtime) {
     if (!runtime.workspaceRoot) {
-      return "No workspace is currently attached. You cannot inspect or modify files until the user opens a workspace.";
+      const webLine = settings.ui.webSearch ? 'The `web_search` tool is available for public web lookup (the user enabled "Web" in the chat header).' : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
+      return [
+        "[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]",
+        "No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.",
+        webLine
+      ].join("\n");
     }
     const files = await this.workspaceService.listFiles(runtime.workspaceRoot);
     const visibleFiles = files.slice(0, 140).map((entry) => `${entry.type === "directory" ? "[dir]" : "[file]"} ${entry.path}`).join("\n");
     const enabledTools = [
+      settings.ui.webSearch ? "web_search" : null,
       settings.tools.workspaceSearch ? "list_files" : null,
       settings.tools.fileRead ? "read_file" : null,
       settings.tools.fileWrite ? "write_file, delete_path" : null,
       settings.tools.commandDeck ? "run_command" : null
     ].filter(Boolean).join(", ");
     return [
+      "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
+      "Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.",
+      "Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.",
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
-      `Approval mode: ${settings.agent.fullAccess ? "full access enabled; no per-action approvals" : "approval required for writes, deletes, and commands"}`,
-      `Continuation mode: ${settings.agent.autoContinue ? "continue autonomously until done or blocked" : "single response mode"}`,
-      `Autonomous step budget: ${settings.agent.maxAutoSteps}`,
-      "You do have access to the workspace through tools. If the user asks whether you can inspect files or run commands, answer yes and use the tools instead of claiming no access.",
-      `When the task is complete, begin your final response with ${COMPLETION_MARKER}.`,
-      `When you need user input, begin your final response with ${INPUT_MARKER}.`,
+      `Approval: ${settings.agent.fullAccess ? "writes/commands run without per-action approval" : "user approval may be required for some writes, deletes, and commands"}.`,
+      `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
+      "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       "Visible workspace entries (truncated):",
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
   }
   async executeToolCall(window, requestId, settings, workspaceRoot, toolCall) {
-    if (!workspaceRoot) {
-      throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
-    }
     let args;
     try {
       args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
     } catch {
       throw new Error(`Tool ${toolCall.function.name} received invalid JSON arguments.`);
+    }
+    if (toolCall.function.name === "web_search") {
+      if (!settings.ui.webSearch) {
+        throw new Error("Web search is turned off. Enable the Web toggle in the chat header to search online.");
+      }
+      const query = String(args.query ?? "").trim();
+      if (!query) {
+        throw new Error("web_search requires a non-empty query.");
+      }
+      return await searchWeb(query);
+    }
+    if (!workspaceRoot) {
+      throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
     }
     switch (toolCall.function.name) {
       case "list_files": {
@@ -703,7 +808,7 @@ ${path}
 This will create or overwrite the file inside the current workspace.`
         );
         const file = await this.workspaceService.saveFile(workspaceRoot, path, content);
-        window.webContents.send("workspace:changed", { root: workspaceRoot });
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: file.path });
         return JSON.stringify(
           {
             ok: true,
@@ -733,7 +838,7 @@ ${path}
 This cannot be undone from the app.`
         );
         const deleted = await this.workspaceService.deletePath(workspaceRoot, path);
-        window.webContents.send("workspace:changed", { root: workspaceRoot });
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileDeleted: deleted.path });
         return JSON.stringify(
           {
             ok: true,
@@ -887,7 +992,7 @@ const defaultSettings = {
       systemPrompt: getPromptPreset("general-coding").prompt,
       activeCustomPresetId: null,
       customPromptPresets: [],
-      appName: "Pixel Forge",
+      appName: "OpenKiwi",
       appUrl: "https://example.local"
     },
     openrouter: {
@@ -899,7 +1004,7 @@ const defaultSettings = {
       systemPrompt: getPromptPreset("general-coding").prompt,
       activeCustomPresetId: null,
       customPromptPresets: [],
-      appName: "Pixel Forge",
+      appName: "OpenKiwi",
       appUrl: "https://example.local"
     }
   },
@@ -916,10 +1021,12 @@ const defaultSettings = {
   },
   ui: {
     themeId: "neon-grid",
-    sessionMode: "agent"
+    sessionMode: "agent",
+    webSearch: false
   }
 };
-const SETTINGS_FILE = "pixel-forge-settings.json";
+const SETTINGS_FILE = "openkiwi-settings.json";
+const LEGACY_SETTINGS_FILE = "pixel-forge-settings.json";
 const mergeSettings = (saved) => ({
   ...defaultSettings,
   ...saved,
@@ -947,14 +1054,24 @@ const mergeSettings = (saved) => ({
   }
 });
 class SettingsStore {
-  path = join(app.getPath("userData"), SETTINGS_FILE);
+  userData = app.getPath("userData");
+  path = join(this.userData, SETTINGS_FILE);
+  legacyPath = join(this.userData, LEGACY_SETTINGS_FILE);
   async load() {
-    try {
-      const raw = await readFile(this.path, "utf8");
-      return mergeSettings(JSON.parse(raw));
-    } catch {
-      return defaultSettings;
+    if (!existsSync(this.path) && existsSync(this.legacyPath)) {
+      try {
+        await copyFile(this.legacyPath, this.path);
+      } catch {
+      }
     }
+    for (const p of [this.path, this.legacyPath]) {
+      try {
+        const raw = await readFile(p, "utf8");
+        return mergeSettings(JSON.parse(raw));
+      } catch {
+      }
+    }
+    return defaultSettings;
   }
   async save(next) {
     await mkdir(dirname(this.path), { recursive: true });
@@ -1067,6 +1184,7 @@ const createWindow = async () => {
     height: 980,
     minWidth: 1280,
     minHeight: 760,
+    title: "OpenKiwi",
     titleBarStyle: "hiddenInset",
     backgroundColor: "#04111f",
     webPreferences: {

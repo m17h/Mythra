@@ -1,8 +1,8 @@
 {
-  "name": "pixel-forge",
+  "name": "openkiwi",
   "version": "0.1.0",
-  "description": "A retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
-  "productName": "Pixel Forge",
+  "description": "OpenKiwi — a retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
+  "productName": "OpenKiwi",
   "main": "out/main/main.js",
   "type": "module",
   "scripts": {

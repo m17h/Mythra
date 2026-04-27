@@ -18,6 +18,7 @@ import type {
   ProviderKind
 } from '@shared/types';
 import { CommandService } from './command-service';
+import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
 
 const normalizeBaseUrl = (kind: ProviderKind, baseUrl: string) => {
@@ -35,7 +36,7 @@ const createClient = (settings: AppSettings, kind: ProviderKind = settings.selec
     kind === 'openrouter'
       ? {
           'HTTP-Referer': provider.appUrl || 'https://example.local',
-          'X-OpenRouter-Title': provider.appName || 'Pixel Forge'
+          'X-OpenRouter-Title': provider.appName || 'OpenKiwi'
         }
       : undefined;
 
@@ -67,7 +68,6 @@ const COMPLETION_MARKER = 'TASK_COMPLETE';
 const INPUT_MARKER = 'NEEDS_INPUT';
 const normalizeAssistantContent = (content: string) =>
   content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, 'i'), '').trim();
-const startsWithMarker = (content: string, marker: string) => new RegExp(`^\\s*${marker}\\b`, 'i').test(content);
 
 const extractModelReasoning = (message: unknown): string | undefined => {
   if (!message || typeof message !== 'object') {
@@ -127,6 +127,8 @@ const toApiMessage = (message: ChatMessage): ChatCompletionMessageParam => {
 interface ChatRuntimeContext {
   workspaceRoot?: string;
   activeFilePath?: string;
+  /** Opaque id for this chat thread; new on “New chat”, stable when loading a saved chat. */
+  conversationId?: string;
 }
 
 interface ActiveRequest {
@@ -197,13 +199,14 @@ export class ModelService {
         ...messages.map((message) => toApiMessage(message))
       ];
 
-      if (isTalk) {
+      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
+
+      if (isTalk && toolDefinitions.length === 0) {
         await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
         return;
       }
 
       const maxAutoSteps = Math.max(4, settings.agent.maxAutoSteps || 24);
-      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
 
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
@@ -271,9 +274,7 @@ export class ModelService {
           apiMessages.push({
             role: 'user',
             content:
-              `Your last response was blank to the user. Respond with a visible user-facing update.\n` +
-              `Summarize what you did and what happens next.\n` +
-              `If complete, begin with ${COMPLETION_MARKER}. If blocked, begin with ${INPUT_MARKER}.`
+              `Your last assistant message was empty in the user’s chat. Write a short, natural visible reply. If you just used tools, summarize what you found or did in plain language.`
           });
           this.emitActivity(window, requestId, 'warning', 'The model returned a blank message. Requesting a visible summary.');
           continue;
@@ -281,46 +282,29 @@ export class ModelService {
 
         lastVisibleAssistantContent = normalizedContent;
 
-        if (!settings.agent.autoContinue || startsWithMarker(content, COMPLETION_MARKER) || startsWithMarker(content, INPUT_MARKER)) {
-          if (startsWithMarker(content, INPUT_MARKER)) {
-            this.emitActivity(window, requestId, 'warning', 'Model needs user input.');
-          }
-          const done: ChatStreamDone = {
-            requestId,
-            content: normalizedContent,
-            reasoning: extractModelReasoning(assistantMessage)
-          };
-          window.webContents.send('chat:done', done);
-          this.activeRequests.delete(requestId);
-          return;
-        }
-
-        apiMessages.push({
-          role: 'assistant',
-          content: assistantMessage.content ?? normalizedContent
-        });
-        apiMessages.push({
-          role: 'user',
-          content:
-            `Continue working autonomously.\n` +
-            `Only stop when the task is complete or you truly need user input.\n` +
-            `When complete, begin your response with ${COMPLETION_MARKER}.\n` +
-            `If blocked and you need the user, begin your response with ${INPUT_MARKER}.`
-        });
-
+        // No tool calls this round: the model is speaking to the user — finish the request here.
+        // (The old “continue autonomously” nudge caused a 2nd model pass and pushed robotic “task / objective” tone.)
+        const done: ChatStreamDone = {
+          requestId,
+          content: normalizedContent,
+          reasoning: extractModelReasoning(assistantMessage)
+        };
+        window.webContents.send('chat:done', done);
+        this.activeRequests.delete(requestId);
+        return;
       }
 
       this.emitActivity(
         window,
         requestId,
         'warning',
-        `Autonomous step limit reached after ${maxAutoSteps} steps. Returning the latest visible progress instead of hard failing.`
+        `Step limit (${maxAutoSteps} tool rounds) reached. Returning the latest reply instead of failing.`
       );
       const done: ChatStreamDone = {
         requestId,
         content:
           lastVisibleAssistantContent ||
-          `I made progress, but I hit the autonomous step limit after ${maxAutoSteps} steps before producing a final stopping message. Ask me to continue and I can keep going from here.`
+          `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`
       };
       window.webContents.send('chat:done', done);
       this.activeRequests.delete(requestId);
@@ -444,16 +428,42 @@ export class ModelService {
     window.webContents.send('chat:error', payload);
   }
 
+  private buildWebSearchTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description:
+          'Search the public web for current or general knowledge (news, documentation, error messages, best practices). ' +
+          'Use a focused query. Does not read the user’s workspace; use file tools in Agent mode for local code.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query in plain language, specific enough to get useful results.'
+            }
+          },
+          required: ['query'],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
   private buildToolDefinitions(settings: AppSettings, workspaceRoot?: string): ChatCompletionTool[] {
+    const tools: ChatCompletionTool[] = [];
+    if (settings.ui.webSearch) {
+      tools.push(this.buildWebSearchTool());
+    }
+
     if (settings.ui.sessionMode === 'talk') {
-      return [];
+      return tools;
     }
 
     if (!workspaceRoot) {
-      return [];
+      return tools;
     }
-
-    const tools: ChatCompletionTool[] = [];
 
     if (settings.tools.workspaceSearch) {
       tools.push({
@@ -562,22 +572,47 @@ export class ModelService {
     return tools;
   }
 
+  private threadPreamble(runtime: ChatRuntimeContext): string {
+    const id = runtime.conversationId?.trim();
+    if (!id) return '';
+    return [
+      `[OpenKiwi] Thread id: ${id}. The messages in this request are the only history you see for this turn—other saved chats in the app are not included.`,
+      'If the user just started a new chat, this thread is a fresh session; there are no prior turns in this list unless the user (or you in this thread) put them there.',
+      ''
+    ].join('\n');
+  }
+
   private async buildSessionContext(settings: AppSettings, runtime: ChatRuntimeContext) {
     if (settings.ui.sessionMode === 'talk') {
-      return [
-        'You are in Talk mode: a normal back-and-forth chat.',
-        'No file, workspace, or shell tools are available in this session, even if a folder is open in the app UI (ignore it for this chat).',
-        'Reply naturally. Do not begin your message with TASK_COMPLETE or NEEDS_INPUT.',
-        'If the system preset above describes coding agents or workspace mounting, treat this as casual conversation unless the user clearly asks for hands-on help with a repo (they should use Agent mode for that).'
-      ].join('\n');
+      const toolLine = settings.ui.webSearch
+        ? 'Talk mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).'
+        : 'Talk mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
+
+      return (
+        this.threadPreamble(runtime) +
+        [
+          '[OpenKiwi model routing — Talk mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms (e.g. "switch Session mode to Agent in Settings" if they need file or shell help).]',
+          toolLine,
+          'For editing files, running commands, or searching the open project, Agent mode in Settings is required. If the user needs that, say so in plain language.',
+          'Reply in normal prose. Do not begin with TASK_COMPLETE or NEEDS_INPUT.',
+          'The first system message is the user’s preset; follow it except where this block defines tool and mode behavior.'
+        ].join('\n')
+      );
     }
 
-    return this.buildWorkspaceContext(settings, runtime);
+    return this.threadPreamble(runtime) + (await this.buildWorkspaceContext(settings, runtime));
   }
 
   private async buildWorkspaceContext(settings: AppSettings, runtime: ChatRuntimeContext) {
     if (!runtime.workspaceRoot) {
-      return 'No workspace is currently attached. You cannot inspect or modify files until the user opens a workspace.';
+      const webLine = settings.ui.webSearch
+        ? 'The `web_search` tool is available for public web lookup (the user enabled "Web" in the chat header).'
+        : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
+      return [
+        '[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]',
+        'No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.',
+        webLine
+      ].join('\n');
     }
 
     const files = await this.workspaceService.listFiles(runtime.workspaceRoot);
@@ -587,6 +622,7 @@ export class ModelService {
       .join('\n');
 
     const enabledTools = [
+      settings.ui.webSearch ? 'web_search' : null,
       settings.tools.workspaceSearch ? 'list_files' : null,
       settings.tools.fileRead ? 'read_file' : null,
       settings.tools.fileWrite ? 'write_file, delete_path' : null,
@@ -596,15 +632,15 @@ export class ModelService {
       .join(', ');
 
     return [
+      '[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]',
+      'Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.',
+      'Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.',
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : 'none'}`,
       `Enabled tools: ${enabledTools || 'none'}`,
-      `Approval mode: ${settings.agent.fullAccess ? 'full access enabled; no per-action approvals' : 'approval required for writes, deletes, and commands'}`,
-      `Continuation mode: ${settings.agent.autoContinue ? 'continue autonomously until done or blocked' : 'single response mode'}`,
-      `Autonomous step budget: ${settings.agent.maxAutoSteps}`,
-      'You do have access to the workspace through tools. If the user asks whether you can inspect files or run commands, answer yes and use the tools instead of claiming no access.',
-      `When the task is complete, begin your final response with ${COMPLETION_MARKER}.`,
-      `When you need user input, begin your final response with ${INPUT_MARKER}.`,
+      `Approval: ${settings.agent.fullAccess ? 'writes/commands run without per-action approval' : 'user approval may be required for some writes, deletes, and commands'}.`,
+      `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
+      'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
       'Visible workspace entries (truncated):',
       visibleFiles || '[workspace appears empty]'
     ].join('\n');
@@ -617,15 +653,26 @@ export class ModelService {
     workspaceRoot: string | undefined,
     toolCall: ChatCompletionMessageFunctionToolCall
   ) {
-    if (!workspaceRoot) {
-      throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
-    }
-
     let args: Record<string, unknown>;
     try {
       args = toolCall.function.arguments ? (JSON.parse(toolCall.function.arguments) as Record<string, unknown>) : {};
     } catch {
       throw new Error(`Tool ${toolCall.function.name} received invalid JSON arguments.`);
+    }
+
+    if (toolCall.function.name === 'web_search') {
+      if (!settings.ui.webSearch) {
+        throw new Error('Web search is turned off. Enable the Web toggle in the chat header to search online.');
+      }
+      const query = String(args.query ?? '').trim();
+      if (!query) {
+        throw new Error('web_search requires a non-empty query.');
+      }
+      return await searchWeb(query);
+    }
+
+    if (!workspaceRoot) {
+      throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
     }
 
     switch (toolCall.function.name) {
@@ -687,7 +734,7 @@ export class ModelService {
         );
 
         const file = await this.workspaceService.saveFile(workspaceRoot, path, content);
-        window.webContents.send('workspace:changed', { root: workspaceRoot });
+        window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: file.path });
         return JSON.stringify(
           {
             ok: true,
@@ -718,7 +765,7 @@ export class ModelService {
         );
 
         const deleted = await this.workspaceService.deletePath(workspaceRoot, path);
-        window.webContents.send('workspace:changed', { root: workspaceRoot });
+        window.webContents.send('workspace:changed', { root: workspaceRoot, fileDeleted: deleted.path });
         return JSON.stringify(
           {
             ok: true,

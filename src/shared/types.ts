@@ -36,6 +36,8 @@ export interface UiSettings {
   themeId: 'neon-grid' | 'sunset-terminal' | 'ice-station';
   /** Agent: workspace, tools, and autonomous run markers. Talk: plain chat, no file tools. */
   sessionMode: SessionMode;
+  /** When on, the `web_search` tool is available in both Talk and Agent (public web via built-in search). */
+  webSearch: boolean;
 }
 
 export interface AgentSettings {
@@ -140,6 +142,10 @@ export type ChatTimelineEntry =
 
 export interface WorkspaceChanged {
   root: string;
+  /** If set, this file was just written to disk (e.g. agent tool) — used to refresh an open editor buffer. */
+  fileWritten?: string;
+  /** If set, this path was deleted (file or tree) — used to close/remove an open buffer. */
+  fileDeleted?: string;
 }
 
 export interface SavedChat {
@@ -173,7 +179,7 @@ export const defaultSettings: AppSettings = {
       systemPrompt: getPromptPreset('general-coding').prompt,
       activeCustomPresetId: null,
       customPromptPresets: [],
-      appName: 'Pixel Forge',
+      appName: 'OpenKiwi',
       appUrl: 'https://example.local'
     },
     openrouter: {
@@ -185,7 +191,7 @@ export const defaultSettings: AppSettings = {
       systemPrompt: getPromptPreset('general-coding').prompt,
       activeCustomPresetId: null,
       customPromptPresets: [],
-      appName: 'Pixel Forge',
+      appName: 'OpenKiwi',
       appUrl: 'https://example.local'
     }
   },
@@ -202,6 +208,7 @@ export const defaultSettings: AppSettings = {
   },
   ui: {
     themeId: 'neon-grid',
-    sessionMode: 'agent'
+    sessionMode: 'agent',
+    webSearch: false
   }
 };

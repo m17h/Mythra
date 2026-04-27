@@ -20,6 +20,7 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      platform: string;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
@@ -31,7 +32,7 @@ declare global {
         requestId: string,
         settings: AppSettings,
         messages: ChatMessage[],
-        runtime: { workspaceRoot?: string; activeFilePath?: string }
+        runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;
       runCommand: (command: string, cwd?: string) => Promise<{ jobId: string }>;

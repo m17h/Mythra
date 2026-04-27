@@ -22,6 +22,7 @@ const createWindow = async () => {
     height: 980,
     minWidth: 1280,
     minHeight: 760,
+    title: 'OpenKiwi',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#04111f',
     webPreferences: {
@@ -88,7 +89,7 @@ ipcMain.handle(
     requestId: string,
     settings: AppSettings,
     messages: ChatMessage[],
-    runtime: { workspaceRoot?: string; activeFilePath?: string }
+    runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
   ) => {
     if (!mainWindow) {
       throw new Error('Main window is unavailable.');

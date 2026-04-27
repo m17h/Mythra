@@ -1,4 +1,5 @@
 import Editor from '@monaco-editor/react';
+import { OpenKiwiMark } from './OpenKiwiMark';
 
 interface EditorPanelProps {
   filePath?: string;
@@ -12,7 +13,10 @@ export function EditorPanel({ filePath, content, dirty, onChange, onSave }: Edit
   if (!filePath) {
     return (
       <section className="workspace-empty">
-        <div className="workspace-empty__eyebrow">Pixel Forge Console</div>
+        <div className="workspace-empty__eyebrow">
+          <OpenKiwiMark />
+          <span className="workspace-empty__eyebrow-suffix">· Console</span>
+        </div>
         <h2>Open a workspace, pick a file, then wire your model settings on the right.</h2>
         <p>
           This starter app already supports local folders, file editing, command streaming, theme switching, and live

@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import type { AppSettings, ModelInfo, ProviderKind, SessionMode } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getPromptPreset } from '@shared/prompt-presets';
-import { PromptPresetMenu } from './PromptPresetMenu';
+import { PromptPresetMenu, type PresetPatchOptions } from './PromptPresetMenu';
 
 interface SettingsPanelProps {
   settings: AppSettings;
   modelOptions: ModelInfo[];
   statusMessage: string;
   onChange: (next: AppSettings) => void;
-  onSave: () => void;
+  onSave: () => Promise<void>;
+  /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
+  onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
 }
 
@@ -92,19 +94,58 @@ function ModelSearch({
   );
 }
 
-export function SettingsPanel({ settings, modelOptions, statusMessage, onChange, onSave, onRefreshModels }: SettingsPanelProps) {
+const HEADER_SAVE_ACK_MS = 1500;
+
+export function SettingsPanel({
+  settings,
+  modelOptions,
+  statusMessage,
+  onChange,
+  onSave,
+  onPresetPersist,
+  onRefreshModels
+}: SettingsPanelProps) {
+  const [headerSaveAck, setHeaderSaveAck] = useState(false);
+  const saveAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (saveAckTimerRef.current) clearTimeout(saveAckTimerRef.current);
+    },
+    []
+  );
+
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === 'lmstudio';
   const isOpenRouter = settings.selectedProvider === 'openrouter';
 
-  const updateProvider = (patch: Partial<typeof provider>) => {
-    onChange({
+  const updateProvider = (patch: Partial<typeof provider>, opts?: PresetPatchOptions) => {
+    const next: AppSettings = {
       ...settings,
       providers: {
         ...settings.providers,
         [settings.selectedProvider]: { ...provider, ...patch }
       }
-    });
+    };
+    onChange(next);
+    if (opts?.persist) void onPresetPersist(next);
+  };
+
+  const onHeaderSave = async () => {
+    if (saveAckTimerRef.current) {
+      clearTimeout(saveAckTimerRef.current);
+      saveAckTimerRef.current = null;
+    }
+    try {
+      await onSave();
+      setHeaderSaveAck(true);
+      saveAckTimerRef.current = setTimeout(() => {
+        setHeaderSaveAck(false);
+        saveAckTimerRef.current = null;
+      }, HEADER_SAVE_ACK_MS);
+    } catch {
+      setHeaderSaveAck(false);
+    }
   };
 
   const activeCustom = provider.activeCustomPresetId
@@ -118,7 +159,20 @@ export function SettingsPanel({ settings, modelOptions, statusMessage, onChange,
           <h3 className="settings-panel__title">Settings</h3>
           <p className="settings-panel__subtitle">Provider, tools, and preferences</p>
         </div>
-        <button className="btn btn--secondary" onClick={onSave} type="button">Save</button>
+        <button
+          aria-live="polite"
+          className={`btn btn--secondary settings-panel__save${headerSaveAck ? ' settings-panel__save--ack' : ''}`}
+          onClick={onHeaderSave}
+          type="button"
+        >
+          {headerSaveAck ? (
+            <>
+              <span aria-hidden className="settings-panel__save-check">✓</span> Saved
+            </>
+          ) : (
+            'Save'
+          )}
+        </button>
       </div>
 
       <div className="settings-scroll">
@@ -178,19 +232,6 @@ export function SettingsPanel({ settings, modelOptions, statusMessage, onChange,
           {isLmStudio && modelOptions.length === 0 && (
             <div className="inline-hint">No models loaded yet. Start the LM Studio server and load a model first.</div>
           )}
-
-          {isOpenRouter && (
-            <div className="field-row">
-              <label className="field">
-                <span>App Name</span>
-                <input onChange={(e) => updateProvider({ appName: e.target.value })} value={provider.appName} />
-              </label>
-              <label className="field">
-                <span>App URL</span>
-                <input onChange={(e) => updateProvider({ appUrl: e.target.value })} value={provider.appUrl} />
-              </label>
-            </div>
-          )}
         </div>
 
         <div className="settings-section">
@@ -204,8 +245,8 @@ export function SettingsPanel({ settings, modelOptions, statusMessage, onChange,
           <div className="inline-hint">
             {provider.promptPresetId === 'custom'
               ? activeCustom
-                ? `Editing “${activeCustom.name}.” The prompt text syncs to this preset; use Preset → Custom to Save, rename, or delete. Use the header Save to write settings to disk.`
-                : 'Custom prompt. Open Preset → Custom for New, Save, load, rename, or delete saved presets. Header Save writes settings to disk.'
+                ? `Editing “${activeCustom.name}.” The prompt text syncs to this preset. Preset → Custom → Save, New, rename, and delete are written to disk right away. Use the header Save for connection, tools, theme, and the rest.`
+                : 'Custom prompt. Open Preset → Custom for New, Save, load, rename, or delete. Preset list changes are saved to disk when you use those actions. Use the header Save for connection, tools, and theme.'
               : getPromptPreset(provider.promptPresetId).description}
           </div>
 
@@ -248,21 +289,29 @@ export function SettingsPanel({ settings, modelOptions, statusMessage, onChange,
               </button>
             ))}
           </div>
-          <label className="field field--after-theme-grid">
+          <div className="field field--after-theme-grid">
             <span>Session mode</span>
-            <select
-              onChange={(e) =>
-                onChange({
-                  ...settings,
-                  ui: { ...settings.ui, sessionMode: e.target.value as SessionMode }
-                })
-              }
-              value={settings.ui.sessionMode}
-            >
-              <option value="agent">Agent (workspace, tools, autonomous runs)</option>
-              <option value="talk">Talk (plain chat, no file tools)</option>
-            </select>
-          </label>
+            <div className="session-mode-toggle">
+              <button
+                className={`session-mode-toggle__option ${settings.ui.sessionMode === 'talk' ? 'is-active' : ''}`}
+                onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'talk' } })}
+                type="button"
+              >
+                Talk
+              </button>
+              <button
+                className={`session-mode-toggle__option ${settings.ui.sessionMode === 'agent' ? 'is-active' : ''}`}
+                onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'agent' } })}
+                type="button"
+              >
+                Agent
+              </button>
+              <span
+                className="session-mode-toggle__slider"
+                style={{ transform: settings.ui.sessionMode === 'agent' ? 'translateX(100%)' : 'translateX(0)' }}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="settings-section">

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 const electronAPI = {
+  platform: process.platform,
   loadSettings: () => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),

@@ -17,6 +17,7 @@ import type {
 } from '@shared/types';
 
 const electronAPI = {
+  platform: process.platform,
   loadSettings: () => ipcRenderer.invoke('settings:load') as Promise<AppSettings>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings) as Promise<AppSettings>,
   chooseWorkspace: () =>
@@ -32,7 +33,7 @@ const electronAPI = {
     requestId: string,
     settings: AppSettings,
     messages: ChatMessage[],
-    runtime: { workspaceRoot?: string; activeFilePath?: string }
+    runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,
   runCommand: (command: string, cwd?: string) =>

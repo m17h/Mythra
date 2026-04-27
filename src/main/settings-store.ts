@@ -1,9 +1,11 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, type AppSettings } from '@shared/types';
 
-const SETTINGS_FILE = 'pixel-forge-settings.json';
+const SETTINGS_FILE = 'openkiwi-settings.json';
+const LEGACY_SETTINGS_FILE = 'pixel-forge-settings.json';
 
 const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => ({
   ...defaultSettings,
@@ -33,15 +35,27 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
 });
 
 export class SettingsStore {
-  private readonly path = join(app.getPath('userData'), SETTINGS_FILE);
+  private readonly userData = app.getPath('userData');
+  private readonly path = join(this.userData, SETTINGS_FILE);
+  private readonly legacyPath = join(this.userData, LEGACY_SETTINGS_FILE);
 
   async load(): Promise<AppSettings> {
-    try {
-      const raw = await readFile(this.path, 'utf8');
-      return mergeSettings(JSON.parse(raw) as Partial<AppSettings>);
-    } catch {
-      return defaultSettings;
+    if (!existsSync(this.path) && existsSync(this.legacyPath)) {
+      try {
+        await copyFile(this.legacyPath, this.path);
+      } catch {
+        // fall through to read legacy
+      }
     }
+    for (const p of [this.path, this.legacyPath]) {
+      try {
+        const raw = await readFile(p, 'utf8');
+        return mergeSettings(JSON.parse(raw) as Partial<AppSettings>);
+      } catch {
+        // try next
+      }
+    }
+    return defaultSettings;
   }
 
   async save(next: AppSettings): Promise<AppSettings> {
