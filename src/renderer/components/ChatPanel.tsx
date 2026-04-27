@@ -12,6 +12,8 @@ interface ChatPanelProps {
   selectedProviderLabel: string;
   selectedModel: string;
   sessionMode: SessionMode;
+  /** True after first model-list fetch (so we can show "Disconnected" vs initial "Waiting"). */
+  modelCatalogSettled: boolean;
   providerConnected: boolean;
   isStreaming: boolean;
   webSearch: boolean;
@@ -155,6 +157,7 @@ export function ChatPanel({
   selectedProviderLabel,
   selectedModel,
   sessionMode,
+  modelCatalogSettled,
   providerConnected,
   isStreaming,
   webSearch,
@@ -188,6 +191,16 @@ export function ChatPanel({
 
   const isTalk = sessionMode === 'talk';
 
+  const statusLabel = isStreaming
+    ? 'Working'
+    : providerConnected
+      ? 'Connected'
+      : modelCatalogSettled
+        ? 'Disconnected'
+        : 'Waiting';
+
+  const statusModifierClass = isStreaming || providerConnected ? 'is-live' : modelCatalogSettled ? 'is-disconnected' : '';
+
   const renderChunks = useMemo(() => buildRenderChunks(timeline), [timeline]);
 
   return (
@@ -218,9 +231,11 @@ export function ChatPanel({
             </span>
             <span>Web</span>
           </label>
-          <div className={`chat-panel__status ${isStreaming || providerConnected ? 'is-live' : ''}`}>
+          <div
+            className={['chat-panel__status', statusModifierClass].filter(Boolean).join(' ')}
+          >
             <span className="chat-panel__status-dot" />
-            {isStreaming ? 'Working' : providerConnected ? 'Connected' : 'Waiting'}
+            {statusLabel}
           </div>
         </div>
       </div>

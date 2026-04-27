@@ -30,7 +30,15 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
   },
   ui: {
     ...defaultSettings.ui,
-    ...saved?.ui
+    ...saved?.ui,
+    favoriteModels: {
+      lmstudio: [
+        ...(saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio)
+      ],
+      openrouter: [
+        ...(saved?.ui?.favoriteModels?.openrouter ?? defaultSettings.ui.favoriteModels.openrouter)
+      ]
+    }
   }
 });
 

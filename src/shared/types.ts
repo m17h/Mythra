@@ -38,6 +38,11 @@ export interface UiSettings {
   sessionMode: SessionMode;
   /** When on, the `web_search` tool is available in both Talk and Agent (public web via built-in search). */
   webSearch: boolean;
+  /**
+   * Per-provider favorited model ids (matches catalog `id` for that provider).
+   * Used in Settings model picker: favorites sort first, then the rest.
+   */
+  favoriteModels: Record<ProviderKind, string[]>;
 }
 
 export interface AgentSettings {
@@ -209,6 +214,7 @@ export const defaultSettings: AppSettings = {
   ui: {
     themeId: 'neon-grid',
     sessionMode: 'agent',
-    webSearch: false
+    webSearch: false,
+    favoriteModels: { lmstudio: [], openrouter: [] }
   }
 };

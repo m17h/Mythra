@@ -214,7 +214,7 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .sidebar-brand__title .openkiwi-mark {
-  font-size: 1.1rem;
+  font-size: 1.75rem;
 }
 
 .workspace-empty__eyebrow .openkiwi-mark {
@@ -254,9 +254,21 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .sidebar-brand__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-0);
+}
+
+.sidebar-brand__logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+  transform: translateY(3px);
 }
 
 .sidebar-brand__copy {
@@ -513,6 +525,11 @@ html[data-platform='darwin'] .app-shell {
   box-shadow: 0 0 6px var(--accent-2);
 }
 
+.sidebar-footer__dot.is-disconnected {
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
 /* Workspace meta */
 .workspace-meta {
   padding: 8px 10px;
@@ -704,6 +721,16 @@ html[data-platform='darwin'] .app-shell {
 .chat-panel__status.is-live .chat-panel__status-dot {
   background: var(--accent-2);
   box-shadow: 0 0 6px var(--accent-2);
+}
+
+.chat-panel__status.is-disconnected {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.chat-panel__status.is-disconnected .chat-panel__status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 /* Chat scroll area */
@@ -1586,30 +1613,68 @@ details.chat-activity--collapsible {
   z-index: 100;
 }
 
+.model-search__row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.model-search__row + .model-search__row {
+  border-top: 1px solid var(--line);
+}
+
+.model-search__star {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.model-search__star:hover {
+  color: var(--text-0);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.model-search__star[aria-pressed="true"] {
+  color: #fbbf24;
+}
+
 .model-search__option {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 8px 10px;
+  margin: 0;
+  padding: 8px 10px 8px 0;
   text-align: left;
+  border: none;
+  background: transparent;
   color: var(--text-1);
   font-size: 0.8rem;
-  transition: background var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
+  font-family: inherit;
 }
 
-.model-search__option:hover {
-  background: var(--accent-subtle);
+.model-search__row:hover .model-search__option {
   color: var(--text-0);
 }
 
-.model-search__option.is-active {
+.model-search__row.is-active {
   background: var(--accent-subtle);
-  color: var(--accent-light);
 }
 
-.model-search__option + .model-search__option {
-  border-top: 1px solid var(--line);
+.model-search__row.is-active .model-search__option {
+  color: var(--accent-light);
 }
 
 .model-search__option-id {
@@ -1632,6 +1697,23 @@ details.chat-activity--collapsible {
   color: var(--text-2);
   font-size: 0.78rem;
   text-align: center;
+}
+
+/* Portal; full id after hover delay (see ModelSearch) */
+.model-search__name-tooltip {
+  position: fixed;
+  z-index: 30000;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-0);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  word-break: break-word;
+  pointer-events: none;
 }
 
 /* Prompt preset (nested: Custom → flyout) */

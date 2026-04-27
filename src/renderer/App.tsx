@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import openkiwiLogo from '@renderer/assets/openkiwi.png';
 import { ChatPanel } from './components/ChatPanel';
 import { CommandDeck } from './components/CommandDeck';
 import { EditorPanel } from './components/EditorPanel';
@@ -77,6 +78,8 @@ export function App() {
   const [buffers, setBuffers] = useState<Record<string, FileBuffer>>({});
   const [activeFilePath, setActiveFilePath] = useState<string>();
   const [models, setModels] = useState<ModelInfo[]>([]);
+  /** After at least one model-catalog fetch (success or fail); used so we show "Disconnected" instead of "Waiting" only once we know. */
+  const [modelCatalogSettled, setModelCatalogSettled] = useState(false);
 
   /** Latest values each render so send uses up-to-date system prompt, workspace, and active file (no new chat required). */
   const settingsRef = useRef<AppSettings | null>(null);
@@ -202,10 +205,12 @@ export function App() {
     document.documentElement.dataset.theme = settings.ui.themeId;
   }, [settings]);
 
+  const openRouterKeyForEffect = settings?.selectedProvider === 'openrouter' ? settings.providers.openrouter.apiKey : null;
+
   useEffect(() => {
     if (!settings) return;
     void refreshModels(settings);
-  }, [settings?.selectedProvider]);
+  }, [settings?.selectedProvider, openRouterKeyForEffect]);
 
   useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
@@ -359,6 +364,19 @@ export function App() {
   const refreshModels = async (settingsOverride?: AppSettings) => {
     const activeSettings = settingsOverride ?? settings;
     if (!activeSettings) return;
+
+    setModelCatalogSettled(false);
+
+    if (activeSettings.selectedProvider === 'openrouter') {
+      const key = activeSettings.providers.openrouter.apiKey?.trim() ?? '';
+      if (!key) {
+        setModels([]);
+        setSettingsStatus('OpenRouter: add an API key in Settings, then use Test + refresh.');
+        setModelCatalogSettled(true);
+        return;
+      }
+    }
+
     try {
       setSettingsStatus('Loading model catalog...');
       const modelList = await window.electronAPI.listModels(activeSettings, activeSettings.selectedProvider);
@@ -410,8 +428,11 @@ export function App() {
         );
       }
     } catch (error) {
+      setModels([]);
       const message = error instanceof Error ? error.message : 'Failed to load models.';
       setSettingsStatus(`Connection failed: ${message}`);
+    } finally {
+      setModelCatalogSettled(true);
     }
   };
 
@@ -629,7 +650,13 @@ export function App() {
 
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
-  const providerConnected = models.length > 0 && Boolean(selectedProvider?.model);
+  const openRouterReady =
+    settings && settings.selectedProvider === 'openrouter'
+      ? Boolean(settings.providers.openrouter.apiKey?.trim())
+      : true;
+  const providerConnected = Boolean(
+    settings && openRouterReady && models.length > 0 && selectedProvider?.model
+  );
   const selectedProviderLabel = settings?.selectedProvider === 'openrouter' ? 'OpenRouter' : 'LM Studio';
   const sessionMode = settings?.ui.sessionMode ?? 'agent';
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
@@ -651,6 +678,14 @@ export function App() {
               <div>
                 <div className="sidebar-brand__title">
                   <OpenKiwiMark />
+                  <img
+                    alt=""
+                    className="sidebar-brand__logo"
+                    decoding="async"
+                    height={32}
+                    src={openkiwiLogo}
+                    width={32}
+                  />
                 </div>
                 <div className="sidebar-brand__copy">Local AI workspace</div>
               </div>
@@ -831,7 +866,11 @@ export function App() {
             <div className="sidebar-footer">
               <div className="sidebar-footer__meta">
                 <span>{selectedProviderLabel}</span>
-                <span className={`sidebar-footer__dot ${providerConnected ? 'is-live' : ''}`} />
+                <span
+                  className={`sidebar-footer__dot ${
+                    providerConnected ? 'is-live' : modelCatalogSettled ? 'is-disconnected' : ''
+                  }`}
+                />
                 <span>{selectedProvider?.model ? pathLabel(selectedProvider.model) : 'No model'}</span>
               </div>
             </div>
@@ -855,6 +894,7 @@ export function App() {
             onRemoveAttachment={(id) => setChatAttachments((c) => c.filter((a) => a.id !== id))}
             onSend={sendChat}
             onStop={stopChat}
+            modelCatalogSettled={Boolean(settings) && modelCatalogSettled}
             providerConnected={providerConnected}
             webSearch={settings?.ui.webSearch ?? false}
             webSearchDisabled={!settings}

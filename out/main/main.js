@@ -1,17 +1,23 @@
 import { fileURLToPath } from "node:url";
-import { join, relative, dirname, basename, resolve, sep } from "node:path";
-import { app, dialog, BrowserWindow, ipcMain } from "electron";
+import { join as join$1, relative, dirname, basename, resolve, sep } from "node:path";
+import { app, dialog, BrowserWindow, ipcMain, nativeImage } from "electron";
+import { join } from "path";
 import { existsSync } from "node:fs";
 import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
+import __cjs_mod__ from "node:module";
+const __filename = import.meta.filename;
+const __dirname = import.meta.dirname;
+const require2 = __cjs_mod__.createRequire(import.meta.url);
+const appIconPath = join(__dirname, "./chunks/openkiwi_icon-DIx-U6xG.png");
 const CHATS_DIR = "openkiwi-chats";
 const LEGACY_CHATS_DIR = "pixel-forge-chats";
 class ChatStore {
   userData = app.getPath("userData");
-  dir = join(this.userData, CHATS_DIR);
-  legacyDir = join(this.userData, LEGACY_CHATS_DIR);
+  dir = join$1(this.userData, CHATS_DIR);
+  legacyDir = join$1(this.userData, LEGACY_CHATS_DIR);
   legacyMigrated = false;
   async migrateLegacyChatsIfNeeded() {
     if (this.legacyMigrated) return;
@@ -24,8 +30,8 @@ class ChatStore {
       if (files.length === 0) return;
       await mkdir(this.dir, { recursive: true });
       for (const f of files) {
-        const dst = join(this.dir, f);
-        if (!existsSync(dst)) await copyFile(join(this.legacyDir, f), dst);
+        const dst = join$1(this.dir, f);
+        if (!existsSync(dst)) await copyFile(join$1(this.legacyDir, f), dst);
       }
     } catch {
     }
@@ -41,7 +47,7 @@ class ChatStore {
     for (const file of files) {
       if (!file.endsWith(".json")) continue;
       try {
-        const raw = await readFile(join(this.dir, file), "utf8");
+        const raw = await readFile(join$1(this.dir, file), "utf8");
         const chat = JSON.parse(raw);
         metas.push({
           id: chat.id,
@@ -57,7 +63,7 @@ class ChatStore {
   }
   async loadChat(id) {
     try {
-      const raw = await readFile(join(this.dir, `${id}.json`), "utf8");
+      const raw = await readFile(join$1(this.dir, `${id}.json`), "utf8");
       return JSON.parse(raw);
     } catch {
       return null;
@@ -65,11 +71,11 @@ class ChatStore {
   }
   async saveChat(chat) {
     await this.ensureDir();
-    await writeFile(join(this.dir, `${chat.id}.json`), JSON.stringify(chat), "utf8");
+    await writeFile(join$1(this.dir, `${chat.id}.json`), JSON.stringify(chat), "utf8");
   }
   async deleteChat(id) {
     try {
-      await unlink(join(this.dir, `${id}.json`));
+      await unlink(join$1(this.dir, `${id}.json`));
       return true;
     } catch {
       return false;
@@ -1022,7 +1028,8 @@ const defaultSettings = {
   ui: {
     themeId: "neon-grid",
     sessionMode: "agent",
-    webSearch: false
+    webSearch: false,
+    favoriteModels: { lmstudio: [], openrouter: [] }
   }
 };
 const SETTINGS_FILE = "openkiwi-settings.json";
@@ -1050,13 +1057,21 @@ const mergeSettings = (saved) => ({
   },
   ui: {
     ...defaultSettings.ui,
-    ...saved?.ui
+    ...saved?.ui,
+    favoriteModels: {
+      lmstudio: [
+        ...saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio
+      ],
+      openrouter: [
+        ...saved?.ui?.favoriteModels?.openrouter ?? defaultSettings.ui.favoriteModels.openrouter
+      ]
+    }
   }
 });
 class SettingsStore {
   userData = app.getPath("userData");
-  path = join(this.userData, SETTINGS_FILE);
-  legacyPath = join(this.userData, LEGACY_SETTINGS_FILE);
+  path = join$1(this.userData, SETTINGS_FILE);
+  legacyPath = join$1(this.userData, LEGACY_SETTINGS_FILE);
   async load() {
     if (!existsSync(this.path) && existsSync(this.legacyPath)) {
       try {
@@ -1179,6 +1194,7 @@ const commandService = new CommandService();
 const modelService = new ModelService(workspaceService, commandService);
 let mainWindow = null;
 const createWindow = async () => {
+  const windowIcon = nativeImage.createFromPath(appIconPath);
   mainWindow = new BrowserWindow({
     width: 1580,
     height: 980,
@@ -1187,6 +1203,7 @@ const createWindow = async () => {
     title: "OpenKiwi",
     titleBarStyle: "hiddenInset",
     backgroundColor: "#04111f",
+    icon: windowIcon,
     webPreferences: {
       preload: fileURLToPath(new URL("../preload/index.mjs", import.meta.url)),
       sandbox: false,
@@ -1201,6 +1218,9 @@ const createWindow = async () => {
   }
 };
 app.whenReady().then(async () => {
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(appIconPath);
+  }
   await createWindow();
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { basename } from 'node:path';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
+import appIconPath from './openkiwi_icon.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
@@ -17,6 +18,8 @@ const modelService = new ModelService(workspaceService, commandService);
 let mainWindow: BrowserWindow | null = null;
 
 const createWindow = async () => {
+  const windowIcon = nativeImage.createFromPath(appIconPath);
+
   mainWindow = new BrowserWindow({
     width: 1580,
     height: 980,
@@ -25,6 +28,7 @@ const createWindow = async () => {
     title: 'OpenKiwi',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#04111f',
+    icon: windowIcon,
     webPreferences: {
       preload: fileURLToPath(new URL('../preload/index.mjs', import.meta.url)),
       sandbox: false,
@@ -41,6 +45,10 @@ const createWindow = async () => {
 };
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconPath);
+  }
+
   await createWindow();
 
   app.on('activate', async () => {
