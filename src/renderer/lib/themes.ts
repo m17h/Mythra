@@ -13,5 +13,10 @@ export const themes = [
     id: 'ice-station',
     name: 'Ice Station',
     preview: 'Blue / Mint / Graphite'
+  },
+  {
+    id: 'kiwi',
+    name: 'Kiwi',
+    preview: 'Green / Teal / Graphite (light)'
   }
 ] as const;

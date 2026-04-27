@@ -105,6 +105,7 @@ export function App() {
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [chatStreaming, setChatStreaming] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string>();
+  const chatStreamingRef = useRef(false);
 
   const [activeChatId, setActiveChatId] = useState<string>();
   const [chatList, setChatList] = useState<SavedChatMeta[]>([]);
@@ -112,6 +113,11 @@ export function App() {
   const [overrideModelProvider, setOverrideModelProvider] = useState<ProviderKind>('lmstudio');
   const [overrideModels, setOverrideModels] = useState<ModelInfo[]>([]);
   const [chatModelExpanded, setChatModelExpanded] = useState(false);
+  /** Per-chat model override before the thread is saved (no activeChatId). Copied to disk on first send / persist. */
+  const [newChatModelOverride, setNewChatModelOverride] = useState<ChatModelOverride | null>(null);
+  const newChatModelOverrideRef = useRef<ChatModelOverride | null>(null);
+  newChatModelOverrideRef.current = newChatModelOverride;
+  chatStreamingRef.current = chatStreaming;
 
   const [commandInput, setCommandInput] = useState('git status');
   const [commandLogs, setCommandLogs] = useState('');
@@ -148,8 +154,18 @@ export function App() {
     [activeChatId, chatList]
   );
 
+  const effectiveModelOverride = useMemo((): ChatModelOverride | null => {
+    if (activeChatId) return activeChatMeta?.modelOverride ?? null;
+    return newChatModelOverride;
+  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
+
   const chatSessionSubheading = useMemo(() => {
-    if (chatMessages.length === 0) return 'New conversation';
+    if (chatMessages.length === 0) {
+      if (newChatModelOverride?.model) {
+        return `New conversation · ${formatOverrideLabel(newChatModelOverride, pathLabel)}`;
+      }
+      return 'New conversation';
+    }
     if (activeChatId) {
       const meta = chatList.find((c) => c.id === activeChatId);
       if (meta?.title) {
@@ -161,7 +177,7 @@ export function App() {
       }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, chatList, chatMessages, pathLabel]);
+  }, [activeChatId, chatList, chatMessages, newChatModelOverride, pathLabel]);
 
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
@@ -191,7 +207,7 @@ export function App() {
         createdAt,
         updatedAt: now,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
-        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? null
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : (newChatModelOverrideRef.current ?? null))
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -235,15 +251,16 @@ export function App() {
   }, [settings?.selectedProvider, openRouterKeyForEffect]);
 
   useEffect(() => {
-    if (!settings || !activeChatId) {
-      return;
+    if (!settings) return;
+    if (activeChatId) {
+      setOverrideModelProvider(activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider);
+    } else {
+      setOverrideModelProvider(newChatModelOverride?.provider ?? settings.selectedProvider);
     }
-    const p = activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider;
-    setOverrideModelProvider(p);
-  }, [activeChatId, activeChatMeta?.modelOverride?.provider, settings]);
+  }, [activeChatId, activeChatMeta?.modelOverride?.provider, newChatModelOverride?.provider, settings]);
 
   useEffect(() => {
-    if (!settings || !activeChatId) {
+    if (!settings) {
       setOverrideModels([]);
       return;
     }
@@ -254,7 +271,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [settings, activeChatId, overrideModelProvider]);
+  }, [settings, overrideModelProvider]);
 
   useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
@@ -549,6 +566,7 @@ export function App() {
     setChatStreaming(false);
     setActiveRequestId(undefined);
     setActiveChatId(undefined);
+    setNewChatModelOverride(null);
     const nextSid = uid();
     setChatSessionId(nextSid);
     chatSessionIdRef.current = nextSid;
@@ -567,6 +585,7 @@ export function App() {
     setActiveChatId(chat.id);
     setChatSessionId(chat.id);
     chatSessionIdRef.current = chat.id;
+    setNewChatModelOverride(null);
     setChatInput('');
     setChatAttachments([]);
     setChatStreaming(false);
@@ -597,7 +616,10 @@ export function App() {
 
   const saveChatModelOverride = useCallback(
     async (override: ChatModelOverride | null) => {
-      if (!activeChatId) return;
+      if (!activeChatId) {
+        setNewChatModelOverride(override);
+        return;
+      }
       const full = await window.electronAPI.loadChat(activeChatId);
       if (!full) return;
       await window.electronAPI.saveChat({ ...full, modelOverride: override, updatedAt: full.updatedAt });
@@ -640,7 +662,8 @@ export function App() {
 
   const sendChat = async () => {
     const sendSettings = settingsRef.current;
-    if (!sendSettings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
+    if (chatStreamingRef.current || !sendSettings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
+    chatStreamingRef.current = true;
     const userMessage: ChatMessage = {
       id: uid(),
       role: 'user',
@@ -657,43 +680,46 @@ export function App() {
       reasoning: sendSettings.ui.sessionMode === 'talk' ? '' : undefined
     };
     const nextHistory = [...chatMessages, userMessage];
-    setChatMessages([...nextHistory, assistantMessage]);
-    setChatTimeline((current) => [
-      ...current,
+    const nextTimeline: ChatTimelineEntry[] = [
+      ...chatTimeline,
       { id: `message-${userMessage.id}`, type: 'message', message: userMessage },
       { id: `message-${assistantMessage.id}`, type: 'message', message: assistantMessage }
-    ]);
+    ];
+    setChatMessages([...nextHistory, assistantMessage]);
+    setChatTimeline(nextTimeline);
     setChatInput('');
     setChatAttachments([]);
     setChatStreaming(true);
     setActiveRequestId(requestId);
 
-    if (!activeChatId) {
+    const priorChatId = activeChatId;
+    let overrideForStream: ChatModelOverride | null = null;
+    if (!priorChatId) {
       const newId = uid();
+      const mo = newChatModelOverrideRef.current;
+      overrideForStream = mo;
       setActiveChatId(newId);
       setChatSessionId(newId);
       chatSessionIdRef.current = newId;
+      setNewChatModelOverride(null);
       const chat: SavedChat = {
         id: newId,
         title: chatTitle([...nextHistory, assistantMessage]),
         titleOverride: null,
         messages: [...nextHistory, assistantMessage],
-        timeline: [],
+        timeline: nextTimeline,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         pinned: false,
-        modelOverride: null
+        modelOverride: mo
       };
       await window.electronAPI.saveChat(chat);
       await refreshChatList();
+    } else {
+      const loaded = await window.electronAPI.loadChat(priorChatId);
+      overrideForStream = loaded?.modelOverride ?? null;
     }
-
-    let perChatModelOverride: ChatModelOverride | null = null;
-    if (activeChatId) {
-      const loaded = await window.electronAPI.loadChat(activeChatId);
-      perChatModelOverride = loaded?.modelOverride ?? null;
-    }
-    const streamSettings = applyChatModelOverride(sendSettings, perChatModelOverride);
+    const streamSettings = applyChatModelOverride(sendSettings, overrideForStream);
 
     await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
       workspaceRoot: workspaceRootRef.current,
@@ -725,6 +751,9 @@ export function App() {
 
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
+  /** Per-chat model override wins in the top bar and footer over the global default. */
+  const effectiveHeaderModelId =
+    effectiveModelOverride?.model ?? selectedProvider?.model ?? '';
   const openRouterReady =
     settings && settings.selectedProvider === 'openrouter'
       ? Boolean(settings.providers.openrouter.apiKey?.trim())
@@ -829,7 +858,7 @@ export function App() {
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                   >
-                    {activeChatId && settings ? (
+                    {settings ? (
                       <div className={`chat-thread-options ${chatModelExpanded ? 'is-expanded' : ''}`}>
                         <button
                           className="chat-thread-options__header"
@@ -849,9 +878,9 @@ export function App() {
                             </svg>
                             <span className="chat-thread-options__title">Model override</span>
                           </span>
-                          {activeChatMeta?.modelOverride && !chatModelExpanded ? (
+                          {effectiveModelOverride && !chatModelExpanded ? (
                             <span className="chat-thread-options__badge">
-                              {pathLabel(activeChatMeta.modelOverride.model)}
+                              {pathLabel(effectiveModelOverride.model)}
                             </span>
                           ) : null}
                         </button>
@@ -868,10 +897,10 @@ export function App() {
                             >
                               <div className="chat-thread-options__body">
                                 <label
-                                  className={`chat-panel__web-toggle chat-thread-options__web-toggle ${activeChatMeta?.modelOverride ? 'is-on' : ''}`}
+                                  className={`chat-panel__web-toggle chat-thread-options__web-toggle ${effectiveModelOverride ? 'is-on' : ''}`}
                                 >
                                   <input
-                                    checked={Boolean(activeChatMeta?.modelOverride)}
+                                    checked={Boolean(effectiveModelOverride)}
                                     onChange={async (e) => {
                                       if (!settings) return;
                                       if (e.target.checked) {
@@ -893,7 +922,7 @@ export function App() {
                                 </label>
 
                                 <AnimatePresence initial={false}>
-                                  {activeChatMeta?.modelOverride ? (
+                                  {effectiveModelOverride ? (
                                     <motion.div
                                       key="override-fields"
                                       initial={{ height: 0, opacity: 0 }}
@@ -927,7 +956,7 @@ export function App() {
                                           <span className="chat-thread-options__field-label">Model</span>
                                           <ModelSearch
                                             models={overrideModels}
-                                            value={activeChatMeta.modelOverride.model}
+                                            value={effectiveModelOverride.model}
                                             favoriteIds={settings.ui.favoriteModels?.[overrideModelProvider] ?? []}
                                             portalDropdown
                                             onChange={async (model) => {
@@ -1099,7 +1128,9 @@ export function App() {
                     providerConnected ? 'is-live' : modelCatalogSettled ? 'is-disconnected' : ''
                   }`}
                 />
-                <span>{selectedProvider?.model ? pathLabel(selectedProvider.model) : 'No model'}</span>
+                <span>
+                  {effectiveHeaderModelId ? pathLabel(effectiveHeaderModelId) : 'No model'}
+                </span>
               </div>
             </div>
           </div>
@@ -1128,7 +1159,7 @@ export function App() {
             webSearchDisabled={!settings}
             onWebSearchChange={handleWebSearchChange}
             sessionMode={sessionMode}
-            selectedModel={selectedProvider?.model ?? ''}
+            selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}
           />
         </motion.section>

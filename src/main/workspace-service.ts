@@ -3,8 +3,11 @@ import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { dialog } from 'electron';
 import type { OpenFile, WorkspaceNode } from '@shared/types';
 
-const IGNORED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'out', 'build']);
-const MAX_DEPTH = 4;
+const IGNORED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'out', 'build', 'coverage']);
+const MAX_TREE_DEPTH = 10;
+const MAX_LIST_DEPTH = 24;
+const MAX_TREE_ENTRIES = 2_500;
+const MAX_LIST_ENTRIES = 5_000;
 
 const ensureInsideRoot = (root: string, target: string) => {
   const resolvedRoot = resolve(root);
@@ -18,19 +21,6 @@ const ensureInsideRoot = (root: string, target: string) => {
   return resolvedTarget;
 };
 
-const flattenNodes = (root: string, nodes: WorkspaceNode[], bucket: Array<{ path: string; type: WorkspaceNode['type'] }>) => {
-  for (const node of nodes) {
-    bucket.push({
-      path: relative(root, node.path) || '.',
-      type: node.type
-    });
-
-    if (node.children?.length) {
-      flattenNodes(root, node.children, bucket);
-    }
-  }
-};
-
 const sortNodes = (nodes: WorkspaceNode[]) =>
   nodes.sort((a, b) => {
     if (a.type !== b.type) {
@@ -39,35 +29,74 @@ const sortNodes = (nodes: WorkspaceNode[]) =>
     return a.name.localeCompare(b.name);
   });
 
-const buildTree = async (root: string, depth = 0): Promise<WorkspaceNode[]> => {
-  if (depth > MAX_DEPTH) {
+const buildTree = async (root: string, depth = 0, budget = { remaining: MAX_TREE_ENTRIES }): Promise<WorkspaceNode[]> => {
+  if (depth > MAX_TREE_DEPTH || budget.remaining <= 0) {
     return [];
   }
 
   const entries = await readdir(root, { withFileTypes: true });
-  const nodes = await Promise.all(
+  const nodes: Array<WorkspaceNode | null> = await Promise.all(
     entries
       .filter((entry) => !IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.DS_Store'))
       .map(async (entry) => {
+        if (budget.remaining <= 0) {
+          return null;
+        }
+        budget.remaining -= 1;
         const fullPath = resolve(root, entry.name);
         if (entry.isDirectory()) {
-          return {
+          const node: WorkspaceNode = {
             name: entry.name,
             path: fullPath,
-            type: 'directory' as const,
-            children: await buildTree(fullPath, depth + 1)
+            type: 'directory',
+            children: await buildTree(fullPath, depth + 1, budget)
           };
+          return node;
         }
 
-        return {
+        const node: WorkspaceNode = {
           name: entry.name,
           path: fullPath,
-          type: 'file' as const
+          type: 'file'
         };
+        return node;
       })
   );
 
-  return sortNodes(nodes);
+  return sortNodes(nodes.filter((node): node is WorkspaceNode => node != null));
+};
+
+const walkFiles = async (
+  root: string,
+  current: string,
+  bucket: Array<{ path: string; type: WorkspaceNode['type'] }>,
+  depth = 0
+) => {
+  if (depth > MAX_LIST_DEPTH || bucket.length >= MAX_LIST_ENTRIES) {
+    return;
+  }
+
+  const entries = await readdir(current, { withFileTypes: true });
+  const sorted = entries
+    .filter((entry) => !IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.DS_Store'))
+    .sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) {
+        return a.isDirectory() ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+  for (const entry of sorted) {
+    if (bucket.length >= MAX_LIST_ENTRIES) {
+      return;
+    }
+    const fullPath = resolve(current, entry.name);
+    const type = entry.isDirectory() ? 'directory' : 'file';
+    bucket.push({ path: relative(root, fullPath) || '.', type });
+    if (entry.isDirectory()) {
+      await walkFiles(root, fullPath, bucket, depth + 1);
+    }
+  }
 };
 
 export class WorkspaceService {
@@ -86,6 +115,15 @@ export class WorkspaceService {
   async getTree(root: string): Promise<WorkspaceNode[]> {
     await stat(root);
     return buildTree(root);
+  }
+
+  isInsideRoot(root: string, target: string): boolean {
+    try {
+      ensureInsideRoot(root, target);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async openFile(root: string, target: string): Promise<OpenFile> {
@@ -108,9 +146,9 @@ export class WorkspaceService {
   }
 
   async listFiles(root: string): Promise<Array<{ path: string; type: WorkspaceNode['type'] }>> {
-    const tree = await this.getTree(root);
     const files: Array<{ path: string; type: WorkspaceNode['type'] }> = [];
-    flattenNodes(root, tree, files);
+    await stat(root);
+    await walkFiles(resolve(root), resolve(root), files);
     return files;
   }
 

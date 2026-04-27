@@ -39,7 +39,7 @@ export interface ToolPermissions {
 export type SessionMode = 'agent' | 'talk';
 
 export interface UiSettings {
-  themeId: 'neon-grid' | 'sunset-terminal' | 'ice-station';
+  themeId: 'neon-grid' | 'sunset-terminal' | 'ice-station' | 'kiwi';
   /** Agent: workspace, tools, and autonomous run markers. Talk: plain chat, no file tools. */
   sessionMode: SessionMode;
   /** When on, the `web_search` tool is available in both Talk and Agent (public web via built-in search). */

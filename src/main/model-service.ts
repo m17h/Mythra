@@ -231,7 +231,7 @@ export class ModelService {
         return;
       }
 
-      const maxAutoSteps = Math.max(4, settings.agent.maxAutoSteps || 24);
+      const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
 
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);

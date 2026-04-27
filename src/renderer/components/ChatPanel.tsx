@@ -466,7 +466,9 @@ export function ChatPanel({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                onSend();
+                if (!isStreaming) {
+                  onSend();
+                }
               }
             }}
             placeholder="Type a message..."

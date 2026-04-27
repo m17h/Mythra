@@ -6,6 +6,13 @@ import type { SavedChat, SavedChatMeta } from '@shared/types';
 
 const CHATS_DIR = 'openkiwi-chats';
 const LEGACY_CHATS_DIR = 'pixel-forge-chats';
+const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
+
+const assertSafeChatId = (id: string) => {
+  if (!CHAT_ID_RE.test(id)) {
+    throw new Error('Invalid chat id.');
+  }
+};
 
 export class ChatStore {
   private readonly userData = app.getPath('userData');
@@ -72,6 +79,7 @@ export class ChatStore {
 
   async loadChat(id: string): Promise<SavedChat | null> {
     try {
+      assertSafeChatId(id);
       const raw = await readFile(join(this.dir, `${id}.json`), 'utf8');
       return JSON.parse(raw) as SavedChat;
     } catch {
@@ -80,12 +88,14 @@ export class ChatStore {
   }
 
   async saveChat(chat: SavedChat): Promise<void> {
+    assertSafeChatId(chat.id);
     await this.ensureDir();
     await writeFile(join(this.dir, `${chat.id}.json`), JSON.stringify(chat), 'utf8');
   }
 
   async deleteChat(id: string): Promise<boolean> {
     try {
+      assertSafeChatId(id);
       await unlink(join(this.dir, `${id}.json`));
       return true;
     } catch {

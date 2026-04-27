@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { join as join$1, relative, dirname, basename, resolve, sep } from "node:path";
+import { join as join$1, relative, dirname, resolve, basename, sep } from "node:path";
 import { app, dialog, BrowserWindow, ipcMain, nativeImage } from "electron";
 import { join } from "path";
 import { existsSync } from "node:fs";
@@ -14,6 +14,12 @@ const require2 = __cjs_mod__.createRequire(import.meta.url);
 const appIconPath = join(__dirname, "./chunks/openkiwi_icon-DIx-U6xG.png");
 const CHATS_DIR = "openkiwi-chats";
 const LEGACY_CHATS_DIR = "pixel-forge-chats";
+const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
+const assertSafeChatId = (id) => {
+  if (!CHAT_ID_RE.test(id)) {
+    throw new Error("Invalid chat id.");
+  }
+};
 class ChatStore {
   userData = app.getPath("userData");
   dir = join$1(this.userData, CHATS_DIR);
@@ -70,6 +76,7 @@ class ChatStore {
   }
   async loadChat(id) {
     try {
+      assertSafeChatId(id);
       const raw = await readFile(join$1(this.dir, `${id}.json`), "utf8");
       return JSON.parse(raw);
     } catch {
@@ -77,11 +84,13 @@ class ChatStore {
     }
   }
   async saveChat(chat) {
+    assertSafeChatId(chat.id);
     await this.ensureDir();
     await writeFile(join$1(this.dir, `${chat.id}.json`), JSON.stringify(chat), "utf8");
   }
   async deleteChat(id) {
     try {
+      assertSafeChatId(id);
       await unlink(join$1(this.dir, `${id}.json`));
       return true;
     } catch {
@@ -406,7 +415,7 @@ class ModelService {
         await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
         return;
       }
-      const maxAutoSteps = Math.max(4, settings.agent.maxAutoSteps || 24);
+      const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
         const stream = await client.chat.completions.create(
@@ -1147,8 +1156,11 @@ class SettingsStore {
     return next;
   }
 }
-const IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "out", "build"]);
-const MAX_DEPTH = 4;
+const IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "out", "build", "coverage"]);
+const MAX_TREE_DEPTH = 10;
+const MAX_LIST_DEPTH = 24;
+const MAX_TREE_ENTRIES = 2500;
+const MAX_LIST_ENTRIES = 5e3;
 const ensureInsideRoot = (root, target) => {
   const resolvedRoot = resolve(root);
   const resolvedTarget = resolve(resolvedRoot, target);
@@ -1158,47 +1170,65 @@ const ensureInsideRoot = (root, target) => {
   }
   return resolvedTarget;
 };
-const flattenNodes = (root, nodes, bucket) => {
-  for (const node of nodes) {
-    bucket.push({
-      path: relative(root, node.path) || ".",
-      type: node.type
-    });
-    if (node.children?.length) {
-      flattenNodes(root, node.children, bucket);
-    }
-  }
-};
 const sortNodes = (nodes) => nodes.sort((a, b) => {
   if (a.type !== b.type) {
     return a.type === "directory" ? -1 : 1;
   }
   return a.name.localeCompare(b.name);
 });
-const buildTree = async (root, depth = 0) => {
-  if (depth > MAX_DEPTH) {
+const buildTree = async (root, depth = 0, budget = { remaining: MAX_TREE_ENTRIES }) => {
+  if (depth > MAX_TREE_DEPTH || budget.remaining <= 0) {
     return [];
   }
   const entries = await readdir(root, { withFileTypes: true });
   const nodes = await Promise.all(
     entries.filter((entry) => !IGNORED_DIRS.has(entry.name) && !entry.name.startsWith(".DS_Store")).map(async (entry) => {
+      if (budget.remaining <= 0) {
+        return null;
+      }
+      budget.remaining -= 1;
       const fullPath = resolve(root, entry.name);
       if (entry.isDirectory()) {
-        return {
+        const node2 = {
           name: entry.name,
           path: fullPath,
           type: "directory",
-          children: await buildTree(fullPath, depth + 1)
+          children: await buildTree(fullPath, depth + 1, budget)
         };
+        return node2;
       }
-      return {
+      const node = {
         name: entry.name,
         path: fullPath,
         type: "file"
       };
+      return node;
     })
   );
-  return sortNodes(nodes);
+  return sortNodes(nodes.filter((node) => node != null));
+};
+const walkFiles = async (root, current, bucket, depth = 0) => {
+  if (depth > MAX_LIST_DEPTH || bucket.length >= MAX_LIST_ENTRIES) {
+    return;
+  }
+  const entries = await readdir(current, { withFileTypes: true });
+  const sorted = entries.filter((entry) => !IGNORED_DIRS.has(entry.name) && !entry.name.startsWith(".DS_Store")).sort((a, b) => {
+    if (a.isDirectory() !== b.isDirectory()) {
+      return a.isDirectory() ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+  for (const entry of sorted) {
+    if (bucket.length >= MAX_LIST_ENTRIES) {
+      return;
+    }
+    const fullPath = resolve(current, entry.name);
+    const type = entry.isDirectory() ? "directory" : "file";
+    bucket.push({ path: relative(root, fullPath) || ".", type });
+    if (entry.isDirectory()) {
+      await walkFiles(root, fullPath, bucket, depth + 1);
+    }
+  }
 };
 class WorkspaceService {
   async chooseWorkspace() {
@@ -1213,6 +1243,14 @@ class WorkspaceService {
   async getTree(root) {
     await stat(root);
     return buildTree(root);
+  }
+  isInsideRoot(root, target) {
+    try {
+      ensureInsideRoot(root, target);
+      return true;
+    } catch {
+      return false;
+    }
   }
   async openFile(root, target) {
     const safePath = ensureInsideRoot(root, target);
@@ -1231,9 +1269,9 @@ class WorkspaceService {
     return { path: safePath };
   }
   async listFiles(root) {
-    const tree = await this.getTree(root);
     const files = [];
-    flattenNodes(root, tree, files);
+    await stat(root);
+    await walkFiles(resolve(root), resolve(root), files);
     return files;
   }
   labelForRoot(root) {
@@ -1246,6 +1284,36 @@ const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
 const modelService = new ModelService(workspaceService, commandService);
 let mainWindow = null;
+let activeWorkspaceRoot;
+let currentSettings = defaultSettings;
+const assertActiveWorkspace = (root) => {
+  if (!root) {
+    throw new Error("No workspace is active.");
+  }
+  if (!activeWorkspaceRoot || resolve(root) !== resolve(activeWorkspaceRoot)) {
+    throw new Error("Workspace is not active.");
+  }
+};
+const sanitizeRuntime = (runtime) => {
+  const workspaceRoot = runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot) ? activeWorkspaceRoot : void 0;
+  const activeFilePath = workspaceRoot && runtime.activeFilePath && workspaceService.isInsideRoot(workspaceRoot, runtime.activeFilePath) ? runtime.activeFilePath : void 0;
+  return {
+    workspaceRoot,
+    activeFilePath,
+    conversationId: runtime.conversationId
+  };
+};
+const sanitizeChatSettings = (requested) => ({
+  ...requested,
+  tools: currentSettings.tools,
+  agent: currentSettings.agent,
+  ui: {
+    ...requested.ui,
+    sessionMode: currentSettings.ui.sessionMode,
+    webSearch: currentSettings.ui.webSearch,
+    favoriteModels: currentSettings.ui.favoriteModels
+  }
+});
 const createWindow = async () => {
   const windowIcon = nativeImage.createFromPath(appIconPath);
   mainWindow = new BrowserWindow({
@@ -1286,25 +1354,38 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
-ipcMain.handle("settings:load", async () => settingsStore.load());
-ipcMain.handle("settings:save", async (_event, settings) => settingsStore.save(settings));
+ipcMain.handle("settings:load", async () => {
+  currentSettings = await settingsStore.load();
+  return currentSettings;
+});
+ipcMain.handle("settings:save", async (_event, settings) => {
+  currentSettings = await settingsStore.save(settings);
+  return currentSettings;
+});
 ipcMain.handle("workspace:choose", async () => {
   const root = await workspaceService.chooseWorkspace();
   if (!root) {
     return null;
   }
+  activeWorkspaceRoot = root;
   return {
     root,
     label: basename(root),
     tree: await workspaceService.getTree(root)
   };
 });
-ipcMain.handle("workspace:tree", async (_event, root) => workspaceService.getTree(root));
-ipcMain.handle("workspace:open-file", async (_event, root, target) => workspaceService.openFile(root, target));
-ipcMain.handle(
-  "workspace:save-file",
-  async (_event, root, target, content) => workspaceService.saveFile(root, target, content)
-);
+ipcMain.handle("workspace:tree", async (_event, root) => {
+  assertActiveWorkspace(root);
+  return workspaceService.getTree(root);
+});
+ipcMain.handle("workspace:open-file", async (_event, root, target) => {
+  assertActiveWorkspace(root);
+  return workspaceService.openFile(root, target);
+});
+ipcMain.handle("workspace:save-file", async (_event, root, target, content) => {
+  assertActiveWorkspace(root);
+  return workspaceService.saveFile(root, target, content);
+});
 ipcMain.handle(
   "models:list",
   async (_event, settings, providerKind) => modelService.listModels(settings, providerKind)
@@ -1316,7 +1397,7 @@ ipcMain.handle(
       throw new Error("Main window is unavailable.");
     }
     try {
-      await modelService.streamChat(event, mainWindow, requestId, settings, messages, runtime);
+      await modelService.streamChat(event, mainWindow, requestId, sanitizeChatSettings(settings), messages, sanitizeRuntime(runtime));
       return { ok: true };
     } catch (error) {
       modelService.sendError(mainWindow, requestId, error);
@@ -1328,6 +1409,9 @@ ipcMain.handle("chat:stop", async (_event, requestId) => modelService.stopReques
 ipcMain.handle("commands:run", async (_event, command, cwd) => {
   if (!mainWindow) {
     throw new Error("Main window is unavailable.");
+  }
+  if (cwd != null) {
+    assertActiveWorkspace(cwd);
   }
   return commandService.run(mainWindow, command, cwd);
 });
