@@ -44,6 +44,7 @@ declare global {
       onChatError: (callback: (payload: ChatStreamError) => void) => () => void;
       onChatActivity: (callback: (payload: ChatActivity) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: WorkspaceChanged) => void) => () => void;
+      onSettingsUpdated: (callback: (settings: AppSettings) => void) => () => void;
       listChats: () => Promise<SavedChatMeta[]>;
       loadChat: (id: string) => Promise<SavedChat | null>;
       saveChat: (chat: SavedChat) => Promise<void>;

@@ -219,12 +219,48 @@ class CommandService {
     return true;
   }
 }
+const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
+const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
+const themeCatalog = [
+  { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
+  { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
+  { id: "ice-station", name: "Ice Station", preview: "Blue / Mint / Graphite" },
+  { id: "kiwi", name: "Kiwi", preview: "Green / Teal / Graphite (light)" }
+];
+const THEME_IDS = themeCatalog.map((t) => t.id);
+function isThemeId(value) {
+  return THEME_IDS.includes(value);
+}
+function getThemeName(themeId) {
+  const entry = themeCatalog.find((t) => t.id === themeId);
+  return entry?.name ?? themeId;
+}
+const pushUnique = (acc, line) => {
+  const t = line.trim();
+  if (t) acc.push(t);
+};
+function* walkRelatedTopics(topics, maxDepth, maxOut) {
+  for (const item of topics) {
+    if (maxOut.n <= 0) return;
+    if (!item || typeof item !== "object") continue;
+    const o = item;
+    if (typeof o.Text === "string" && o.Text.trim()) {
+      const u = typeof o.FirstURL === "string" && o.FirstURL.trim() ? o.FirstURL.trim() : "";
+      maxOut.n -= 1;
+      yield u ? `- ${o.Text.trim()}
+  ${u}` : `- ${o.Text.trim()}`;
+    }
+    if (maxDepth > 0 && Array.isArray(o.Topics)) {
+      yield* walkRelatedTopics(o.Topics, maxDepth - 1, maxOut);
+    }
+  }
+}
 async function searchWeb(query) {
   const q = query.trim();
   if (!q) {
     return "Error: empty search query.";
   }
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`;
   let data;
   try {
     const res = await fetch(url, {
@@ -241,34 +277,160 @@ async function searchWeb(query) {
   const d = data;
   const lines = [];
   if (typeof d.Heading === "string" && d.Heading.trim()) {
-    lines.push(`Topic: ${d.Heading.trim()}`);
+    pushUnique(lines, `Topic: ${d.Heading.trim()}`);
   }
   if (typeof d.AbstractText === "string" && d.AbstractText.trim()) {
-    lines.push(d.AbstractText.trim());
+    pushUnique(lines, d.AbstractText.trim());
+    if (typeof d.AbstractSource === "string" && d.AbstractSource.trim()) {
+      pushUnique(lines, `Via: ${d.AbstractSource.trim()}`);
+    }
     if (typeof d.AbstractURL === "string" && d.AbstractURL.trim()) {
-      lines.push(`Source: ${d.AbstractURL.trim()}`);
+      pushUnique(lines, `Source: ${d.AbstractURL.trim()}`);
+    }
+  }
+  if (typeof d.Answer === "string" && d.Answer.trim()) {
+    const at = typeof d.AnswerType === "string" && d.AnswerType.trim() ? ` [${d.AnswerType.trim()}]` : "";
+    pushUnique(lines, `Answer${at}: ${d.Answer.trim()}`);
+  }
+  if (typeof d.Definition === "string" && d.Definition.trim()) {
+    const def = d.Definition.trim();
+    const src = typeof d.DefinitionURL === "string" && d.DefinitionURL.trim() ? d.DefinitionURL.trim() : "";
+    pushUnique(lines, src ? `Definition: ${def}
+Source: ${src}` : `Definition: ${def}`);
+  }
+  const results = d.Results;
+  if (Array.isArray(results) && results.length > 0) {
+    const block = ["Web results:"];
+    let n = 0;
+    for (const item of results) {
+      if (n >= 8) break;
+      if (!item || typeof item !== "object") continue;
+      const o = item;
+      const text = typeof o.Text === "string" ? o.Text.replace(/<[^>]+>/g, "").trim() : "";
+      const urlR = typeof o.FirstURL === "string" && o.FirstURL.trim() ? o.FirstURL.trim() : "";
+      if (text || urlR) {
+        n += 1;
+        if (text && urlR) {
+          block.push(`- ${text}
+  ${urlR}`);
+        } else {
+          block.push(`- ${text || urlR}`);
+        }
+      }
+    }
+    if (block.length > 1) {
+      pushUnique(lines, block.join("\n\n"));
     }
   }
   const related = d.RelatedTopics;
   if (Array.isArray(related) && related.length > 0) {
-    lines.push("Related:");
-    let count = 0;
-    for (const item of related) {
-      if (count >= 6) break;
-      if (item && typeof item === "object" && "Text" in item && typeof item.Text === "string") {
-        lines.push(`- ${item.Text}`);
-        count += 1;
-      }
+    const relLines = ["Related:"];
+    const maxOut = { n: 10 };
+    for (const r of walkRelatedTopics(related, 2, maxOut)) {
+      relLines.push(r);
+    }
+    if (relLines.length > 1) {
+      pushUnique(lines, relLines.join("\n"));
     }
   }
   if (lines.length === 0) {
+    const weatherExtra = await tryOpenMeteoWeatherSupplement(q);
+    if (weatherExtra) {
+      return weatherExtra;
+    }
     return [
       `DuckDuckGo returned no instant answer for: "${q}"`,
-      "The topic may need a more specific query, or you can open a search manually.",
-      `Example: https://duckduckgo.com/?q=${encodeURIComponent(q)}`
-    ].join("\n");
+      "This API only returns short instant answers, not a full result page. Try web_search again with: fewer words, exact product or error text in quotes, a year (e.g. 2026) for current topics, or an official site/repo name.",
+      'For local weather, include a place name the geocoder can find (e.g. city and state); "here" is not available to the tool.',
+      `DuckDuckGo (browser): https://duckduckgo.com/?q=${encodeURIComponent(q)}`
+    ].join("\n\n");
   }
   return lines.join("\n\n");
+}
+const WEATHERISH = /\bweather|forecast|temperature|rain|snow|humidity|wind( speed)?\b/i;
+function extractPlaceForWeather(q) {
+  let s = q.replace(/^(what('?s| is)|please|can you|tell me|i want to know|could you)\s+/i, "").replace(/\b(the\s+)?(current|today'?s?|right now|local)\b/gi, " ").replace(/\b(weather|forecast|conditions?|like|outside)\b/gi, " ").replace(/\b(in|at|for|near|around)\b/gi, " ").replace(/\b(here|this place|my (town|area|location)|locally)\b/gi, "").replace(/\s+/g, " ").trim();
+  if (s.length >= 2 && !/^(here|there|it)\b/i.test(s)) {
+    return s.slice(0, 180);
+  }
+  s = q.replace(/\b(what|when|where|the|a|an|is|are|for|in|at|to|and|or|me|my|can|you|please|tell|current|local|right|now|weather|like|how|get|about)\b/gi, " ").replace(/\s+/g, " ").trim();
+  if (s.length >= 3 && !/^(here|there)\b/i.test(s)) {
+    return s.slice(0, 180);
+  }
+  return null;
+}
+function wmoWeatherPhrase(code) {
+  if (code === 0) return "Clear sky";
+  if (code <= 3) return "Mainly clear, partly cloudy, or overcast";
+  if (code <= 48) return "Fog or rime";
+  if (code <= 67) return "Drizzle or rain";
+  if (code <= 77) return "Snow";
+  if (code <= 82) return "Rain showers";
+  if (code <= 86) return "Snow showers";
+  if (code <= 99) return "Thunderstorm or heavy precipitation";
+  return "See WMO code";
+}
+async function tryOpenMeteoWeatherSupplement(q) {
+  if (!WEATHERISH.test(q)) {
+    return null;
+  }
+  const place = extractPlaceForWeather(q);
+  if (!place) {
+    return [
+      "Weather lookup needs a named place in the search query (the tool has no access to the user’s GPS).",
+      "Ask the user for a city/region, or run web_search again with a query like: weather [City] [State/Country].",
+      `Tried: "${q}"`
+    ].join("\n\n");
+  }
+  const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=3&language=en`;
+  let geo;
+  try {
+    const res = await fetch(geoUrl, { headers: { "User-Agent": "OpenKiwi/0.1 (desktop; Open-Meteo geocoding)" } });
+    if (!res.ok) return null;
+    geo = await res.json();
+  } catch {
+    return null;
+  }
+  const g = geo;
+  const hit = g.results?.[0];
+  if (!hit) {
+    return null;
+  }
+  const label = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
+  const fcUrl = new URL("https://api.open-meteo.com/v1/forecast");
+  fcUrl.searchParams.set("latitude", String(hit.latitude));
+  fcUrl.searchParams.set("longitude", String(hit.longitude));
+  fcUrl.searchParams.set("current", "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m");
+  fcUrl.searchParams.set("temperature_unit", "fahrenheit");
+  fcUrl.searchParams.set("wind_speed_unit", "mph");
+  fcUrl.searchParams.set("timezone", "auto");
+  let data;
+  try {
+    const res = await fetch(fcUrl.toString(), { headers: { "User-Agent": "OpenKiwi/0.1 (Open-Meteo forecast)" } });
+    if (!res.ok) return null;
+    data = await res.json();
+  } catch {
+    return null;
+  }
+  const d = data;
+  const cur = d.current;
+  if (!cur || typeof cur.temperature_2m !== "number") {
+    return null;
+  }
+  const code = typeof cur.weather_code === "number" ? cur.weather_code : 0;
+  const lines = [
+    `Open-Meteo (current conditions, approximate) for ${label}:`,
+    `— Temperature: ${Math.round(cur.temperature_2m * 10) / 10}°F` + (typeof cur.apparent_temperature === "number" ? ` (feels like ${Math.round(cur.apparent_temperature * 10) / 10}°F)` : ""),
+    `— ${wmoWeatherPhrase(code)} (code ${code})`
+  ];
+  if (typeof cur.wind_speed_10m === "number") {
+    lines.push(`— Wind: ${Math.round(cur.wind_speed_10m * 10) / 10} mph`);
+  }
+  if (typeof cur.relative_humidity_2m === "number") {
+    lines.push(`— Humidity: ${Math.round(cur.relative_humidity_2m)}%`);
+  }
+  lines.push("Source: Open-Meteo (open-meteo.com). Not a replacement for official alerts or forecasts.");
+  return lines.join("\n");
 }
 const normalizeBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
@@ -304,6 +466,12 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
+const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use when explaining how to change session mode (e.g. user wants files or tools in Chat mode, or only chat in Agent mode). Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OPENKIWI_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
+const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
+const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_app_theme, or revert_app_theme). If the user asks what theme is active, to change the theme, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): theme tools — get_app_theme returns the active theme id and display name plus the previous theme (if any) so you can answer "what theme is this?" or decide how to revert; set_app_theme applies a theme by id; revert_app_theme restores the previous theme after a change (Settings or an earlier tool call in this session). Valid theme_id values: ${THEME_IDS.join(", ")} (Settings → Theme: Neon Grid, Sunset Terminal, Ice Station, Kiwi). After a successful theme change, reply in one short sentence.`;
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -366,12 +534,16 @@ const toApiMessage = (message) => {
   };
 };
 class ModelService {
-  constructor(workspaceService2, commandService2) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
+    this.applyAppTheme = applyAppTheme2;
+    this.getAppThemeState = getAppThemeState2;
   }
   workspaceService;
   commandService;
+  applyAppTheme;
+  getAppThemeState;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -574,7 +746,7 @@ class ModelService {
       if (sawTool) {
         finish({
           requestId,
-          content: "In Talk mode the assistant cannot use file or shell tools. If you need those, switch the session to Agent, use Open Workspace to mount a folder, and try again."
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again."
         });
         return;
       }
@@ -598,7 +770,7 @@ class ModelService {
       if (assistantMessage.tool_calls?.length) {
         finish({
           requestId,
-          content: "In Talk mode the assistant cannot use file or shell tools. If you need those, switch the session to Agent, use Open Workspace to mount a folder, and try again."
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again."
         });
         return;
       }
@@ -617,18 +789,67 @@ class ModelService {
     const payload = { requestId, error: message };
     window.webContents.send("chat:error", payload);
   }
+  buildSetAppThemeTool() {
+    return {
+      type: "function",
+      function: {
+        name: "set_app_theme",
+        description: "Change the OpenKiwi application's color theme (Settings → Theme). Only available in Agent mode. If the user is in Chat mode, do not call this; tell them to switch to Agent and use the session toggle.",
+        parameters: {
+          type: "object",
+          properties: {
+            theme_id: {
+              type: "string",
+              enum: [...THEME_IDS],
+              description: "Target theme id (matches Settings theme tiles)."
+            }
+          },
+          required: ["theme_id"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildGetAppThemeTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_app_theme",
+        description: "Return the currently applied OpenKiwi theme (id and display name) and, if available, the previous theme before the last change (so you can answer what theme is active or whether the user can revert). Agent mode only.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildRevertAppThemeTool() {
+    return {
+      type: "function",
+      function: {
+        name: "revert_app_theme",
+        description: "Set the app theme back to the previous theme (undo the most recent theme change from Settings or set_app_theme). Call get_app_theme first if you need to confirm canRevert. Agent mode only.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildWebSearchTool() {
     return {
       type: "function",
       function: {
         name: "web_search",
-        description: "Search the public web for current or general knowledge (news, documentation, error messages, best practices). Use a focused query. Does not read the user’s workspace; use file tools in Agent mode for local code.",
+        description: "Look up public web information via DuckDuckGo (short instant answers, definitions, and a few links—not full page text). Prefer compact queries with distinctive keywords, exact error text in quotes, product/version names, or a year for current events. If the first result is empty or unhelpful, call again with rephrased or narrower terms before concluding failure. Does not read the user’s project; in Agent mode use file tools for local code.",
         parameters: {
           type: "object",
           properties: {
             query: {
               type: "string",
-              description: "Search query in plain language, specific enough to get useful results."
+              description: "One focused search string (not a long paragraph unless needed). Use keywords, quoted phrases, years, or official product/repo names; avoid vague one-word questions unless they are unambiguous."
             }
           },
           required: ["query"],
@@ -645,6 +866,9 @@ class ModelService {
     if (settings.ui.sessionMode === "talk") {
       return tools;
     }
+    tools.push(this.buildSetAppThemeTool());
+    tools.push(this.buildGetAppThemeTool());
+    tools.push(this.buildRevertAppThemeTool());
     if (!workspaceRoot) {
       return tools;
     }
@@ -759,11 +983,16 @@ class ModelService {
   }
   async buildSessionContext(settings, runtime) {
     if (settings.ui.sessionMode === "talk") {
-      const toolLine = settings.ui.webSearch ? 'Talk mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Talk mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
+      const toolLine = settings.ui.webSearch ? 'Chat mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Chat mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
       return this.threadPreamble(runtime) + [
-        '[OpenKiwi model routing — Talk mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms (e.g. "switch Session mode to Agent in Settings" if they need file or shell help).]',
+        '[OpenKiwi model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
         toolLine,
-        "For editing files, running commands, or searching the open project, Agent mode in Settings is required. If the user needs that, say so in plain language.",
+        webHeaderUiStateLine(settings.ui.webSearch),
+        ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
+        "For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.",
+        openkiwiSessionModeEmbedInstruction,
+        openkiwiWebSearchEmbedInstruction,
+        openkiwiThemeInChatModeInstruction,
         "Reply in normal prose. Do not begin with TASK_COMPLETE or NEEDS_INPUT.",
         "The first system message is the user’s preset; follow it except where this block defines tool and mode behavior."
       ].join("\n");
@@ -776,12 +1005,21 @@ class ModelService {
       return [
         "[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]",
         "No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.",
-        webLine
+        "If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.",
+        openkiwiSessionModeEmbedInstruction,
+        openkiwiWebSearchEmbedInstruction,
+        openkiwiSetAppThemeAgentInstruction,
+        webLine,
+        webHeaderUiStateLine(settings.ui.webSearch),
+        ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []
       ].join("\n");
     }
     const files = await this.workspaceService.listFiles(runtime.workspaceRoot);
     const visibleFiles = files.slice(0, 140).map((entry) => `${entry.type === "directory" ? "[dir]" : "[file]"} ${entry.path}`).join("\n");
     const enabledTools = [
+      "set_app_theme",
+      "get_app_theme",
+      "revert_app_theme",
       settings.ui.webSearch ? "web_search" : null,
       settings.tools.workspaceSearch ? "list_files" : null,
       settings.tools.fileRead ? "read_file" : null,
@@ -792,12 +1030,18 @@ class ModelService {
       "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
       "Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.",
       "Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.",
+      "If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.",
+      openkiwiSessionModeEmbedInstruction,
+      openkiwiWebSearchEmbedInstruction,
+      webHeaderUiStateLine(settings.ui.webSearch),
+      openkiwiSetAppThemeAgentInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
       `Approval: ${settings.agent.fullAccess ? "writes/commands run without per-action approval" : "user approval may be required for some writes, deletes, and commands"}.`,
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
+      ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
       "Visible workspace entries (truncated):",
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
@@ -818,6 +1062,58 @@ class ModelService {
         throw new Error("web_search requires a non-empty query.");
       }
       return await searchWeb(query);
+    }
+    if (toolCall.function.name === "set_app_theme") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "set_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!this.applyAppTheme) {
+        throw new Error("Theme changes are not available in this build.");
+      }
+      const themeId = String(args.theme_id ?? "").trim();
+      if (!isThemeId(themeId)) {
+        throw new Error(`Invalid theme_id. Use one of: ${THEME_IDS.join(", ")}.`);
+      }
+      const result = await this.applyAppTheme(themeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+    if (toolCall.function.name === "get_app_theme") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "get_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!this.getAppThemeState) {
+        throw new Error("Theme state is not available in this build.");
+      }
+      return this.getAppThemeState();
+    }
+    if (toolCall.function.name === "revert_app_theme") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "revert_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!this.applyAppTheme || !this.getAppThemeState) {
+        throw new Error("Theme changes are not available in this build.");
+      }
+      let state;
+      try {
+        state = JSON.parse(this.getAppThemeState());
+      } catch {
+        throw new Error("Could not read theme state.");
+      }
+      if (!state.canRevert || !state.previousThemeId || !isThemeId(state.previousThemeId)) {
+        throw new Error(
+          "No previous theme to revert to. The app remembers one step back after a theme change in Settings or via set_app_theme."
+        );
+      }
+      const result = await this.applyAppTheme(state.previousThemeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
     }
     if (!workspaceRoot) {
       throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
@@ -941,6 +1237,15 @@ ${workspaceRoot}`
       }
       default:
         throw new Error(`Unknown tool: ${toolCall.function.name}`);
+    }
+  }
+  patchSettingsThemeFromToolResult(settings, result) {
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed.ok && parsed.themeId && isThemeId(parsed.themeId)) {
+        settings.ui.themeId = parsed.themeId;
+      }
+    } catch {
     }
   }
   async requestApprovalIfNeeded(window, requestId, windowSettings, title, detail) {
@@ -1282,10 +1587,47 @@ const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
-const modelService = new ModelService(workspaceService, commandService);
 let mainWindow = null;
 let activeWorkspaceRoot;
 let currentSettings = defaultSettings;
+let previousThemeId;
+const recordThemeTransition = (from, to) => {
+  if (from !== to) {
+    previousThemeId = from;
+  }
+};
+const applyAppTheme = async (rawId) => {
+  if (!isThemeId(rawId)) {
+    return JSON.stringify({ ok: false, error: `Invalid theme_id. Use one of: ${THEME_IDS.join(", ")}` });
+  }
+  recordThemeTransition(currentSettings.ui.themeId, rawId);
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: { ...currentSettings.ui, themeId: rawId }
+  });
+  mainWindow?.webContents.send("settings:updated", currentSettings);
+  const displayName = getThemeName(rawId);
+  return JSON.stringify({
+    ok: true,
+    themeId: rawId,
+    displayName,
+    message: `Theme set to ${displayName}.`
+  });
+};
+const getAppThemeState = () => {
+  const cur = currentSettings.ui.themeId;
+  const prev = previousThemeId;
+  const canRevert = prev != null && isThemeId(prev);
+  return JSON.stringify({
+    ok: true,
+    themeId: cur,
+    displayName: getThemeName(cur),
+    previousThemeId: prev ?? null,
+    previousDisplayName: prev != null ? getThemeName(prev) : null,
+    canRevert
+  });
+};
+const modelService = new ModelService(workspaceService, commandService, applyAppTheme, getAppThemeState);
 const assertActiveWorkspace = (root) => {
   if (!root) {
     throw new Error("No workspace is active.");
@@ -1359,6 +1701,11 @@ ipcMain.handle("settings:load", async () => {
   return currentSettings;
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
+  const from = currentSettings.ui.themeId;
+  const to = settings.ui.themeId;
+  if (from !== to) {
+    recordThemeTransition(from, to);
+  }
   currentSettings = await settingsStore.save(settings);
   return currentSettings;
 });

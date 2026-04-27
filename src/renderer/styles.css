@@ -499,6 +499,15 @@ html[data-platform='darwin'] .app-shell {
   width: 100%;
   justify-content: space-between;
   gap: 8px;
+  align-items: center;
+}
+
+/* Stacks two label lines; typography comes only from .chat-panel__web-toggle (same as a single line). */
+.chat-thread-options__model-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* Provider + model fields */
@@ -826,6 +835,67 @@ html[data-platform='darwin'] .app-shell {
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--text-0);
+}
+
+/* Segmented Chat / Agent toggle in the header */
+.chat-panel__mode-toggle {
+  -webkit-app-region: no-drag;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 2px;
+}
+
+:root[data-theme='ice-station'] .chat-panel__mode-toggle {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.chat-panel__mode-toggle.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.chat-panel__mode-option {
+  position: relative;
+  z-index: 1;
+  padding: 3px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  text-align: center;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.chat-panel__mode-option.is-active {
+  color: #fff;
+}
+
+.chat-panel__mode-option:not(.is-active):hover:not(:disabled) {
+  color: var(--text-0);
+}
+
+.chat-panel__mode-option:disabled {
+  cursor: default;
+}
+
+.chat-panel__mode-slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  border-radius: 6px;
+  background: var(--accent);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
 }
 
 .chat-panel__model {
@@ -1171,6 +1241,41 @@ details.chat-activity--collapsible {
   color: var(--text-0);
   line-height: 1.6;
   word-break: break-word;
+}
+
+/* Inline UI from model placeholders: [[OPENKIWI_SESSION_MODE_TOGGLE]], [[OPENKIWI_WEB_SEARCH_TOGGLE]] */
+.message-embed {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme='ice-station'] .message-embed,
+:root[data-theme='kiwi'] .message-embed {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.message-embed--session-mode .message-embed__row,
+.message-embed--web-search .message-embed__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.message-embed__label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.message-embed__toggle {
+  flex-shrink: 0;
 }
 
 /* Markdown in chat (assistant/user bubbles) */

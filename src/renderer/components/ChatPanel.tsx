@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ChatActivity, ChatAttachment, ChatTimelineEntry, SessionMode } from '@shared/types';
+import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
 
 interface ChatPanelProps {
@@ -25,6 +27,10 @@ interface ChatPanelProps {
   onRemoveAttachment: (id: string) => void;
   onSend: () => void;
   onStop: () => void;
+  /** Toggle Chat ↔ Agent; persisted with settings. */
+  onSessionModeToggle: () => void;
+  /** True while settings are not loaded (toggle no-ops). */
+  sessionModeToggleDisabled?: boolean;
 }
 
 const activityLabelMap = {
@@ -205,7 +211,9 @@ export function ChatPanel({
   onAttachImages,
   onRemoveAttachment,
   onSend,
-  onStop
+  onStop,
+  onSessionModeToggle,
+  sessionModeToggleDisabled = false
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -321,7 +329,30 @@ export function ChatPanel({
       <div className="chat-panel__header">
         <div className="chat-panel__header-left">
           <div className="chat-panel__header-titles">
-            <h2 className="chat-panel__title">{isTalk ? 'Chat' : 'Agent'}</h2>
+            <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
+              <button
+                className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
+                disabled={sessionModeToggleDisabled}
+                onClick={() => { if (!isTalk) onSessionModeToggle(); }}
+                title="Chat mode (no tools)"
+                type="button"
+              >
+                Chat
+              </button>
+              <button
+                className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
+                disabled={sessionModeToggleDisabled}
+                onClick={() => { if (isTalk) onSessionModeToggle(); }}
+                title="Agent mode (tools & workspace)"
+                type="button"
+              >
+                Agent
+              </button>
+              <span
+                className="chat-panel__mode-slider"
+                style={{ transform: isTalk ? 'translateX(0)' : 'translateX(100%)' }}
+              />
+            </div>
             <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
           </div>
           <span className="chat-panel__session" title={sessionSubheading}>
@@ -331,7 +362,7 @@ export function ChatPanel({
         <div className="chat-panel__header-right">
           <label
             className={`chat-panel__web-toggle ${webSearchDisabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
-            title="Allow the model to call web_search (DuckDuckGo) in Talk or Agent"
+            title="Allow the model to call web_search (DuckDuckGo) in Chat or Agent"
           >
             <input
               checked={webSearch}
@@ -369,7 +400,7 @@ export function ChatPanel({
             <p className="chat-empty__desc">
               {providerConnected
                 ? isTalk
-                  ? 'You\'re in Talk mode. Ask anything or switch to Agent for tools and file access.'
+                  ? 'You\'re in Chat mode. Ask anything or switch to Agent for tools and file access.'
                   : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.`
                 : 'Connect a provider in Settings, then click Test + Refresh to get started.'}
             </p>
@@ -426,7 +457,23 @@ export function ChatPanel({
               ) : null}
               {message.content !== '' || message.status === 'done' || message.status === 'error' ? (
                 <div className="chat-bubble__text">
-                  <ChatMarkdown text={message.content} />
+                  {message.role === 'assistant' ? (
+                    <AssistantMessageContent
+                      onSessionModeToggle={onSessionModeToggle}
+                      onWebSearchChange={onWebSearchChange}
+                      sessionMode={sessionMode}
+                      sessionModeToggleDisabled={sessionModeToggleDisabled}
+                      text={message.content}
+                      webSearch={webSearch}
+                      webSearchDisabled={webSearchDisabled}
+                    />
+                  ) : (
+                    <ChatMarkdown
+                      text={message.content
+                        .replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, '')
+                        .replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, '')}
+                    />
+                  )}
                 </div>
               ) : null}
             </motion.article>

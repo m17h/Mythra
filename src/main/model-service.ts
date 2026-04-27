@@ -18,6 +18,8 @@ import type {
   ModelInfo,
   ProviderKind
 } from '@shared/types';
+import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+import { isThemeId, THEME_IDS } from '@shared/themes';
 import { CommandService } from './command-service';
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
@@ -69,6 +71,24 @@ const COMPLETION_MARKER = 'TASK_COMPLETE';
 const INPUT_MARKER = 'NEEDS_INPUT';
 const normalizeAssistantContent = (content: string) =>
   content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, 'i'), '').trim();
+
+/** Shown in the second system block so models can emit a placeholder replaced by a real UI control in the client. */
+const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use when explaining how to change session mode (e.g. user wants files or tools in Chat mode, or only chat in Agent mode). Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+
+const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OPENKIWI_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
+
+/** Lets the model know whether emitting the web embed token is appropriate. */
+const webHeaderUiStateLine = (webOn: boolean) =>
+  webOn
+    ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.`
+    : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
+
+/** Shown when web_search is enabled; DuckDuckGo instant answers are not full search pages. */
+const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
+
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_app_theme, or revert_app_theme). If the user asks what theme is active, to change the theme, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+
+const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): theme tools — get_app_theme returns the active theme id and display name plus the previous theme (if any) so you can answer "what theme is this?" or decide how to revert; set_app_theme applies a theme by id; revert_app_theme restores the previous theme after a change (Settings or an earlier tool call in this session). Valid theme_id values: ${THEME_IDS.join(', ')} (Settings → Theme: Neon Grid, Sunset Terminal, Ice Station, Kiwi). After a successful theme change, reply in one short sentence.`;
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -166,7 +186,11 @@ export class ModelService {
 
   constructor(
     private readonly workspaceService: WorkspaceService,
-    private readonly commandService: CommandService
+    private readonly commandService: CommandService,
+    /** Apply theme from `set_app_theme` / `revert_app_theme`; returns JSON string for the tool result. */
+    private readonly applyAppTheme?: (rawThemeId: string) => Promise<string>,
+    /** Current + previous theme for `get_app_theme` / `revert_app_theme`; returns JSON string. */
+    private readonly getAppThemeState?: () => string
   ) {}
 
   async listModels(settings: AppSettings, providerKind?: ProviderKind): Promise<ModelInfo[]> {
@@ -428,7 +452,7 @@ export class ModelService {
         finish({
           requestId,
           content:
-            'In Talk mode the assistant cannot use file or shell tools. If you need those, switch the session to Agent, use Open Workspace to mount a folder, and try again.'
+            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.'
         });
         return;
       }
@@ -457,7 +481,7 @@ export class ModelService {
         finish({
           requestId,
           content:
-            'In Talk mode the assistant cannot use file or shell tools. If you need those, switch the session to Agent, use Open Workspace to mount a folder, and try again.'
+            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.'
         });
         return;
       }
@@ -485,20 +509,81 @@ export class ModelService {
     window.webContents.send('chat:error', payload);
   }
 
+  private buildSetAppThemeTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'set_app_theme',
+        description:
+          "Change the OpenKiwi application's color theme (Settings → Theme). Only available in Agent mode. " +
+          'If the user is in Chat mode, do not call this; tell them to switch to Agent and use the session toggle.',
+        parameters: {
+          type: 'object',
+          properties: {
+            theme_id: {
+              type: 'string',
+              enum: [...THEME_IDS],
+              description: 'Target theme id (matches Settings theme tiles).'
+            }
+          },
+          required: ['theme_id'],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
+  private buildGetAppThemeTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'get_app_theme',
+        description:
+          'Return the currently applied OpenKiwi theme (id and display name) and, if available, the previous theme before the last change ' +
+          '(so you can answer what theme is active or whether the user can revert). Agent mode only.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
+  private buildRevertAppThemeTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'revert_app_theme',
+        description:
+          'Set the app theme back to the previous theme (undo the most recent theme change from Settings or set_app_theme). ' +
+          'Call get_app_theme first if you need to confirm canRevert. Agent mode only.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
   private buildWebSearchTool(): ChatCompletionTool {
     return {
       type: 'function',
       function: {
         name: 'web_search',
         description:
-          'Search the public web for current or general knowledge (news, documentation, error messages, best practices). ' +
-          'Use a focused query. Does not read the user’s workspace; use file tools in Agent mode for local code.',
+          'Look up public web information via DuckDuckGo (short instant answers, definitions, and a few links—not full page text). ' +
+          'Prefer compact queries with distinctive keywords, exact error text in quotes, product/version names, or a year for current events. ' +
+          'If the first result is empty or unhelpful, call again with rephrased or narrower terms before concluding failure. ' +
+          'Does not read the user’s project; in Agent mode use file tools for local code.',
         parameters: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'Search query in plain language, specific enough to get useful results.'
+              description:
+                'One focused search string (not a long paragraph unless needed). Use keywords, quoted phrases, years, or official product/repo names; avoid vague one-word questions unless they are unambiguous.'
             }
           },
           required: ['query'],
@@ -517,6 +602,10 @@ export class ModelService {
     if (settings.ui.sessionMode === 'talk') {
       return tools;
     }
+
+    tools.push(this.buildSetAppThemeTool());
+    tools.push(this.buildGetAppThemeTool());
+    tools.push(this.buildRevertAppThemeTool());
 
     if (!workspaceRoot) {
       return tools;
@@ -642,15 +731,20 @@ export class ModelService {
   private async buildSessionContext(settings: AppSettings, runtime: ChatRuntimeContext) {
     if (settings.ui.sessionMode === 'talk') {
       const toolLine = settings.ui.webSearch
-        ? 'Talk mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).'
-        : 'Talk mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
+        ? 'Chat mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).'
+        : 'Chat mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
 
       return (
         this.threadPreamble(runtime) +
         [
-          '[OpenKiwi model routing — Talk mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms (e.g. "switch Session mode to Agent in Settings" if they need file or shell help).]',
+          '[OpenKiwi model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
           toolLine,
-          'For editing files, running commands, or searching the open project, Agent mode in Settings is required. If the user needs that, say so in plain language.',
+          webHeaderUiStateLine(settings.ui.webSearch),
+          ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []),
+          'For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.',
+          openkiwiSessionModeEmbedInstruction,
+          openkiwiWebSearchEmbedInstruction,
+          openkiwiThemeInChatModeInstruction,
           'Reply in normal prose. Do not begin with TASK_COMPLETE or NEEDS_INPUT.',
           'The first system message is the user’s preset; follow it except where this block defines tool and mode behavior.'
         ].join('\n')
@@ -668,7 +762,13 @@ export class ModelService {
       return [
         '[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]',
         'No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.',
-        webLine
+        'If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.',
+        openkiwiSessionModeEmbedInstruction,
+        openkiwiWebSearchEmbedInstruction,
+        openkiwiSetAppThemeAgentInstruction,
+        webLine,
+        webHeaderUiStateLine(settings.ui.webSearch),
+        ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [])
       ].join('\n');
     }
 
@@ -679,6 +779,9 @@ export class ModelService {
       .join('\n');
 
     const enabledTools = [
+      'set_app_theme',
+      'get_app_theme',
+      'revert_app_theme',
       settings.ui.webSearch ? 'web_search' : null,
       settings.tools.workspaceSearch ? 'list_files' : null,
       settings.tools.fileRead ? 'read_file' : null,
@@ -692,12 +795,18 @@ export class ModelService {
       '[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]',
       'Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.',
       'Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.',
+      'If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.',
+      openkiwiSessionModeEmbedInstruction,
+      openkiwiWebSearchEmbedInstruction,
+      webHeaderUiStateLine(settings.ui.webSearch),
+      openkiwiSetAppThemeAgentInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : 'none'}`,
       `Enabled tools: ${enabledTools || 'none'}`,
       `Approval: ${settings.agent.fullAccess ? 'writes/commands run without per-action approval' : 'user approval may be required for some writes, deletes, and commands'}.`,
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
+      ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []),
       'Visible workspace entries (truncated):',
       visibleFiles || '[workspace appears empty]'
     ].join('\n');
@@ -726,6 +835,61 @@ export class ModelService {
         throw new Error('web_search requires a non-empty query.');
       }
       return await searchWeb(query);
+    }
+
+    if (toolCall.function.name === 'set_app_theme') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'set_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!this.applyAppTheme) {
+        throw new Error('Theme changes are not available in this build.');
+      }
+      const themeId = String((args as { theme_id?: string }).theme_id ?? '').trim();
+      if (!isThemeId(themeId)) {
+        throw new Error(`Invalid theme_id. Use one of: ${THEME_IDS.join(', ')}.`);
+      }
+      const result = await this.applyAppTheme(themeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+
+    if (toolCall.function.name === 'get_app_theme') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'get_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!this.getAppThemeState) {
+        throw new Error('Theme state is not available in this build.');
+      }
+      return this.getAppThemeState();
+    }
+
+    if (toolCall.function.name === 'revert_app_theme') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'revert_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!this.applyAppTheme || !this.getAppThemeState) {
+        throw new Error('Theme changes are not available in this build.');
+      }
+      let state: { canRevert?: boolean; previousThemeId?: string | null };
+      try {
+        state = JSON.parse(this.getAppThemeState()) as { canRevert?: boolean; previousThemeId?: string | null };
+      } catch {
+        throw new Error('Could not read theme state.');
+      }
+      if (!state.canRevert || !state.previousThemeId || !isThemeId(state.previousThemeId)) {
+        throw new Error(
+          'No previous theme to revert to. The app remembers one step back after a theme change in Settings or via set_app_theme.'
+        );
+      }
+      const result = await this.applyAppTheme(state.previousThemeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
     }
 
     if (!workspaceRoot) {
@@ -858,6 +1022,17 @@ export class ModelService {
 
       default:
         throw new Error(`Unknown tool: ${toolCall.function.name}`);
+    }
+  }
+
+  private patchSettingsThemeFromToolResult(settings: AppSettings, result: string) {
+    try {
+      const parsed = JSON.parse(result) as { ok?: boolean; themeId?: string };
+      if (parsed.ok && parsed.themeId && isThemeId(parsed.themeId)) {
+        settings.ui.themeId = parsed.themeId;
+      }
+    } catch {
+      // ignore malformed tool JSON
     }
   }
 

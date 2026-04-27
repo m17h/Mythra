@@ -74,6 +74,11 @@ const electronAPI = {
     ipcRenderer.on('workspace:changed', listener);
     return () => ipcRenderer.removeListener('workspace:changed', listener);
   },
+  onSettingsUpdated: (callback: (settings: AppSettings) => void) => {
+    const listener = (_event: unknown, settings: AppSettings) => callback(settings);
+    ipcRenderer.on('settings:updated', listener);
+    return () => ipcRenderer.removeListener('settings:updated', listener);
+  },
   listChats: () => ipcRenderer.invoke('chats:list') as Promise<SavedChatMeta[]>,
   loadChat: (id: string) => ipcRenderer.invoke('chats:load', id) as Promise<SavedChat | null>,
   saveChat: (chat: SavedChat) => ipcRenderer.invoke('chats:save', chat) as Promise<void>,

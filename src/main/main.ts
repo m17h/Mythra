@@ -7,17 +7,60 @@ import { CommandService } from './command-service';
 import { ModelService } from './model-service';
 import { SettingsStore } from './settings-store';
 import { WorkspaceService } from './workspace-service';
+import { getThemeName, isThemeId, THEME_IDS, type ThemeId } from '@shared/themes';
 import { defaultSettings, type AppSettings, type ChatMessage, type SavedChat } from '@shared/types';
 
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
-const modelService = new ModelService(workspaceService, commandService);
 
 let mainWindow: BrowserWindow | null = null;
 let activeWorkspaceRoot: string | undefined;
 let currentSettings: AppSettings = defaultSettings;
+/** Last theme before the most recent change (Settings or tool); used for revert_app_theme. */
+let previousThemeId: ThemeId | undefined;
+
+const recordThemeTransition = (from: ThemeId, to: ThemeId) => {
+  if (from !== to) {
+    previousThemeId = from;
+  }
+};
+
+const applyAppTheme = async (rawId: string) => {
+  if (!isThemeId(rawId)) {
+    return JSON.stringify({ ok: false, error: `Invalid theme_id. Use one of: ${THEME_IDS.join(', ')}` });
+  }
+  recordThemeTransition(currentSettings.ui.themeId, rawId);
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: { ...currentSettings.ui, themeId: rawId }
+  });
+  mainWindow?.webContents.send('settings:updated', currentSettings);
+  const displayName = getThemeName(rawId);
+  return JSON.stringify({
+    ok: true,
+    themeId: rawId,
+    displayName,
+    message: `Theme set to ${displayName}.`
+  });
+};
+
+const getAppThemeState = () => {
+  const cur = currentSettings.ui.themeId;
+  const prev = previousThemeId;
+  const canRevert = prev != null && isThemeId(prev);
+  return JSON.stringify({
+    ok: true,
+    themeId: cur,
+    displayName: getThemeName(cur),
+    previousThemeId: prev ?? null,
+    previousDisplayName: prev != null ? getThemeName(prev) : null,
+    canRevert
+  });
+};
+
+const modelService = new ModelService(workspaceService, commandService, applyAppTheme, getAppThemeState);
 
 const assertActiveWorkspace = (root: string | undefined) => {
   if (!root) {
@@ -110,6 +153,11 @@ ipcMain.handle('settings:load', async () => {
   return currentSettings;
 });
 ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
+  const from = currentSettings.ui.themeId;
+  const to = settings.ui.themeId;
+  if (from !== to) {
+    recordThemeTransition(from, to);
+  }
   currentSettings = await settingsStore.save(settings);
   return currentSettings;
 });

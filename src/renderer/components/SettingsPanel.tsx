@@ -118,10 +118,16 @@ export function SettingsPanel({
             </select>
           </label>
 
-          <label className="field">
-            <span>Base URL</span>
-            <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
-          </label>
+          {isLmStudio ? (
+            <label className="field">
+              <span>Base URL</span>
+              <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
+            </label>
+          ) : (
+            <p className="inline-hint">
+              OpenRouter uses the official API at the default endpoint—no base URL to set here. Choose LM Studio above if you need a local or custom server URL.
+            </p>
+          )}
 
           <label className="field">
             <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
@@ -243,7 +249,7 @@ export function SettingsPanel({
                 onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'talk' } })}
                 type="button"
               >
-                Talk
+                Chat
               </button>
               <button
                 className={`session-mode-toggle__option ${settings.ui.sessionMode === 'agent' ? 'is-active' : ''}`}

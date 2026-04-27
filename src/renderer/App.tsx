@@ -21,6 +21,7 @@ import {
   type ModelInfo,
   type OpenFile,
   type ProviderKind,
+  type SessionMode,
   type SavedChat,
   type SavedChatMeta,
   type WorkspaceNode
@@ -337,6 +338,9 @@ export function App() {
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
     });
+    const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
+      setSettings(next);
+    });
     const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
       async ({ root, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root);
@@ -375,6 +379,7 @@ export function App() {
       offDoneChat();
       offError();
       offActivity();
+      offSettingsUpdated();
       offWorkspaceChanged();
     };
   }, []);
@@ -512,6 +517,20 @@ export function App() {
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Web search setting not saved: ${m}`);
+    }
+  }, []);
+
+  const handleSessionModeToggle = useCallback(async () => {
+    const s = settingsRef.current;
+    if (!s) return;
+    const nextMode: SessionMode = s.ui.sessionMode === 'talk' ? 'agent' : 'talk';
+    const updated: AppSettings = { ...s, ui: { ...s.ui, sessionMode: nextMode } };
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Session mode not saved: ${m}`);
     }
   }, []);
 
@@ -915,7 +934,10 @@ export function App() {
                                     }}
                                     type="checkbox"
                                   />
-                                  <span>Use a specific model</span>
+                                  <span className="chat-thread-options__model-toggle-text">
+                                    <span>Use a specific model</span>
+                                    <span>only for this chat</span>
+                                  </span>
                                   <span className="chat-panel__web-toggle-track">
                                     <span className="chat-panel__web-toggle-knob" />
                                   </span>
@@ -1158,6 +1180,8 @@ export function App() {
             webSearch={settings?.ui.webSearch ?? false}
             webSearchDisabled={!settings}
             onWebSearchChange={handleWebSearchChange}
+            onSessionModeToggle={handleSessionModeToggle}
+            sessionModeToggleDisabled={!settings}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}

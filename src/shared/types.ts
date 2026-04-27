@@ -1,4 +1,5 @@
 import { getPromptPreset } from './prompt-presets';
+import type { ThemeId } from './themes';
 
 export type ProviderKind = 'lmstudio' | 'openrouter';
 
@@ -39,10 +40,10 @@ export interface ToolPermissions {
 export type SessionMode = 'agent' | 'talk';
 
 export interface UiSettings {
-  themeId: 'neon-grid' | 'sunset-terminal' | 'ice-station' | 'kiwi';
-  /** Agent: workspace, tools, and autonomous run markers. Talk: plain chat, no file tools. */
+  themeId: ThemeId;
+  /** Agent: workspace, tools, and autonomous run markers. Chat (`talk`): plain chat, no file tools. */
   sessionMode: SessionMode;
-  /** When on, the `web_search` tool is available in both Talk and Agent (public web via built-in search). */
+  /** When on, the `web_search` tool is available in both Chat and Agent (public web via built-in search). */
   webSearch: boolean;
   /**
    * Per-provider favorited model ids (matches catalog `id` for that provider).
