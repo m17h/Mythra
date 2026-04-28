@@ -21,6 +21,10 @@ export function CommandDeck({
 }: CommandDeckProps) {
   return (
     <section className="command-deck">
+      <p className="command-deck__lede">
+        Terminal for your <strong>open workspace folder</strong> (build, git, scripts)—not browser DevTools. Output streams
+        below.
+      </p>
       <div className="command-deck__header">
         <div>
           <div className="section-kicker">Command Deck</div>

@@ -114,10 +114,6 @@ export function SettingsPanel({
     }
   };
 
-  const activeCustom = provider.activeCustomPresetId
-    ? provider.customPromptPresets.find((c) => c.id === provider.activeCustomPresetId)
-    : undefined;
-
   return (
     <section className="panel settings-panel">
       <div className="settings-panel__header">
@@ -230,13 +226,9 @@ export function SettingsPanel({
             <PromptPresetMenu onPatch={updateProvider} provider={provider} />
           </label>
 
-          <div className="inline-hint">
-            {provider.promptPresetId === 'custom'
-              ? activeCustom
-                ? `Editing “${activeCustom.name}.” The prompt text syncs to this preset. Preset → Custom → Save, New, rename, and delete are written to disk right away. Use the header Save for connection, tools, theme, and the rest.`
-                : 'Custom prompt. Open Preset → Custom for New, Save, load, rename, or delete. Preset list changes are saved to disk when you use those actions. Use the header Save for connection, tools, and theme.'
-              : getPromptPreset(provider.promptPresetId).description}
-          </div>
+          {provider.promptPresetId !== 'custom' ? (
+            <div className="inline-hint">{getPromptPreset(provider.promptPresetId).description}</div>
+          ) : null}
 
           <label className="field">
             <span>Prompt</span>

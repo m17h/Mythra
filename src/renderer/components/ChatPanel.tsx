@@ -5,6 +5,41 @@ import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@share
 import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
 
+function getCopyableMessageText(content: string): string {
+  return content
+    .replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, '')
+    .replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, '')
+    .trim();
+}
+
+function CopyMessageIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return (
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          d="M20 6L9 17l-5-5"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect width="14" height="14" x="8" y="8" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 interface ChatPanelProps {
   timeline: ChatTimelineEntry[];
   input: string;
@@ -218,6 +253,8 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   /** User is within this many px of the bottom, or we just forced scroll (e.g. new content). */
   const userNearBottomRef = useRef(true);
 
@@ -247,6 +284,28 @@ export function ChatPanel({
     if (!n) return;
     const nearBottom = n.scrollHeight - n.clientHeight - n.scrollTop < 120;
     userNearBottomRef.current = nearBottom;
+  }, []);
+
+  const handleCopyMessage = useCallback(async (messageId: string, rawContent: string) => {
+    const text = getCopyableMessageText(rawContent);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+      setCopiedMessageId(messageId);
+      copyToastTimerRef.current = setTimeout(() => {
+        setCopiedMessageId((cur) => (cur === messageId ? null : cur));
+        copyToastTimerRef.current = null;
+      }, 2000);
+    } catch {
+      // Clipboard may be denied in some environments
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -441,7 +500,20 @@ export function ChatPanel({
               key={entry.id}
               transition={{ duration: 0.22, ease: 'easeOut' }}
             >
-              <header>{message.role === 'user' ? 'You' : 'Assistant'}</header>
+              <header className="chat-bubble__header">
+                <span className="chat-bubble__header-title">{message.role === 'user' ? 'You' : 'Assistant'}</span>
+                {getCopyableMessageText(message.content).length > 0 ? (
+                  <button
+                    className={`chat-bubble__copy${copiedMessageId === entry.id ? ' is-done' : ''}`}
+                    aria-label={copiedMessageId === entry.id ? 'Copied' : 'Copy message'}
+                    title={copiedMessageId === entry.id ? 'Copied' : 'Copy'}
+                    type="button"
+                    onClick={() => void handleCopyMessage(entry.id, message.content)}
+                  >
+                    <CopyMessageIcon copied={copiedMessageId === entry.id} />
+                  </button>
+                ) : null}
+              </header>
               {message.role === 'assistant' && message.reasoning?.trim() ? (
                 <ThinkingBlock reasoning={message.reasoning.trim()} />
               ) : null}
