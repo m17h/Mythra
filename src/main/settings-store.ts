@@ -20,6 +20,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       ...saved?.providers?.openrouter
     }
   },
+  search: {
+    ...defaultSettings.search,
+    ...saved?.search
+  },
   tools: {
     ...defaultSettings.tools,
     ...saved?.tools

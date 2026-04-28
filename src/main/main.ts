@@ -91,6 +91,7 @@ const sanitizeRuntime = (runtime: { workspaceRoot?: string; activeFilePath?: str
 
 const sanitizeChatSettings = (requested: AppSettings): AppSettings => ({
   ...requested,
+  search: currentSettings.search,
   tools: currentSettings.tools,
   agent: currentSettings.agent,
   ui: {

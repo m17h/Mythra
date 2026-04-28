@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import openkiwiLogo from '@renderer/assets/openkiwi.png';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
+import { AppSelect } from './components/AppSelect';
 import { ChatPanel } from './components/ChatPanel';
 import { CommandDeck } from './components/CommandDeck';
 import { ModelSearch } from './components/ModelSearch';
@@ -39,6 +40,19 @@ const pickDefaultModel = (modelList: ModelInfo[], currentModel?: string) => {
   if (currentModel && modelList.some((m) => m.id === currentModel)) return currentModel;
   const preferred = modelList.find((m) => !isEmbeddingModel(m.id));
   return preferred?.id ?? modelList[0]?.id ?? '';
+};
+const providerOptions: Array<{ value: ProviderKind; label: string }> = [
+  { value: 'lmstudio', label: 'LM Studio' },
+  { value: 'openrouter', label: 'OpenRouter' }
+];
+const needsSearchApiKeyNotice = (settings: AppSettings) => {
+  if (settings.search.provider === 'tavily') {
+    return settings.search.tavilyApiKey.trim().length === 0;
+  }
+  if (settings.search.provider === 'brave') {
+    return settings.search.braveApiKey.trim().length === 0;
+  }
+  return true;
 };
 
 const chatTitle = (messages: ChatMessage[]) => {
@@ -126,6 +140,8 @@ export function App() {
   const [lastCommandResult, setLastCommandResult] = useState<CommandResult>();
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
+  const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
+  const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
 
@@ -514,10 +530,19 @@ export function App() {
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
+      if (next && needsSearchApiKeyNotice(saved)) {
+        setShowWebSearchNotice(true);
+      }
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Web search setting not saved: ${m}`);
     }
+  }, []);
+
+  const jumpToSearchSettings = useCallback(() => {
+    setShowWebSearchNotice(false);
+    setInspectorTab('settings');
+    setSearchSettingsFocusKey((key) => key + 1);
   }, []);
 
   const handleSessionModeToggle = useCallback(async () => {
@@ -787,6 +812,44 @@ export function App() {
   return (
     <div className="app-shell">
       <div className="background-grid" />
+      <AnimatePresence>
+        {showWebSearchNotice ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            role="presentation"
+          >
+            <motion.div
+              aria-modal="true"
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="app-dialog"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">Web Search</div>
+              <h3>Search works better with an API key</h3>
+              <p>
+                OpenKiwi can search without a key, but the built-in DuckDuckGo fallback only returns short instant
+                answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key
+                in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web
+                search option.
+              </p>
+              <div className="app-dialog__actions">
+                <button className="btn btn--secondary" onClick={() => setShowWebSearchNotice(false)} type="button">
+                  Not now
+                </button>
+                <button className="btn btn--primary" onClick={jumpToSearchSettings} type="button">
+                  Add API key
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {isDarwin ? <div aria-hidden className="app-titlebar" /> : null}
       <main className="layout layout--atomic">
         <motion.aside
@@ -956,10 +1019,11 @@ export function App() {
                                       <div className="chat-thread-options__fields">
                                         <label className="chat-thread-options__field">
                                           <span className="chat-thread-options__field-label">Provider</span>
-                                          <select
-                                            className="chat-thread-options__select"
-                                            onChange={async (e) => {
-                                              const p = e.target.value as ProviderKind;
+                                          <AppSelect
+                                            className="app-select--compact"
+                                            options={providerOptions}
+                                            portalDropdown
+                                            onChange={async (p) => {
                                               setOverrideModelProvider(p);
                                               if (!settings) return;
                                               const list = await window.electronAPI.listModels(settings, p);
@@ -969,10 +1033,7 @@ export function App() {
                                               }
                                             }}
                                             value={overrideModelProvider}
-                                          >
-                                            <option value="lmstudio">LM Studio</option>
-                                            <option value="openrouter">OpenRouter</option>
-                                          </select>
+                                          />
                                         </label>
                                         <div className="chat-thread-options__field">
                                           <span className="chat-thread-options__field-label">Model</span>
@@ -1255,6 +1316,7 @@ export function App() {
                 ) : null}
                 {inspectorTab === 'settings' && settings ? (
                   <SettingsPanel
+                    focusSearchSettingsKey={searchSettingsFocusKey}
                     modelOptions={models}
                     onChange={setSettings}
                     onPresetPersist={persistAfterPresetAction}

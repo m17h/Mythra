@@ -834,7 +834,7 @@ export class ModelService {
       if (!query) {
         throw new Error('web_search requires a non-empty query.');
       }
-      return await searchWeb(query);
+      return await searchWeb(query, settings.search);
     }
 
     if (toolCall.function.name === 'set_app_theme') {

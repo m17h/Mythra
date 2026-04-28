@@ -38,6 +38,13 @@ export interface ToolPermissions {
 }
 
 export type SessionMode = 'agent' | 'talk';
+export type SearchProvider = 'duckduckgo' | 'tavily' | 'brave';
+
+export interface SearchSettings {
+  provider: SearchProvider;
+  tavilyApiKey: string;
+  braveApiKey: string;
+}
 
 export interface UiSettings {
   themeId: ThemeId;
@@ -61,6 +68,7 @@ export interface AgentSettings {
 export interface AppSettings {
   selectedProvider: ProviderKind;
   providers: Record<ProviderKind, ProviderProfile>;
+  search: SearchSettings;
   tools: ToolPermissions;
   agent: AgentSettings;
   ui: UiSettings;
@@ -215,6 +223,11 @@ export const defaultSettings: AppSettings = {
       appName: 'OpenKiwi',
       appUrl: 'https://example.local'
     }
+  },
+  search: {
+    provider: 'duckduckgo',
+    tavilyApiKey: '',
+    braveApiKey: ''
   },
   tools: {
     fileRead: true,

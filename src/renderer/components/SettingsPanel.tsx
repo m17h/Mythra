@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind } from '@shared/types';
+import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SearchProvider } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getPromptPreset } from '@shared/prompt-presets';
+import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
 import { PromptPresetMenu, type PresetPatchOptions } from './PromptPresetMenu';
 
@@ -14,11 +15,18 @@ interface SettingsPanelProps {
   /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
+  focusSearchSettingsKey?: number;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
   { value: 'openrouter', label: 'OpenRouter' }
+];
+
+const searchProviderOptions: Array<{ value: SearchProvider; label: string }> = [
+  { value: 'duckduckgo', label: 'DuckDuckGo fallback' },
+  { value: 'tavily', label: 'Tavily' },
+  { value: 'brave', label: 'Brave Search' }
 ];
 
 const HEADER_SAVE_ACK_MS = 1500;
@@ -30,10 +38,12 @@ export function SettingsPanel({
   onChange,
   onSave,
   onPresetPersist,
-  onRefreshModels
+  onRefreshModels,
+  focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [headerSaveAck, setHeaderSaveAck] = useState(false);
   const saveAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(
     () => () => {
@@ -42,9 +52,26 @@ export function SettingsPanel({
     []
   );
 
+  useEffect(() => {
+    if (focusSearchSettingsKey <= 0) return;
+    searchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    searchSectionRef.current?.classList.add('settings-section--focus-pulse');
+    const timer = setTimeout(() => {
+      searchSectionRef.current?.classList.remove('settings-section--focus-pulse');
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [focusSearchSettingsKey]);
+
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === 'lmstudio';
   const isOpenRouter = settings.selectedProvider === 'openrouter';
+  const activeSearchProvider = settings.search.provider;
+  const activeSearchHasKey =
+    activeSearchProvider === 'tavily'
+      ? Boolean(settings.search.tavilyApiKey.trim())
+      : activeSearchProvider === 'brave'
+        ? Boolean(settings.search.braveApiKey.trim())
+        : false;
 
   const updateProvider = (patch: Partial<typeof provider>, opts?: PresetPatchOptions) => {
     const next: AppSettings = {
@@ -56,6 +83,18 @@ export function SettingsPanel({
     };
     onChange(next);
     if (opts?.persist) void onPresetPersist(next);
+  };
+
+  const updateSearch = (patch: Partial<AppSettings['search']>, persist = false) => {
+    const next: AppSettings = {
+      ...settings,
+      search: {
+        ...settings.search,
+        ...patch
+      }
+    };
+    onChange(next);
+    if (persist) void onPresetPersist(next);
   };
 
   const onHeaderSave = async () => {
@@ -108,14 +147,11 @@ export function SettingsPanel({
 
           <label className="field">
             <span>Provider</span>
-            <select
+            <AppSelect
+              options={providerOptions}
               value={settings.selectedProvider}
-              onChange={(e) => onChange({ ...settings, selectedProvider: e.target.value as ProviderKind })}
-            >
-              {providerOptions.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
+              onChange={(providerKind) => onChange({ ...settings, selectedProvider: providerKind })}
+            />
           </label>
 
           {isLmStudio ? (
@@ -224,6 +260,53 @@ export function SettingsPanel({
               value={provider.systemPrompt}
             />
           </label>
+        </div>
+
+        <div className="settings-section" ref={searchSectionRef}>
+          <h4 className="settings-section__title">Web Search</h4>
+
+          <label className="field">
+            <span>Search Provider</span>
+            <AppSelect
+              options={searchProviderOptions}
+              onChange={(providerKind) => updateSearch({ provider: providerKind }, true)}
+              value={activeSearchProvider}
+            />
+          </label>
+
+          <div className="inline-hint">
+            DuckDuckGo works without a key, but it only returns instant answers and is often thin. Tavily is recommended
+            for AI-ready search. Brave Search is a strong general web-search option.
+          </div>
+
+          <label className="field">
+            <span>Tavily API Key</span>
+            <input
+              autoComplete="off"
+              onChange={(e) => updateSearch({ tavilyApiKey: e.target.value })}
+              placeholder="tvly-..."
+              type="password"
+              value={settings.search.tavilyApiKey}
+            />
+          </label>
+
+          <label className="field">
+            <span>Brave Search API Key</span>
+            <input
+              autoComplete="off"
+              onChange={(e) => updateSearch({ braveApiKey: e.target.value })}
+              placeholder="BSA..."
+              type="password"
+              value={settings.search.braveApiKey}
+            />
+          </label>
+
+          {activeSearchProvider !== 'duckduckgo' && !activeSearchHasKey ? (
+            <div className="inline-hint inline-hint--warning">
+              Add and save an API key for {activeSearchProvider === 'tavily' ? 'Tavily' : 'Brave Search'}, or OpenKiwi
+              will fall back to DuckDuckGo instant answers.
+            </div>
+          ) : null}
         </div>
 
         <div className="settings-section">

@@ -14,7 +14,7 @@ export function WebSearchMessageEmbed({ webSearch, onWebSearchChange, disabled }
         <span className="message-embed__label">Web search</span>
         <label
           className={`chat-panel__web-toggle message-embed__toggle ${disabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
-          title="Allow the model to call web_search (DuckDuckGo) in Chat or Agent"
+          title="Allow the model to call web_search in Chat or Agent"
         >
           <input
             checked={webSearch}

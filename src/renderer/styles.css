@@ -177,6 +177,54 @@ html[data-platform='darwin'] .app-shell {
   pointer-events: none;
 }
 
+.app-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 6, 16, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.app-dialog {
+  width: min(440px, 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
+}
+
+.app-dialog__kicker {
+  color: var(--accent-light);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.app-dialog h3 {
+  margin: 6px 0 8px;
+  color: var(--text-0);
+  font-size: 1.05rem;
+}
+
+.app-dialog p {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.app-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 /* ───────────────── Layout ───────────────── */
 
 .layout {
@@ -529,21 +577,6 @@ html[data-platform='darwin'] .app-shell {
   color: var(--text-2);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-}
-
-.chat-thread-options__select {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.2);
-  color: var(--text-0);
-  font-size: 0.76rem;
-}
-
-:root[data-theme='ice-station'] .chat-thread-options__select,
-:root[data-theme='kiwi'] .chat-thread-options__select {
-  background: rgba(255, 255, 255, 0.55);
 }
 
 .chat-thread-options .model-search__input {
@@ -1815,6 +1848,19 @@ details.chat-activity--collapsible {
   padding: 16px 0 0;
 }
 
+.settings-section--focus-pulse {
+  animation: settings-focus-pulse 1.4s ease-out;
+}
+
+@keyframes settings-focus-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
 .settings-section + .settings-section {
   border-top: 1px solid var(--line);
   margin-top: 16px;
@@ -1922,6 +1968,120 @@ details.chat-activity--collapsible {
 }
 
 .field-row__button { margin-bottom: 1px; }
+
+/* ───────────────── App Select ───────────────── */
+
+.app-select {
+  position: relative;
+  width: 100%;
+}
+
+.app-select__button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.025)),
+    rgba(255, 255, 255, 0.03);
+  color: var(--text-0);
+  font-size: 0.84rem;
+  text-align: left;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.app-select__button svg {
+  flex-shrink: 0;
+  color: var(--text-2);
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+
+.app-select.is-open .app-select__button,
+.app-select__button:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.app-select.is-open .app-select__button svg {
+  transform: rotate(180deg);
+  color: var(--accent-light);
+}
+
+.app-select__menu {
+  position: absolute;
+  z-index: 120;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+
+.app-select__menu--portal {
+  z-index: 10000;
+}
+
+.app-select__option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  padding: 7px 8px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-1);
+  font-size: 0.82rem;
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.app-select__option:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-0);
+}
+
+.app-select__option.is-active {
+  background: var(--accent-subtle);
+  color: var(--text-0);
+}
+
+.app-select--compact .app-select__button {
+  min-height: 32px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 0.76rem;
+}
+
+.app-select--compact .app-select__option {
+  min-height: 28px;
+  font-size: 0.76rem;
+}
+
+:root[data-theme='ice-station'] .app-select__button,
+:root[data-theme='kiwi'] .app-select__button {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.55)),
+    rgba(255, 255, 255, 0.6);
+}
+
+:root[data-theme='ice-station'] .app-select__menu,
+:root[data-theme='kiwi'] .app-select__menu {
+  background: var(--panel-strong);
+}
+
+:root[data-theme='ice-station'] .app-select__option:hover,
+:root[data-theme='kiwi'] .app-select__option:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
 
 /* ───────────────── Model Search ───────────────── */
 

@@ -239,6 +239,85 @@ const pushUnique = (acc, line) => {
   const t = line.trim();
   if (t) acc.push(t);
 };
+const fallbackNotice = (provider, reason) => `${provider} search failed (${reason}). Falling back to DuckDuckGo instant answers.
+
+`;
+const stripTags = (value) => value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+const formatSearchResults = (provider, query, results) => {
+  if (results.length === 0) {
+    return `${provider} returned no web results for: "${query}"`;
+  }
+  return [
+    `${provider} web results for "${query}":`,
+    ...results.slice(0, 8).map((result, index) => {
+      const lines = [`${index + 1}. ${result.title || result.url || "Untitled result"}`];
+      if (result.url) lines.push(`   URL: ${result.url}`);
+      if (result.snippet) lines.push(`   Snippet: ${result.snippet}`);
+      if (result.published) lines.push(`   Published: ${result.published}`);
+      if (typeof result.score === "number") lines.push(`   Score: ${Math.round(result.score * 1e3) / 1e3}`);
+      return lines.join("\n");
+    })
+  ].join("\n\n");
+};
+async function searchTavily(q, apiKey) {
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query: q,
+      search_depth: "basic",
+      max_results: 8,
+      include_answer: false,
+      include_raw_content: false
+    })
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return formatSearchResults(
+    "Tavily",
+    q,
+    (data.results ?? []).map((result) => ({
+      title: result.title,
+      url: result.url,
+      snippet: result.content ? stripTags(result.content) : void 0,
+      published: result.published_date,
+      score: result.score
+    }))
+  );
+}
+async function searchBrave(q, apiKey) {
+  const url = new URL("https://api.search.brave.com/res/v1/web/search");
+  url.searchParams.set("q", q);
+  url.searchParams.set("count", "8");
+  url.searchParams.set("text_decorations", "false");
+  const res = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+      "Accept-Encoding": "gzip",
+      "X-Subscription-Token": apiKey
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return formatSearchResults(
+    "Brave",
+    q,
+    (data.web?.results ?? []).map((result) => ({
+      title: result.title || result.profile?.long_name,
+      url: result.url,
+      snippet: result.description ? stripTags(result.description) : void 0,
+      published: result.age
+    }))
+  );
+}
 function* walkRelatedTopics(topics, maxDepth, maxOut) {
   for (const item of topics) {
     if (maxOut.n <= 0) return;
@@ -255,11 +334,30 @@ function* walkRelatedTopics(topics, maxDepth, maxOut) {
     }
   }
 }
-async function searchWeb(query) {
+async function searchWeb(query, settings) {
   const q = query.trim();
   if (!q) {
     return "Error: empty search query.";
   }
+  if (settings?.provider === "tavily" && settings.tavilyApiKey.trim()) {
+    try {
+      return await searchTavily(q, settings.tavilyApiKey.trim());
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return `${fallbackNotice("Tavily", reason)}${await searchDuckDuckGo(q)}`;
+    }
+  }
+  if (settings?.provider === "brave" && settings.braveApiKey.trim()) {
+    try {
+      return await searchBrave(q, settings.braveApiKey.trim());
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return `${fallbackNotice("Brave", reason)}${await searchDuckDuckGo(q)}`;
+    }
+  }
+  return searchDuckDuckGo(q);
+}
+async function searchDuckDuckGo(q) {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`;
   let data;
   try {
@@ -1061,7 +1159,7 @@ class ModelService {
       if (!query) {
         throw new Error("web_search requires a non-empty query.");
       }
-      return await searchWeb(query);
+      return await searchWeb(query, settings.search);
     }
     if (toolCall.function.name === "set_app_theme") {
       if (settings.ui.sessionMode === "talk") {
@@ -1381,6 +1479,11 @@ const defaultSettings = {
       appUrl: "https://example.local"
     }
   },
+  search: {
+    provider: "duckduckgo",
+    tavilyApiKey: "",
+    braveApiKey: ""
+  },
   tools: {
     fileRead: true,
     fileWrite: true,
@@ -1413,6 +1516,10 @@ const mergeSettings = (saved) => ({
       ...defaultSettings.providers.openrouter,
       ...saved?.providers?.openrouter
     }
+  },
+  search: {
+    ...defaultSettings.search,
+    ...saved?.search
   },
   tools: {
     ...defaultSettings.tools,
@@ -1647,6 +1754,7 @@ const sanitizeRuntime = (runtime) => {
 };
 const sanitizeChatSettings = (requested) => ({
   ...requested,
+  search: currentSettings.search,
   tools: currentSettings.tools,
   agent: currentSettings.agent,
   ui: {

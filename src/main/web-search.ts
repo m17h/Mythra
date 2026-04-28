@@ -1,3 +1,5 @@
+import type { SearchSettings } from '@shared/types';
+
 /**
  * Public web search via DuckDuckGo’s instant-answer API (no API key; best-effort).
  * Returns short summaries, definitions, and sometimes organic-style links—not full page text;
@@ -9,6 +11,107 @@ const pushUnique = (acc: string[], line: string) => {
   const t = line.trim();
   if (t) acc.push(t);
 };
+
+const fallbackNotice = (provider: string, reason: string) =>
+  `${provider} search failed (${reason}). Falling back to DuckDuckGo instant answers.\n\n`;
+
+const stripTags = (value: string) => value.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+const formatSearchResults = (
+  provider: string,
+  query: string,
+  results: Array<{ title?: string; url?: string; snippet?: string; published?: string; score?: number }>
+) => {
+  if (results.length === 0) {
+    return `${provider} returned no web results for: "${query}"`;
+  }
+
+  return [
+    `${provider} web results for "${query}":`,
+    ...results.slice(0, 8).map((result, index) => {
+      const lines = [`${index + 1}. ${result.title || result.url || 'Untitled result'}`];
+      if (result.url) lines.push(`   URL: ${result.url}`);
+      if (result.snippet) lines.push(`   Snippet: ${result.snippet}`);
+      if (result.published) lines.push(`   Published: ${result.published}`);
+      if (typeof result.score === 'number') lines.push(`   Score: ${Math.round(result.score * 1000) / 1000}`);
+      return lines.join('\n');
+    })
+  ].join('\n\n');
+};
+
+async function searchTavily(q: string, apiKey: string): Promise<string> {
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query: q,
+      search_depth: 'basic',
+      max_results: 8,
+      include_answer: false,
+      include_raw_content: false
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as {
+    results?: Array<{ title?: string; url?: string; content?: string; score?: number; published_date?: string }>;
+  };
+
+  return formatSearchResults(
+    'Tavily',
+    q,
+    (data.results ?? []).map((result) => ({
+      title: result.title,
+      url: result.url,
+      snippet: result.content ? stripTags(result.content) : undefined,
+      published: result.published_date,
+      score: result.score
+    }))
+  );
+}
+
+async function searchBrave(q: string, apiKey: string): Promise<string> {
+  const url = new URL('https://api.search.brave.com/res/v1/web/search');
+  url.searchParams.set('q', q);
+  url.searchParams.set('count', '8');
+  url.searchParams.set('text_decorations', 'false');
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip',
+      'X-Subscription-Token': apiKey
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as {
+    web?: {
+      results?: Array<{ title?: string; url?: string; description?: string; age?: string; profile?: { long_name?: string } }>;
+    };
+  };
+
+  return formatSearchResults(
+    'Brave',
+    q,
+    (data.web?.results ?? []).map((result) => ({
+      title: result.title || result.profile?.long_name,
+      url: result.url,
+      snippet: result.description ? stripTags(result.description) : undefined,
+      published: result.age
+    }))
+  );
+}
 
 /** RelatedTopics can nest disambiguation groups under `Topics`. */
 function* walkRelatedTopics(topics: unknown[], maxDepth: number, maxOut: { n: number }): Generator<string> {
@@ -27,12 +130,34 @@ function* walkRelatedTopics(topics: unknown[], maxDepth: number, maxOut: { n: nu
   }
 }
 
-export async function searchWeb(query: string): Promise<string> {
+export async function searchWeb(query: string, settings?: SearchSettings): Promise<string> {
   const q = query.trim();
   if (!q) {
     return 'Error: empty search query.';
   }
 
+  if (settings?.provider === 'tavily' && settings.tavilyApiKey.trim()) {
+    try {
+      return await searchTavily(q, settings.tavilyApiKey.trim());
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return `${fallbackNotice('Tavily', reason)}${await searchDuckDuckGo(q)}`;
+    }
+  }
+
+  if (settings?.provider === 'brave' && settings.braveApiKey.trim()) {
+    try {
+      return await searchBrave(q, settings.braveApiKey.trim());
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      return `${fallbackNotice('Brave', reason)}${await searchDuckDuckGo(q)}`;
+    }
+  }
+
+  return searchDuckDuckGo(q);
+}
+
+async function searchDuckDuckGo(q: string): Promise<string> {
   // `skip_disambig=0` can surface more RelatedTopics; instant answers are still best-effort only.
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`;
 
