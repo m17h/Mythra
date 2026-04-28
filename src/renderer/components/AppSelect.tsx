@@ -12,6 +12,8 @@ interface AppSelectProps<T extends string> {
   onChange: (value: T) => void;
   className?: string;
   portalDropdown?: boolean;
+  /** For accessibility when the control is not wrapped in a `<label>`. */
+  ariaLabelledBy?: string;
 }
 
 export function AppSelect<T extends string>({
@@ -19,7 +21,8 @@ export function AppSelect<T extends string>({
   value,
   onChange,
   className = '',
-  portalDropdown = false
+  portalDropdown = false,
+  ariaLabelledBy
 }: AppSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -69,9 +72,14 @@ export function AppSelect<T extends string>({
           aria-selected={option.value === value}
           className={`app-select__option ${option.value === value ? 'is-active' : ''}`}
           key={option.value}
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             onChange(option.value);
             setOpen(false);
+          }}
+          onMouseDown={(event) => {
+            /* Keep label parents from re-activating the trigger (menu “stays open”). */
+            event.stopPropagation();
           }}
           role="option"
           type="button"
@@ -86,6 +94,7 @@ export function AppSelect<T extends string>({
     <div className={`app-select ${open ? 'is-open' : ''} ${className}`.trim()} ref={rootRef}>
       <button
         aria-expanded={open}
+        aria-labelledby={ariaLabelledBy}
         className="app-select__button"
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {

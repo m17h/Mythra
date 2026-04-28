@@ -4,12 +4,13 @@ import { OpenKiwiMark } from './OpenKiwiMark';
 interface EditorPanelProps {
   filePath?: string;
   content: string;
+  imagePreview?: { mimeType: string; dataUrl: string };
   dirty: boolean;
   onChange: (next: string) => void;
   onSave: () => void;
 }
 
-export function EditorPanel({ filePath, content, dirty, onChange, onSave }: EditorPanelProps) {
+export function EditorPanel({ filePath, content, imagePreview, dirty, onChange, onSave }: EditorPanelProps) {
   if (!filePath) {
     return (
       <section className="workspace-empty">
@@ -33,29 +34,45 @@ export function EditorPanel({ filePath, content, dirty, onChange, onSave }: Edit
           <div className="section-kicker">Editor Matrix</div>
           <div className="editor-panel__path">{filePath}</div>
         </div>
-        <button className="action-button" onClick={onSave} type="button">
-          {dirty ? 'Save Buffer' : 'Saved'}
+        <button
+          className="action-button"
+          disabled={Boolean(imagePreview)}
+          onClick={onSave}
+          title={imagePreview ? 'Preview-only for images' : undefined}
+          type="button"
+        >
+          {imagePreview ? 'Image preview' : dirty ? 'Save Buffer' : 'Saved'}
         </button>
       </div>
-      <div className="editor-shell">
-        <Editor
-          height="100%"
-          defaultLanguage="typescript"
-          path={filePath}
-          value={content}
-          onChange={(next) => onChange(next ?? '')}
-          theme="vs-dark"
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            smoothScrolling: true,
-            cursorBlinking: 'phase',
-            wordWrap: 'on',
-            renderLineHighlight: 'all',
-            padding: { top: 18, bottom: 18 }
-          }}
-        />
-      </div>
+      {imagePreview ? (
+        <div className="editor-image-preview">
+          <img
+            alt={filePath.split(/[/\\]/).pop() ?? 'Image'}
+            className="editor-image-preview__img"
+            src={imagePreview.dataUrl}
+          />
+        </div>
+      ) : (
+        <div className="editor-shell">
+          <Editor
+            height="100%"
+            defaultLanguage="typescript"
+            path={filePath}
+            value={content}
+            onChange={(next) => onChange(next ?? '')}
+            theme="vs-dark"
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              smoothScrolling: true,
+              cursorBlinking: 'phase',
+              wordWrap: 'on',
+              renderLineHighlight: 'all',
+              padding: { top: 18, bottom: 18 }
+            }}
+          />
+        </div>
+      )}
     </section>
   );
 }

@@ -13,6 +13,7 @@ import type {
   SavedChat,
   SavedChatMeta,
   WorkspaceChanged,
+  WorkspaceChanges,
   WorkspaceNode
 } from '@shared/types';
 
@@ -23,10 +24,14 @@ const electronAPI = {
   chooseWorkspace: () =>
     ipcRenderer.invoke('workspace:choose') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
   getWorkspaceTree: (root: string) => ipcRenderer.invoke('workspace:tree', root) as Promise<WorkspaceNode[]>,
+  detachWorkspace: () => ipcRenderer.invoke('workspace:detach') as Promise<void>,
   openFile: (root: string, target: string) =>
     ipcRenderer.invoke('workspace:open-file', root, target) as Promise<OpenFile>,
   saveFile: (root: string, target: string, content: string) =>
     ipcRenderer.invoke('workspace:save-file', root, target, content) as Promise<OpenFile>,
+  getWorkspaceChanges: (root: string) =>
+    ipcRenderer.invoke('workspace:changes', root) as Promise<WorkspaceChanges>,
+  openExternalUrl: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
   listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>
     ipcRenderer.invoke('models:list', settings, providerKind) as Promise<ModelInfo[]>,
   streamChat: (

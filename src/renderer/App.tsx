@@ -4,6 +4,7 @@ import openkiwiLogo from '@renderer/assets/openkiwi.png';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { AppSelect } from './components/AppSelect';
 import { ChatPanel } from './components/ChatPanel';
+import { ChangesPanel } from './components/ChangesPanel';
 import { CommandDeck } from './components/CommandDeck';
 import { ModelSearch } from './components/ModelSearch';
 import { EditorPanel } from './components/EditorPanel';
@@ -26,6 +27,7 @@ import {
   type SessionMode,
   type SavedChat,
   type SavedChatMeta,
+  type WorkspaceChanges,
   type WorkspaceNode
 } from '@shared/types';
 import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@shared/themes';
@@ -89,7 +91,7 @@ interface FileBuffer extends OpenFile {
   dirty: boolean;
 }
 
-type InspectorTab = 'editor' | 'console' | 'settings';
+type InspectorTab = 'editor' | 'changes' | 'console' | 'settings';
 type SidebarTab = 'chats' | 'files';
 
 interface InFlightChat {
@@ -105,6 +107,8 @@ export function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState<string>();
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceNode[]>([]);
   const [buffers, setBuffers] = useState<Record<string, FileBuffer>>({});
+  const buffersRef = useRef<Record<string, FileBuffer>>({});
+  buffersRef.current = buffers;
   const [activeFilePath, setActiveFilePath] = useState<string>();
   const [models, setModels] = useState<ModelInfo[]>([]);
   /** Last reported token totals from an completed provider response (streaming include_usage). */
@@ -152,8 +156,11 @@ export function App() {
   const [activeJobId, setActiveJobId] = useState<string>();
   const [lastCommandResult, setLastCommandResult] = useState<CommandResult>();
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
+  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
+  const [changesLoading, setChangesLoading] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
+  const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
@@ -219,6 +226,20 @@ export function App() {
   const refreshChatList = useCallback(async () => {
     const list = await window.electronAPI.listChats();
     setChatList(list);
+  }, []);
+
+  const refreshWorkspaceChanges = useCallback(async (rootOverride?: string) => {
+    const root = rootOverride ?? workspaceRootRef.current;
+    if (!root) {
+      setWorkspaceChanges(null);
+      return;
+    }
+    setChangesLoading(true);
+    try {
+      setWorkspaceChanges(await window.electronAPI.getWorkspaceChanges(root));
+    } finally {
+      setChangesLoading(false);
+    }
   }, []);
 
   const saveChatSnapshot = useCallback(
@@ -468,6 +489,23 @@ export function App() {
       async ({ root, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root);
         setWorkspaceTree(latestTree);
+        void refreshWorkspaceChanges(root);
+
+        if (!fileWritten && activeFilePathRef.current) {
+          const activeKey = activeFilePathRef.current;
+          const buf = buffersRef.current[activeKey];
+          if (!buf?.dirty) {
+            try {
+              const reloaded = await window.electronAPI.openFile(root, activeKey);
+              setBuffers((current) => ({
+                ...current,
+                [activeKey]: { ...reloaded, dirty: false }
+              }));
+            } catch {
+              // active file may have been removed or become unreadable
+            }
+          }
+        }
 
         if (fileDeleted) {
           setBuffers((c) => {
@@ -487,7 +525,7 @@ export function App() {
                 (k) => k === fileWritten || k === reloaded.path || current[k].path === reloaded.path
               );
               if (key == null) return current;
-              return { ...current, [key]: { path: reloaded.path, content: reloaded.content, dirty: false } };
+              return { ...current, [key]: { ...reloaded, dirty: false } };
             });
           } catch {
             // File may be missing or not UTF-8; tree is already up to date
@@ -505,7 +543,7 @@ export function App() {
       offSettingsUpdated();
       offWorkspaceChanged();
     };
-  }, []);
+  }, [refreshWorkspaceChanges]);
 
   useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
@@ -519,15 +557,19 @@ export function App() {
     setWorkspaceRoot(result.root);
     setWorkspaceTree(result.tree);
     setCommandLogs((c) => c + `\n[workspace attached: ${result.root}]\n`);
+    void refreshWorkspaceChanges(result.root);
   };
 
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
-    setWorkspaceRoot(undefined);
-    setWorkspaceTree([]);
-    setBuffers({});
-    setActiveFilePath(undefined);
-    setCommandLogs((c) => c + '\n[workspace cleared]\n');
+    void window.electronAPI.detachWorkspace().finally(() => {
+      setWorkspaceRoot(undefined);
+      setWorkspaceTree([]);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(undefined);
+      setCommandLogs((c) => c + '\n[workspace cleared]\n');
+    });
   };
 
   const openFile = async (target: string) => {
@@ -545,9 +587,10 @@ export function App() {
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer = buffers[activeFilePath];
-    if (!activeBuffer) return;
+    if (!activeBuffer || activeBuffer.imagePreview) return;
     const saved = await window.electronAPI.saveFile(workspaceRoot, activeFilePath, activeBuffer.content);
     setBuffers((current) => ({ ...current, [activeFilePath]: { ...saved, dirty: false } }));
+    void refreshWorkspaceChanges(workspaceRoot);
   };
 
   const refreshModels = async (settingsOverride?: AppSettings) => {
@@ -978,12 +1021,123 @@ export function App() {
                 in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web
                 search option.
               </p>
+              <div className="app-dialog__links">
+                <a
+                  className="app-dialog__link"
+                  href="https://tavily.com/"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl('https://tavily.com/');
+                  }}
+                  rel="noreferrer"
+                >
+                  Tavily
+                </a>
+                <span aria-hidden className="app-dialog__links-sep">
+                  ·
+                </span>
+                <a
+                  className="app-dialog__link"
+                  href="https://brave.com/search/api/"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl('https://brave.com/search/api/');
+                  }}
+                  rel="noreferrer"
+                >
+                  Brave Search API
+                </a>
+              </div>
               <div className="app-dialog__actions">
                 <button className="btn btn--secondary" onClick={() => setShowWebSearchNotice(false)} type="button">
                   Not now
                 </button>
                 <button className="btn btn--primary" onClick={jumpToSearchSettings} type="button">
                   Add API key
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showConnectionHelp ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            role="presentation"
+          >
+            <motion.div
+              aria-describedby="connection-help-desc"
+              aria-labelledby="connection-help-title"
+              aria-modal="true"
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="app-dialog app-dialog--scrollable"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">Connection</div>
+              <h3 id="connection-help-title">Need help?</h3>
+              <p id="connection-help-desc">
+                OpenKiwi sends your chats to an LLM through either <strong>OpenRouter</strong> (many cloud models, one API
+                key) or <strong>LM Studio</strong> (models running on your computer). Use the guide below for the option
+                you prefer.
+              </p>
+              <div className="app-dialog__section">
+                <div className="app-dialog__section-title">OpenRouter</div>
+                <p>
+                  OpenRouter is a service that routes requests to a large catalog of hosted models so you do not run the
+                  weights locally. In OpenKiwi, choose <strong>OpenRouter</strong> under Provider, paste an API key from
+                  your OpenRouter account (for example <code className="app-dialog__code">sk-or-v1-…</code>), then pick a
+                  model. The default base URL points at OpenRouter’s API and usually does not need changing. Your key is
+                  stored only in this app’s settings on your machine.
+                </p>
+              </div>
+              <div className="app-dialog__section">
+                <div className="app-dialog__section-title">LM Studio</div>
+                <p>
+                  LM Studio is a desktop app that downloads and runs models on your own hardware. Install it, load a
+                  model, and start the <strong>local server</strong> (often on port <code className="app-dialog__code">1234</code>
+                  ). In OpenKiwi, choose <strong>LM Studio</strong>, confirm the base URL matches your server (the default
+                  is <code className="app-dialog__code">http://127.0.0.1:1234/v1</code>), then use <strong>Test +
+                  Refresh</strong> to load the model list. The server key defaults to{' '}
+                  <code className="app-dialog__code">lm-studio</code> unless you changed it in LM Studio.
+                </p>
+              </div>
+              <div className="app-dialog__links">
+                <a
+                  className="app-dialog__link"
+                  href="https://openrouter.ai/"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl('https://openrouter.ai/');
+                  }}
+                  rel="noreferrer"
+                >
+                  OpenRouter website
+                </a>
+                <span aria-hidden className="app-dialog__links-sep">
+                  ·
+                </span>
+                <a
+                  className="app-dialog__link"
+                  href="https://lmstudio.ai/"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl('https://lmstudio.ai/');
+                  }}
+                  rel="noreferrer"
+                >
+                  LM Studio website
+                </a>
+              </div>
+              <div className="app-dialog__actions">
+                <button className="btn btn--primary" onClick={() => setShowConnectionHelp(false)} type="button">
+                  Got it
                 </button>
               </div>
             </motion.div>
@@ -1408,6 +1562,16 @@ export function App() {
                 Editor
               </button>
               <button
+                className={`inspector-tab ${inspectorTab === 'changes' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setInspectorTab('changes');
+                  void refreshWorkspaceChanges();
+                }}
+                type="button"
+              >
+                Changes
+              </button>
+              <button
                 className={`inspector-tab ${inspectorTab === 'console' ? 'is-active' : ''}`}
                 onClick={() => setInspectorTab('console')}
                 type="button"
@@ -1436,8 +1600,11 @@ export function App() {
                     content={activeBuffer?.content ?? ''}
                     dirty={activeBuffer?.dirty ?? false}
                     filePath={activeFilePath}
+                    imagePreview={activeBuffer?.imagePreview}
                     onChange={(next) => {
                       if (!activeFilePath) return;
+                      const cur = buffers[activeFilePath];
+                      if (cur?.imagePreview) return;
                       setBuffers((current) => ({
                         ...current,
                         [activeFilePath]: { ...current[activeFilePath], content: next, dirty: true }
@@ -1457,11 +1624,20 @@ export function App() {
                     onRun={runCommand}
                   />
                 ) : null}
+                {inspectorTab === 'changes' ? (
+                  <ChangesPanel
+                    changes={workspaceChanges}
+                    loading={changesLoading}
+                    onRefresh={() => void refreshWorkspaceChanges()}
+                    workspaceRoot={workspaceRoot}
+                  />
+                ) : null}
                 {inspectorTab === 'settings' && settings ? (
                   <SettingsPanel
                     focusSearchSettingsKey={searchSettingsFocusKey}
                     modelOptions={models}
                     onChange={setSettings}
+                    onOpenConnectionHelp={() => setShowConnectionHelp(true)}
                     onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                     onPresetPersist={persistAfterPresetAction}
                     onRefreshModels={refreshModels}

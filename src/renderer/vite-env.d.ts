@@ -14,6 +14,7 @@ import type {
   SavedChat,
   SavedChatMeta,
   WorkspaceChanged,
+  WorkspaceChanges,
   WorkspaceNode
 } from '@shared/types';
 
@@ -25,8 +26,11 @@ declare global {
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       getWorkspaceTree: (root: string) => Promise<WorkspaceNode[]>;
+      detachWorkspace: () => Promise<void>;
       openFile: (root: string, target: string) => Promise<OpenFile>;
       saveFile: (root: string, target: string, content: string) => Promise<OpenFile>;
+      getWorkspaceChanges: (root: string) => Promise<WorkspaceChanges>;
+      openExternalUrl: (url: string) => Promise<void>;
       listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') => Promise<ModelInfo[]>;
       streamChat: (
         requestId: string,

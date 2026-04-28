@@ -1,12 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { basename, resolve } from 'node:path';
-import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron';
 import appIconPath from './openkiwi_icon.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
 import { SettingsStore } from './settings-store';
 import { WorkspaceService } from './workspace-service';
+import { WorkspaceWatchController } from './workspace-watch';
 import {
   buildSemanticCustomThemeTokens,
   CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY,
@@ -33,6 +34,10 @@ const commandService = new CommandService();
 
 let mainWindow: BrowserWindow | null = null;
 let activeWorkspaceRoot: string | undefined;
+const workspaceWatch = new WorkspaceWatchController(() => {
+  const w = mainWindow;
+  return w && !w.isDestroyed() ? w : null;
+});
 let currentSettings: AppSettings = defaultSettings;
 /** Last theme before the most recent change (Settings or tool); used for revert_app_theme. */
 let previousThemeId: ThemeId | undefined;
@@ -225,7 +230,13 @@ const modelService = new ModelService(
   applyAppTheme,
   getAppThemeState,
   mergeCustomThemeTokens,
-  setCustomTheme
+  setCustomTheme,
+  async (updater) => {
+    const next = updater(structuredClone(currentSettings));
+    currentSettings = await settingsStore.save(next);
+    mainWindow?.webContents.send('settings:updated', currentSettings);
+    return currentSettings;
+  }
 );
 
 const assertActiveWorkspace = (root: string | undefined) => {
@@ -258,7 +269,8 @@ const sanitizeRuntime = (runtime: { workspaceRoot?: string; activeFilePath?: str
 const sanitizeChatSettings = (requested: AppSettings): AppSettings => ({
   ...requested,
   search: currentSettings.search,
-  tools: currentSettings.tools,
+  /** Use the renderer’s Tool access toggles so changes apply on the next message even before Save (disk is updated on Save). */
+  tools: requested.tools,
   agent: currentSettings.agent,
   ui: {
     ...requested.ui,
@@ -311,6 +323,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  workspaceWatch.stop();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -339,6 +352,7 @@ ipcMain.handle('workspace:choose', async () => {
     return null;
   }
   activeWorkspaceRoot = root;
+  workspaceWatch.setRoot(root);
 
   return {
     root,
@@ -351,6 +365,10 @@ ipcMain.handle('workspace:tree', async (_event, root: string) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
 });
+ipcMain.handle('workspace:detach', async () => {
+  workspaceWatch.stop();
+  activeWorkspaceRoot = undefined;
+});
 ipcMain.handle('workspace:open-file', async (_event, root: string, target: string) => {
   assertActiveWorkspace(root);
   return workspaceService.openFile(root, target);
@@ -358,6 +376,22 @@ ipcMain.handle('workspace:open-file', async (_event, root: string, target: strin
 ipcMain.handle('workspace:save-file', async (_event, root: string, target: string, content: string) => {
   assertActiveWorkspace(root);
   return workspaceService.saveFile(root, target, content);
+});
+ipcMain.handle('workspace:changes', async (_event, root: string) => {
+  assertActiveWorkspace(root);
+  return workspaceService.getChanges(root);
+});
+
+ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
+  if (typeof rawUrl !== 'string') return;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return;
+  await shell.openExternal(parsed.href);
 });
 
 ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>

@@ -21,6 +21,7 @@ import type {
   SessionMode
 } from '@shared/types';
 import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+import { getPromptPreset } from '@shared/prompt-presets';
 
 function mapCompletionUsage(
   u: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null | undefined
@@ -110,10 +111,18 @@ const sessionModeUiStateLine = (mode: SessionMode) =>
 /** Shown when web_search is enabled; DuckDuckGo instant answers are not full search pages. */
 const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 
-const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
 
 const openkiwiSetAppThemeAgentInstruction =
   `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(', ')}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
+
+const openkiwiModelSystemPromptInstruction =
+  'System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.';
+
+const openkiwiToolAccessReadInstruction =
+  'Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.';
+const openkiwiCodingToolInstruction =
+  'Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.';
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -219,7 +228,9 @@ export class ModelService {
     /** Merge whitelist token overrides into Custom theme; returns JSON for the tool result. */
     private readonly mergeCustomThemeTokens?: (incoming: Record<string, unknown>) => Promise<string>,
     /** Apply a complete semantic custom theme; returns JSON for the tool result. */
-    private readonly setCustomTheme?: (incoming: Record<string, unknown>) => Promise<string>
+    private readonly setCustomTheme?: (incoming: Record<string, unknown>) => Promise<string>,
+    /** Persist full settings (e.g. set_system_prompt); returns saved settings from disk. */
+    private readonly persistAppSettings?: (updater: (base: AppSettings) => AppSettings) => Promise<AppSettings>
   ) {}
 
   async listModels(settings: AppSettings, providerKind?: ProviderKind): Promise<ModelInfo[]> {
@@ -604,6 +615,38 @@ export class ModelService {
     };
   }
 
+  private buildGetToolAccessTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'get_tool_access',
+        description:
+          'Return which options are enabled under Settings → Tool access: read files, write files, workspace search, command deck, and whether the model may call set_system_prompt to change the stored system prompt. Read-only. (Reading the prompt uses get_system_prompt; that is not controlled by these toggles.)',
+        parameters: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
+  private buildGetSystemPromptTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'get_system_prompt',
+        description:
+          'Return the full system prompt text and preset metadata for the **currently selected** LLM provider in Settings (read-only, never writes). Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
   private buildRevertAppThemeTool(): ChatCompletionTool {
     return {
       type: 'function',
@@ -732,7 +775,32 @@ export class ModelService {
     tools.push(this.buildSetAppThemeTool());
     tools.push(this.buildMergeCustomThemeTokensTool());
     tools.push(this.buildGetAppThemeTool());
+    tools.push(this.buildGetToolAccessTool());
+    tools.push(this.buildGetSystemPromptTool());
     tools.push(this.buildRevertAppThemeTool());
+
+    // Only set_system_prompt is gated; get_system_prompt above is always offered in Agent mode.
+    if (settings.tools.allowModelSystemPrompt) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: 'set_system_prompt',
+          description:
+            'Replace the entire system prompt for the **currently selected** LLM provider in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately; applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.',
+          parameters: {
+            type: 'object',
+            properties: {
+              system_prompt: {
+                type: 'string',
+                description: 'Full new system prompt text (replaces the previous one for this provider).'
+              }
+            },
+            required: ['system_prompt'],
+            additionalProperties: false
+          }
+        }
+      });
+    }
 
     if (!workspaceRoot) {
       return tools;
@@ -779,6 +847,25 @@ export class ModelService {
         {
           type: 'function',
           function: {
+            name: 'apply_patch',
+            description:
+              'Apply a unified diff patch inside the current workspace. Preferred for multi-line code edits because it preserves untouched content and creates a reviewable git diff.',
+            parameters: {
+              type: 'object',
+              properties: {
+                patch: {
+                  type: 'string',
+                  description: 'A valid unified diff, suitable for `git apply`.'
+                }
+              },
+              required: ['patch'],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
             name: 'write_file',
             description:
               'Create or overwrite a UTF-8 text file inside the current workspace. Creates parent folders when needed.',
@@ -795,6 +882,58 @@ export class ModelService {
                 }
               },
               required: ['path', 'content'],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'replace_in_file',
+            description:
+              'Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Relative path inside the workspace.' },
+                search: { type: 'string', description: 'Exact text to find.' },
+                replacement: { type: 'string', description: 'Replacement text.' },
+                replace_all: { type: 'boolean', description: 'Replace every occurrence instead of just the first.' }
+              },
+              required: ['path', 'search', 'replacement'],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'insert_after',
+            description: 'Insert text immediately after an exact anchor string in one UTF-8 file.',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Relative path inside the workspace.' },
+                anchor: { type: 'string', description: 'Exact text to insert after.' },
+                text: { type: 'string', description: 'Text to insert.' }
+              },
+              required: ['path', 'anchor', 'text'],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'rename_file',
+            description: 'Move or rename a file or folder inside the current workspace.',
+            parameters: {
+              type: 'object',
+              properties: {
+                from: { type: 'string', description: 'Existing relative path.' },
+                to: { type: 'string', description: 'New relative path.' }
+              },
+              required: ['from', 'to'],
               additionalProperties: false
             }
           }
@@ -821,25 +960,94 @@ export class ModelService {
     }
 
     if (settings.tools.commandDeck) {
-      tools.push({
-        type: 'function',
-        function: {
-          name: 'run_command',
-          description:
-            'Run a shell command inside the current workspace and return stdout, stderr, and exit status. Use this for git, build, test, and search commands.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: {
-                type: 'string',
-                description: 'Shell command to run inside the current workspace.'
-              }
-            },
-            required: ['command'],
-            additionalProperties: false
+      tools.push(
+        {
+          type: 'function',
+          function: {
+            name: 'get_git_diff',
+            description: 'Return git status and the current unstaged diff for the active workspace. Use after edits before summarizing changes.',
+            parameters: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'run_tests',
+            description:
+              'Run the project test/build/check command in the current workspace. Prefer this over run_command for verification.',
+            parameters: {
+              type: 'object',
+              properties: {
+                command: {
+                  type: 'string',
+                  description: 'Test/check/build command to run, e.g. npm run check. If omitted, OpenKiwi tries npm test.'
+                }
+              },
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'run_command',
+            description:
+              'Run a shell command inside the current workspace and return stdout, stderr, and exit status. Use for commands not covered by run_tests or get_git_diff.',
+            parameters: {
+              type: 'object',
+              properties: {
+                command: {
+                  type: 'string',
+                  description: 'Shell command to run inside the current workspace.'
+                }
+              },
+              required: ['command'],
+              additionalProperties: false
+            }
           }
         }
-      });
+      );
+    }
+
+    if (settings.tools.workspaceSearch) {
+      tools.push(
+        {
+          type: 'function',
+          function: {
+            name: 'search_symbols',
+            description:
+              'Search likely code symbols/declarations across the workspace. Use before reading many files when looking for a function, class, component, type, or constant.',
+            parameters: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Symbol or text to search for.' },
+                limit: { type: 'number', description: 'Maximum results, default 50.' }
+              },
+              required: ['query'],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'get_file_outline',
+            description: 'Return top-level functions/classes/types/constants for a source file.',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Relative path to a source file.' }
+              },
+              required: ['path'],
+              additionalProperties: false
+            }
+          }
+        }
+      );
     }
 
     return tools;
@@ -895,6 +1103,11 @@ export class ModelService {
         openkiwiSessionModeEmbedInstruction,
         openkiwiWebSearchEmbedInstruction,
         openkiwiSetAppThemeAgentInstruction,
+        openkiwiToolAccessReadInstruction,
+        openkiwiModelSystemPromptInstruction,
+        settings.tools.allowModelSystemPrompt
+          ? 'set_system_prompt is enabled in Settings → you may update the system prompt when the user asks.'
+          : 'set_system_prompt is disabled; the user can enable “AI can change system prompt” under Tool access. You can still call get_system_prompt anytime in Agent mode to read the stored prompt.',
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
         ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [])
@@ -912,12 +1125,16 @@ export class ModelService {
       'set_app_theme',
       'merge_custom_theme_tokens',
       'get_app_theme',
+      'get_tool_access',
+      'get_system_prompt',
       'revert_app_theme',
       settings.ui.webSearch ? 'web_search' : null,
       settings.tools.workspaceSearch ? 'list_files' : null,
+      settings.tools.workspaceSearch ? 'search_symbols, get_file_outline' : null,
       settings.tools.fileRead ? 'read_file' : null,
-      settings.tools.fileWrite ? 'write_file, delete_path' : null,
-      settings.tools.commandDeck ? 'run_command' : null
+      settings.tools.fileWrite ? 'apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path' : null,
+      settings.tools.commandDeck ? 'get_git_diff, run_tests, run_command' : null,
+      settings.tools.allowModelSystemPrompt ? 'set_system_prompt' : null
     ]
       .filter(Boolean)
       .join(', ');
@@ -932,10 +1149,13 @@ export class ModelService {
       openkiwiWebSearchEmbedInstruction,
       webHeaderUiStateLine(settings.ui.webSearch),
       openkiwiSetAppThemeAgentInstruction,
+      openkiwiToolAccessReadInstruction,
+      openkiwiModelSystemPromptInstruction,
+      openkiwiCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : 'none'}`,
       `Enabled tools: ${enabledTools || 'none'}`,
-      `Approval: ${settings.agent.fullAccess ? 'writes/commands run without per-action approval' : 'user approval may be required for some writes, deletes, and commands'}.`,
+      `Approval: ${settings.agent.fullAccess ? 'writes/commands/system prompt runs without per-action approval' : 'user approval may be required for some writes, deletes, commands, and system prompt changes'}.`,
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
       ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []),
@@ -1027,6 +1247,65 @@ export class ModelService {
       return this.getAppThemeState();
     }
 
+    if (toolCall.function.name === 'get_tool_access') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'get_tool_access is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      return JSON.stringify(
+        {
+          tool_access: {
+            fileRead: settings.tools.fileRead,
+            fileWrite: settings.tools.fileWrite,
+            workspaceSearch: settings.tools.workspaceSearch,
+            commandDeck: settings.tools.commandDeck,
+            allowModelSystemPrompt: settings.tools.allowModelSystemPrompt
+          },
+          /** Matches labels in Settings → Tool access */
+          labels: {
+            fileRead: 'Read files',
+            fileWrite: 'Write files',
+            workspaceSearch: 'Workspace search',
+            commandDeck: 'Command deck',
+            allowModelSystemPrompt: 'AI can change system prompt'
+          }
+        },
+        null,
+        2
+      );
+    }
+
+    if (toolCall.function.name === 'get_system_prompt') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'get_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      const kind = settings.selectedProvider;
+      const provider = settings.providers[kind];
+      const full = provider.systemPrompt ?? '';
+      const MAX_PREVIEW = 24_000;
+      const truncated = full.length > MAX_PREVIEW;
+      const system_prompt = truncated ? truncate(full, MAX_PREVIEW) : full;
+      const preset =
+        provider.promptPresetId === 'custom'
+          ? { id: 'custom' as const, label: 'Custom' }
+          : { id: provider.promptPresetId, label: getPromptPreset(provider.promptPresetId).label };
+      return JSON.stringify(
+        {
+          provider: kind,
+          prompt_preset: preset,
+          active_custom_preset_id: provider.activeCustomPresetId,
+          system_prompt,
+          system_prompt_length: full.length,
+          system_prompt_truncated: truncated
+        },
+        null,
+        2
+      );
+    }
+
     if (toolCall.function.name === 'revert_app_theme') {
       if (settings.ui.sessionMode === 'talk') {
         throw new Error(
@@ -1050,6 +1329,64 @@ export class ModelService {
       const result = await this.applyAppTheme(state.previousThemeId);
       this.patchSettingsThemeFromToolResult(settings, result);
       return result;
+    }
+
+    if (toolCall.function.name === 'set_system_prompt') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'set_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!settings.tools.allowModelSystemPrompt) {
+        throw new Error(
+          'Changing the system prompt from the model is turned off. The user can enable “AI can change system prompt” under Settings → Tool access.'
+        );
+      }
+      if (!this.persistAppSettings) {
+        throw new Error('System prompt updates are not available in this build.');
+      }
+      const system_prompt = String((args as { system_prompt?: string }).system_prompt ?? '');
+      if (!system_prompt.trim()) {
+        throw new Error('set_system_prompt requires a non-empty system_prompt string.');
+      }
+      const MAX_SYSTEM_PROMPT = 120_000;
+      if (system_prompt.length > MAX_SYSTEM_PROMPT) {
+        throw new Error(`system_prompt is too long (max ${MAX_SYSTEM_PROMPT} characters).`);
+      }
+      const providerKind = settings.selectedProvider;
+      await this.requestApprovalIfNeeded(
+        window,
+        requestId,
+        settings,
+        'Approve system prompt change',
+        `The model wants to replace the **${providerKind}** system prompt (${system_prompt.length} characters).\n\nPreview:\n${truncate(system_prompt, 900)}`
+      );
+      const saved = await this.persistAppSettings((base) => {
+        const p = base.providers[providerKind];
+        return {
+          ...base,
+          providers: {
+            ...base.providers,
+            [providerKind]: {
+              ...p,
+              systemPrompt: system_prompt,
+              promptPresetId: 'custom',
+              activeCustomPresetId: null
+            }
+          }
+        };
+      });
+      Object.assign(settings, saved);
+      return JSON.stringify(
+        {
+          ok: true,
+          provider: providerKind,
+          length: system_prompt.length,
+          message: 'System prompt saved for the active provider. It applies on the next message.'
+        },
+        null,
+        2
+      );
     }
 
     if (!workspaceRoot) {
@@ -1085,6 +1422,18 @@ export class ModelService {
         }
 
         const file = await this.workspaceService.openFile(workspaceRoot, path);
+        if (file.imagePreview && !file.content) {
+          return JSON.stringify(
+            {
+              path: relative(workspaceRoot, file.path),
+              kind: 'image',
+              mimeType: file.imagePreview.mimeType,
+              note: 'Binary image file. Preview it in the Editor tab; no text content is returned here.'
+            },
+            null,
+            2
+          );
+        }
         return JSON.stringify(
           {
             path: relative(workspaceRoot, file.path),
@@ -1127,6 +1476,103 @@ export class ModelService {
         );
       }
 
+      case 'apply_patch': {
+        if (!settings.tools.fileWrite) {
+          throw new Error('The apply_patch tool is disabled in settings.');
+        }
+
+        const patch = String(args.patch ?? '');
+        if (!patch.trim()) {
+          throw new Error('apply_patch requires a patch.');
+        }
+
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          'Approve patch',
+          `The model wants to apply a patch inside:\n${workspaceRoot}\n\nPatch preview:\n${truncate(patch, 2_500)}`
+        );
+
+        const changes = await this.workspaceService.applyPatch(workspaceRoot, patch);
+        window.webContents.send('workspace:changed', { root: workspaceRoot });
+        return JSON.stringify({ ok: true, changes }, null, 2);
+      }
+
+      case 'replace_in_file': {
+        if (!settings.tools.fileWrite) {
+          throw new Error('The replace_in_file tool is disabled in settings.');
+        }
+        const path = String(args.path ?? '');
+        const search = String(args.search ?? '');
+        const replacement = String(args.replacement ?? '');
+        const replaceAll = Boolean(args.replace_all);
+        if (!path) throw new Error('replace_in_file requires a path.');
+
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          'Approve file edit',
+          `The model wants to replace text in:\n${path}\n\nSearch:\n${truncate(search, 1_200)}\n\nReplacement:\n${truncate(replacement, 1_200)}`
+        );
+
+        const result = await this.workspaceService.replaceInFile(workspaceRoot, path, search, replacement, replaceAll);
+        window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: result.path });
+        return JSON.stringify(
+          { ok: true, path: relative(workspaceRoot, result.path), replacements: result.replacements },
+          null,
+          2
+        );
+      }
+
+      case 'insert_after': {
+        if (!settings.tools.fileWrite) {
+          throw new Error('The insert_after tool is disabled in settings.');
+        }
+        const path = String(args.path ?? '');
+        const anchor = String(args.anchor ?? '');
+        const text = String(args.text ?? '');
+        if (!path) throw new Error('insert_after requires a path.');
+
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          'Approve file insertion',
+          `The model wants to insert text in:\n${path}\n\nAfter:\n${truncate(anchor, 1_200)}\n\nInsert:\n${truncate(text, 1_200)}`
+        );
+
+        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text);
+        window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: result.path });
+        return JSON.stringify({ ok: true, path: relative(workspaceRoot, result.path) }, null, 2);
+      }
+
+      case 'rename_file': {
+        if (!settings.tools.fileWrite) {
+          throw new Error('The rename_file tool is disabled in settings.');
+        }
+        const from = String(args.from ?? '');
+        const to = String(args.to ?? '');
+        if (!from || !to) throw new Error('rename_file requires from and to.');
+
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          'Approve rename',
+          `The model wants to rename:\n${from}\n\nto:\n${to}`
+        );
+
+        const result = await this.workspaceService.renamePath(workspaceRoot, from, to);
+        window.webContents.send('workspace:changed', { root: workspaceRoot, fileDeleted: result.from, fileWritten: result.to });
+        return JSON.stringify(
+          { ok: true, from: relative(workspaceRoot, result.from), to: relative(workspaceRoot, result.to) },
+          null,
+          2
+        );
+      }
+
       case 'delete_path': {
         if (!settings.tools.fileWrite) {
           throw new Error('The delete_path tool is disabled in settings.');
@@ -1157,6 +1603,31 @@ export class ModelService {
         );
       }
 
+      case 'get_git_diff': {
+        if (!settings.tools.commandDeck) {
+          throw new Error('The get_git_diff tool is disabled in settings.');
+        }
+        return JSON.stringify(await this.workspaceService.getChanges(workspaceRoot), null, 2);
+      }
+
+      case 'search_symbols': {
+        if (!settings.tools.workspaceSearch) {
+          throw new Error('The search_symbols tool is disabled in settings.');
+        }
+        const query = String(args.query ?? '');
+        const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(200, args.limit)) : 50;
+        return JSON.stringify({ ok: true, results: await this.workspaceService.searchSymbols(workspaceRoot, query, limit) }, null, 2);
+      }
+
+      case 'get_file_outline': {
+        if (!settings.tools.workspaceSearch) {
+          throw new Error('The get_file_outline tool is disabled in settings.');
+        }
+        const path = String(args.path ?? '');
+        if (!path) throw new Error('get_file_outline requires a path.');
+        return JSON.stringify({ ok: true, ...(await this.workspaceService.getFileOutline(workspaceRoot, path)) }, null, 2);
+      }
+
       case 'run_command': {
         if (!settings.tools.commandDeck) {
           throw new Error('The run_command tool is disabled in settings.');
@@ -1177,6 +1648,23 @@ export class ModelService {
 
         const signal = this.activeRequests.get(requestId)?.controller.signal;
         const result = await this.commandService.runAndCapture(path, workspaceRoot, 20_000, signal);
+        return JSON.stringify(result, null, 2);
+      }
+
+      case 'run_tests': {
+        if (!settings.tools.commandDeck) {
+          throw new Error('The run_tests tool is disabled in settings.');
+        }
+        const command = String(args.command ?? '').trim() || 'npm test';
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          'Approve test command',
+          `The model wants to run:\n${command}\n\nThe command will execute inside:\n${workspaceRoot}`
+        );
+        const signal = this.activeRequests.get(requestId)?.controller.signal;
+        const result = await this.commandService.runAndCapture(command, workspaceRoot, 60_000, signal);
         return JSON.stringify(result, null, 2);
       }
 

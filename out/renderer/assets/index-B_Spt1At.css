@@ -258,11 +258,76 @@ html[data-platform='darwin'] .app-shell {
   line-height: 1.55;
 }
 
+.app-dialog__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px 10px;
+  margin-top: 14px;
+}
+
+.app-dialog__link {
+  color: var(--accent-light);
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-light) 45%, transparent);
+}
+
+.app-dialog__link:hover {
+  color: var(--accent-2);
+  border-bottom-color: var(--accent-2);
+}
+
+.app-dialog__links-sep {
+  color: var(--text-2);
+  font-size: 0.84rem;
+  user-select: none;
+}
+
 .app-dialog__actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
   margin-top: 16px;
+}
+
+.app-dialog--scrollable {
+  width: min(520px, 100%);
+  max-height: min(calc(100vh - 40px), 620px);
+  overflow-y: auto;
+}
+
+.app-dialog__section {
+  margin-top: 14px;
+}
+
+.app-dialog__section-title {
+  margin: 0 0 6px;
+  color: var(--text-0);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app-dialog__section p {
+  margin: 0;
+}
+
+.app-dialog__code {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8em;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-0);
+}
+
+:root[data-theme='ice-station'] .app-dialog__code,
+:root[data-theme='kiwi'] .app-dialog__code,
+:root[data-theme='custom'][data-custom-light='true'] .app-dialog__code {
+  background: rgba(0, 0, 0, 0.06);
 }
 
 /* ───────────────── Layout ───────────────── */
@@ -1126,13 +1191,12 @@ html[data-platform='darwin'] .app-shell {
   box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
-/* Chat scroll area */
+/* Chat scroll area — block layout so the inner column sizes to content; flex+shrink:1 on a sole child
+   can clamp height and prevent scrolling past the last message. */
 
 .chat-scroll {
-  display: flex;
   flex: 1;
   min-height: 0;
-  flex-direction: column;
   padding: 16px 18px;
   background: var(--chat-thread-bg, transparent);
   overflow-y: auto;
@@ -1147,6 +1211,8 @@ html[data-platform='darwin'] .app-shell {
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
+  /* Scroll range past the last bubble (composer sits below this area). */
+  padding-bottom: 40px;
 }
 
 /* Chat empty state */
@@ -2062,12 +2128,147 @@ details.chat-activity--collapsible {
 
 .inspector-card .panel,
 .inspector-card .editor-panel,
-.inspector-card .command-deck {
+.inspector-card .command-deck,
+.inspector-card .changes-panel {
   height: 100%;
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.changes-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text-0);
+}
+
+.changes-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.changes-panel__header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.changes-panel__header p {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+
+.changes-panel__refresh {
+  flex-shrink: 0;
+}
+
+.changes-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.changes-panel__block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme='custom'][data-custom-light='true'] .changes-panel__block,
+:root[data-theme='ice-station'] .changes-panel__block,
+:root[data-theme='kiwi'] .changes-panel__block {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.changes-panel__block + .changes-panel__block {
+  margin-top: 12px;
+}
+
+.changes-panel__block h4 {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.changes-panel__block pre,
+.changes-panel__empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-1);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-panel__block--diff pre {
+  min-height: 240px;
+}
+
+.changes-diff {
+  display: block;
+  padding: 0 !important;
+}
+
+.changes-diff__line {
+  display: block;
+  min-height: 1.45em;
+  padding: 0 10px;
+  color: var(--text-1);
+}
+
+.changes-diff__line:first-child {
+  padding-top: 10px;
+}
+
+.changes-diff__line:last-child {
+  padding-bottom: 10px;
+}
+
+.changes-diff__line--add {
+  color: #166534;
+  background: rgba(34, 197, 94, 0.13);
+}
+
+.changes-diff__line--del {
+  color: #991b1b;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.changes-diff__line--hunk {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  font-weight: 700;
+}
+
+.changes-diff__line--file,
+.changes-diff__line--meta {
+  color: var(--text-2);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+:root:not([data-custom-light='true']):not([data-theme='ice-station']):not([data-theme='kiwi']) .changes-diff__line--add {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.16);
+}
+
+:root:not([data-custom-light='true']):not([data-theme='ice-station']):not([data-theme='kiwi']) .changes-diff__line--del {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.16);
 }
 
 /* ───────────────── Settings Panel ───────────────── */
@@ -2142,15 +2343,39 @@ details.chat-activity--collapsible {
 }
 
 .settings-section--focus-pulse {
-  animation: settings-focus-pulse 1.4s ease-out;
+  animation: settings-focus-pulse 4.5s linear;
 }
 
 @keyframes settings-focus-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
-  }
+  0%,
   100% {
-    box-shadow: 0 0 0 10px transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  /* First blink — long, slow hold */
+  8%,
+  26% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 48%, transparent),
+      0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  32%,
+  44% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  /* Second blink */
+  52%,
+  72% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 48%, transparent),
+      0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  78%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
@@ -2919,6 +3144,7 @@ details.chat-activity--collapsible {
 
 .inline-hint {
   margin-top: 6px;
+  margin-bottom: 6px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -2926,6 +3152,10 @@ details.chat-activity--collapsible {
   font-size: 0.78rem;
   line-height: 1.45;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.inline-hint:last-child {
+  margin-bottom: 0;
 }
 
 :root[data-theme='ice-station'] .inline-hint,
@@ -3076,6 +3306,43 @@ details.chat-activity--collapsible {
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: var(--editor-bg, rgba(0, 0, 0, 0.2));
+}
+
+.editor-image-preview {
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--editor-bg, rgba(0, 0, 0, 0.18));
+}
+
+:root[data-theme='ice-station'] .editor-image-preview,
+:root[data-theme='kiwi'] .editor-image-preview ,
+:root[data-theme='custom'][data-custom-light='true'] .editor-image-preview {
+
+  background: var(--editor-bg, rgba(0, 0, 0, 0.03));
+}
+
+.editor-image-preview__img {
+  max-width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-theme='ice-station'] .editor-image-preview__img,
+:root[data-theme='kiwi'] .editor-image-preview__img ,
+:root[data-theme='custom'][data-custom-light='true'] .editor-image-preview__img {
+
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
 }
 
 :root[data-theme='ice-station'] .editor-shell,

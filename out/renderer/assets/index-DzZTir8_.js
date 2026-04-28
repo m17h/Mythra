@@ -20485,7 +20485,8 @@ function AppSelect({
   value,
   onChange,
   className = "",
-  portalDropdown = false
+  portalDropdown = false,
+  ariaLabelledBy
 }) {
   const [open, setOpen] = reactExports.useState(false);
   const [dropdownPos, setDropdownPos] = reactExports.useState(null);
@@ -20532,9 +20533,13 @@ function AppSelect({
         {
           "aria-selected": option.value === value,
           className: `app-select__option ${option.value === value ? "is-active" : ""}`,
-          onClick: () => {
+          onClick: (event) => {
+            event.stopPropagation();
             onChange(option.value);
             setOpen(false);
+          },
+          onMouseDown: (event) => {
+            event.stopPropagation();
           },
           role: "option",
           type: "button",
@@ -20549,6 +20554,7 @@ function AppSelect({
       "button",
       {
         "aria-expanded": open,
+        "aria-labelledby": ariaLabelledBy,
         className: "app-select__button",
         onClick: () => setOpen((current) => !current),
         onKeyDown: (event) => {
@@ -33980,6 +33986,43 @@ function ChatPanel({
     ] })
   ] });
 }
+const emptyText = "No working tree changes.";
+const diffLineClass = (line) => {
+  if (line.startsWith("+++") || line.startsWith("---")) return "changes-diff__line--file";
+  if (line.startsWith("diff --git") || line.startsWith("index ")) return "changes-diff__line--meta";
+  if (line.startsWith("@@")) return "changes-diff__line--hunk";
+  if (line.startsWith("+")) return "changes-diff__line--add";
+  if (line.startsWith("-")) return "changes-diff__line--del";
+  return "";
+};
+function DiffView({ diff }) {
+  const trimmed = diff.trim();
+  if (!trimmed) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: emptyText });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "changes-diff", "aria-label": "Git diff", children: trimmed.split("\n").map((line, index2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `changes-diff__line ${diffLineClass(line)}`, children: line || " " }, `${index2}-${line.slice(0, 12)}`)) });
+}
+function ChangesPanel({ changes, loading, workspaceRoot, onRefresh }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "changes-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "changes-panel__header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Changes" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: workspaceRoot ? "Git status and unstaged diff" : "Open a workspace to inspect changes" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary changes-panel__refresh", disabled: !workspaceRoot || loading, onClick: onRefresh, type: "button", children: loading ? "Refreshing" : "Refresh" })
+    ] }),
+    !workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "changes-panel__empty", children: "No workspace is open." }) : changes?.error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "changes-panel__empty", children: changes.error }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "changes-panel__body", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "changes-panel__block", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Status" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: changes?.status.trim() || emptyText })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "changes-panel__block changes-panel__block--diff", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Diff" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(DiffView, { diff: changes?.diff ?? "" })
+      ] })
+    ] })
+  ] });
+}
 function CommandDeck({
   commandInput,
   logs,
@@ -34871,7 +34914,7 @@ function OpenKiwiMark({ className }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "openkiwi-mark__kiwi", children: "Kiwi" })
   ] });
 }
-function EditorPanel({ filePath, content: content2, dirty, onChange, onSave }) {
+function EditorPanel({ filePath, content: content2, imagePreview, dirty, onChange, onSave }) {
   if (!filePath) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "workspace-empty", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-empty__eyebrow", children: [
@@ -34888,9 +34931,26 @@ function EditorPanel({ filePath, content: content2, dirty, onChange, onSave }) {
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-kicker", children: "Editor Matrix" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "editor-panel__path", children: filePath })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-button", onClick: onSave, type: "button", children: dirty ? "Save Buffer" : "Saved" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "action-button",
+          disabled: Boolean(imagePreview),
+          onClick: onSave,
+          title: imagePreview ? "Preview-only for images" : void 0,
+          type: "button",
+          children: imagePreview ? "Image preview" : dirty ? "Save Buffer" : "Saved"
+        }
+      )
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "editor-shell", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    imagePreview ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "editor-image-preview", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "img",
+      {
+        alt: filePath.split(/[/\\]/).pop() ?? "Image",
+        className: "editor-image-preview__img",
+        src: imagePreview.dataUrl
+      }
+    ) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "editor-shell", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       Ft,
       {
         height: "100%",
@@ -35531,6 +35591,7 @@ function SettingsPanel({
   onSave,
   onPresetPersist,
   onRefreshModels,
+  onOpenConnectionHelp,
   onOpenWebSearchInfo,
   focusSearchSettingsKey = 0
 }) {
@@ -35546,12 +35607,18 @@ function SettingsPanel({
   );
   reactExports.useEffect(() => {
     if (focusSearchSettingsKey <= 0) return;
-    searchSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    searchSectionRef.current?.classList.add("settings-section--focus-pulse");
-    const timer = setTimeout(() => {
-      searchSectionRef.current?.classList.remove("settings-section--focus-pulse");
-    }, 1400);
-    return () => clearTimeout(timer);
+    const el = searchSectionRef.current;
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.classList.add("settings-section--focus-pulse");
+    const onEnd = () => {
+      el?.classList.remove("settings-section--focus-pulse");
+      el?.removeEventListener("animationend", onEnd);
+    };
+    el?.addEventListener("animationend", onEnd);
+    return () => {
+      el?.removeEventListener("animationend", onEnd);
+      el?.classList.remove("settings-section--focus-pulse");
+    };
   }, [focusSearchSettingsKey]);
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === "lmstudio";
@@ -35619,12 +35686,29 @@ function SettingsPanel({
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Connection" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Provider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Connection" }),
+          onOpenConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "settings-info-button",
+              type: "button",
+              "aria-label": "About OpenRouter, LM Studio, and OpenKiwi",
+              title: "OpenRouter & LM Studio in OpenKiwi",
+              onClick: onOpenConnectionHelp,
+              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 16v-4.5M12 8h.01", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" })
+              ] })
+            }
+          ) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "settings-connection-provider-label", children: "Provider" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             AppSelect,
             {
+              ariaLabelledBy: "settings-connection-provider-label",
               options: providerOptions$1,
               value: settings.selectedProvider,
               onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
@@ -35840,10 +35924,13 @@ function SettingsPanel({
                   "button",
                   {
                     className: `theme-tile ${settings.ui.themeId === theme.id ? "is-active" : ""}`,
-                    onClick: () => onChange({
-                      ...settings,
-                      ui: { ...settings.ui, themeId: theme.id, customThemeTokens: void 0 }
-                    }),
+                    onClick: () => {
+                      const next = {
+                        ...settings,
+                        ui: { ...settings.ui, themeId: theme.id, customThemeTokens: void 0 }
+                      };
+                      void onPresetPersist(next);
+                    },
                     type: "button",
                     children: [
                       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: theme.name }),
@@ -35896,7 +35983,8 @@ function SettingsPanel({
           ["fileRead", "Read files"],
           ["fileWrite", "Write files"],
           ["workspaceSearch", "Workspace search"],
-          ["commandDeck", "Command deck"]
+          ["commandDeck", "Command deck"],
+          ["allowModelSystemPrompt", "AI can change system prompt"]
         ].map(([key, label]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row ${settings.tools[key] ? "is-active-soft" : ""}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -35907,7 +35995,15 @@ function SettingsPanel({
               type: "checkbox"
             }
           )
-        ] }, key)) })
+        ] }, key)) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+          "When ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "AI can change system prompt" }),
+          " is on, Agent mode may call ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "set_system_prompt" }),
+          " ",
+          "after you ask—saved to Settings for the selected provider (with approval unless Full access)."
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Agent Autonomy" }),
@@ -36010,6 +36106,8 @@ function App() {
   const [workspaceRoot, setWorkspaceRoot] = reactExports.useState();
   const [workspaceTree, setWorkspaceTree] = reactExports.useState([]);
   const [buffers, setBuffers] = reactExports.useState({});
+  const buffersRef = reactExports.useRef({});
+  buffersRef.current = buffers;
   const [activeFilePath, setActiveFilePath] = reactExports.useState();
   const [models, setModels] = reactExports.useState([]);
   const [lastTokenUsage, setLastTokenUsage] = reactExports.useState(null);
@@ -36046,8 +36144,11 @@ function App() {
   const [activeJobId, setActiveJobId] = reactExports.useState();
   const [lastCommandResult, setLastCommandResult] = reactExports.useState();
   const [inspectorTab, setInspectorTab] = reactExports.useState("settings");
+  const [workspaceChanges, setWorkspaceChanges] = reactExports.useState(null);
+  const [changesLoading, setChangesLoading] = reactExports.useState(false);
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
   const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
+  const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
@@ -36103,6 +36204,19 @@ function App() {
   const refreshChatList = reactExports.useCallback(async () => {
     const list2 = await window.electronAPI.listChats();
     setChatList(list2);
+  }, []);
+  const refreshWorkspaceChanges = reactExports.useCallback(async (rootOverride) => {
+    const root2 = rootOverride ?? workspaceRootRef.current;
+    if (!root2) {
+      setWorkspaceChanges(null);
+      return;
+    }
+    setChangesLoading(true);
+    try {
+      setWorkspaceChanges(await window.electronAPI.getWorkspaceChanges(root2));
+    } finally {
+      setChangesLoading(false);
+    }
   }, []);
   const saveChatSnapshot = reactExports.useCallback(
     async (chatId, msgs, tl) => {
@@ -36332,6 +36446,21 @@ function App() {
       async ({ root: root2, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root2);
         setWorkspaceTree(latestTree);
+        void refreshWorkspaceChanges(root2);
+        if (!fileWritten && activeFilePathRef.current) {
+          const activeKey = activeFilePathRef.current;
+          const buf = buffersRef.current[activeKey];
+          if (!buf?.dirty) {
+            try {
+              const reloaded = await window.electronAPI.openFile(root2, activeKey);
+              setBuffers((current) => ({
+                ...current,
+                [activeKey]: { ...reloaded, dirty: false }
+              }));
+            } catch {
+            }
+          }
+        }
         if (fileDeleted) {
           setBuffers((c) => {
             const key = Object.keys(c).find((k2) => k2 === fileDeleted || c[k2].path === fileDeleted);
@@ -36349,7 +36478,7 @@ function App() {
                 (k2) => k2 === fileWritten || k2 === reloaded.path || current[k2].path === reloaded.path
               );
               if (key == null) return current;
-              return { ...current, [key]: { path: reloaded.path, content: reloaded.content, dirty: false } };
+              return { ...current, [key]: { ...reloaded, dirty: false } };
             });
           } catch {
           }
@@ -36366,7 +36495,7 @@ function App() {
       offSettingsUpdated();
       offWorkspaceChanged();
     };
-  }, []);
+  }, [refreshWorkspaceChanges]);
   reactExports.useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
       debouncedSave(chatMessages, chatTimeline, activeChatId);
@@ -36380,14 +36509,18 @@ function App() {
     setCommandLogs((c) => c + `
 [workspace attached: ${result.root}]
 `);
+    void refreshWorkspaceChanges(result.root);
   };
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
-    setWorkspaceRoot(void 0);
-    setWorkspaceTree([]);
-    setBuffers({});
-    setActiveFilePath(void 0);
-    setCommandLogs((c) => c + "\n[workspace cleared]\n");
+    void window.electronAPI.detachWorkspace().finally(() => {
+      setWorkspaceRoot(void 0);
+      setWorkspaceTree([]);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(void 0);
+      setCommandLogs((c) => c + "\n[workspace cleared]\n");
+    });
   };
   const openFile = async (target) => {
     if (!workspaceRoot) return;
@@ -36403,9 +36536,10 @@ function App() {
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer2 = buffers[activeFilePath];
-    if (!activeBuffer2) return;
+    if (!activeBuffer2 || activeBuffer2.imagePreview) return;
     const saved = await window.electronAPI.saveFile(workspaceRoot, activeFilePath, activeBuffer2.content);
     setBuffers((current) => ({ ...current, [activeFilePath]: { ...saved, dirty: false } }));
+    void refreshWorkspaceChanges(workspaceRoot);
   };
   const refreshModels = async (settingsOverride) => {
     const activeSettings = settingsOverride ?? settings;
@@ -36790,10 +36924,133 @@ function App() {
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Web Search" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Search works better with an API key" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "OpenKiwi can search without a key, but the built-in DuckDuckGo fallback only returns short instant answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web search option." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__links", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "a",
+                  {
+                    className: "app-dialog__link",
+                    href: "https://tavily.com/",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      void window.electronAPI.openExternalUrl("https://tavily.com/");
+                    },
+                    rel: "noreferrer",
+                    children: "Tavily"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, className: "app-dialog__links-sep", children: "·" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "a",
+                  {
+                    className: "app-dialog__link",
+                    href: "https://brave.com/search/api/",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      void window.electronAPI.openExternalUrl("https://brave.com/search/api/");
+                    },
+                    rel: "noreferrer",
+                    children: "Brave Search API"
+                  }
+                )
+              ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setShowWebSearchNotice(false), type: "button", children: "Not now" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: jumpToSearchSettings, type: "button", children: "Add API key" })
               ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            "aria-describedby": "connection-help-desc",
+            "aria-labelledby": "connection-help-title",
+            "aria-modal": "true",
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "app-dialog app-dialog--scrollable",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Connection" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "connection-help-title", children: "Need help?" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { id: "connection-help-desc", children: [
+                "OpenKiwi sends your chats to an LLM through either ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "OpenRouter" }),
+                " (many cloud models, one API key) or ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "LM Studio" }),
+                " (models running on your computer). Use the guide below for the option you prefer."
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__section", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__section-title", children: "OpenRouter" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                  "OpenRouter is a service that routes requests to a large catalog of hosted models so you do not run the weights locally. In OpenKiwi, choose ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "OpenRouter" }),
+                  " under Provider, paste an API key from your OpenRouter account (for example ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "sk-or-v1-…" }),
+                  "), then pick a model. The default base URL points at OpenRouter’s API and usually does not need changing. Your key is stored only in this app’s settings on your machine."
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__section", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__section-title", children: "LM Studio" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                  "LM Studio is a desktop app that downloads and runs models on your own hardware. Install it, load a model, and start the ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "local server" }),
+                  " (often on port ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "1234" }),
+                  "). In OpenKiwi, choose ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "LM Studio" }),
+                  ", confirm the base URL matches your server (the default is ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "http://127.0.0.1:1234/v1" }),
+                  "), then use ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Test + Refresh" }),
+                  " to load the model list. The server key defaults to",
+                  " ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "lm-studio" }),
+                  " unless you changed it in LM Studio."
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__links", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "a",
+                  {
+                    className: "app-dialog__link",
+                    href: "https://openrouter.ai/",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      void window.electronAPI.openExternalUrl("https://openrouter.ai/");
+                    },
+                    rel: "noreferrer",
+                    children: "OpenRouter website"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, className: "app-dialog__links-sep", children: "·" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "a",
+                  {
+                    className: "app-dialog__link",
+                    href: "https://lmstudio.ai/",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      void window.electronAPI.openExternalUrl("https://lmstudio.ai/");
+                    },
+                    rel: "noreferrer",
+                    children: "LM Studio website"
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: () => setShowConnectionHelp(false), type: "button", children: "Got it" }) })
             ]
           }
         )
@@ -37223,6 +37480,18 @@ function App() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
+                  className: `inspector-tab ${inspectorTab === "changes" ? "is-active" : ""}`,
+                  onClick: () => {
+                    setInspectorTab("changes");
+                    void refreshWorkspaceChanges();
+                  },
+                  type: "button",
+                  children: "Changes"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
                   className: `inspector-tab ${inspectorTab === "console" ? "is-active" : ""}`,
                   onClick: () => setInspectorTab("console"),
                   type: "button",
@@ -37253,8 +37522,11 @@ function App() {
                       content: activeBuffer?.content ?? "",
                       dirty: activeBuffer?.dirty ?? false,
                       filePath: activeFilePath,
+                      imagePreview: activeBuffer?.imagePreview,
                       onChange: (next) => {
                         if (!activeFilePath) return;
+                        const cur = buffers[activeFilePath];
+                        if (cur?.imagePreview) return;
                         setBuffers((current) => ({
                           ...current,
                           [activeFilePath]: { ...current[activeFilePath], content: next, dirty: true }
@@ -37275,12 +37547,22 @@ function App() {
                       onRun: runCommand
                     }
                   ) : null,
+                  inspectorTab === "changes" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    ChangesPanel,
+                    {
+                      changes: workspaceChanges,
+                      loading: changesLoading,
+                      onRefresh: () => void refreshWorkspaceChanges(),
+                      workspaceRoot
+                    }
+                  ) : null,
                   inspectorTab === "settings" && settings ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                     SettingsPanel,
                     {
                       focusSearchSettingsKey: searchSettingsFocusKey,
                       modelOptions: models,
                       onChange: setSettings,
+                      onOpenConnectionHelp: () => setShowConnectionHelp(true),
                       onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
                       onPresetPersist: persistAfterPresetAction,
                       onRefreshModels: refreshModels,

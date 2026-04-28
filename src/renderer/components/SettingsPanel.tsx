@@ -17,6 +17,8 @@ interface SettingsPanelProps {
   /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
+  /** Opens the in-app Connection guide (OpenRouter & LM Studio) from Settings. */
+  onOpenConnectionHelp?: () => void;
   /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
   onOpenWebSearchInfo?: () => void;
   focusSearchSettingsKey?: number;
@@ -43,6 +45,7 @@ export function SettingsPanel({
   onSave,
   onPresetPersist,
   onRefreshModels,
+  onOpenConnectionHelp,
   onOpenWebSearchInfo,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
@@ -60,12 +63,18 @@ export function SettingsPanel({
 
   useEffect(() => {
     if (focusSearchSettingsKey <= 0) return;
-    searchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    searchSectionRef.current?.classList.add('settings-section--focus-pulse');
-    const timer = setTimeout(() => {
-      searchSectionRef.current?.classList.remove('settings-section--focus-pulse');
-    }, 1400);
-    return () => clearTimeout(timer);
+    const el = searchSectionRef.current;
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el?.classList.add('settings-section--focus-pulse');
+    const onEnd = () => {
+      el?.classList.remove('settings-section--focus-pulse');
+      el?.removeEventListener('animationend', onEnd);
+    };
+    el?.addEventListener('animationend', onEnd);
+    return () => {
+      el?.removeEventListener('animationend', onEnd);
+      el?.classList.remove('settings-section--focus-pulse');
+    };
   }, [focusSearchSettingsKey]);
 
   const provider = settings.providers[settings.selectedProvider];
@@ -147,16 +156,33 @@ export function SettingsPanel({
 
       <div className="settings-scroll">
         <div className="settings-section">
-          <h4 className="settings-section__title">Connection</h4>
+          <div className="settings-section__title-cluster">
+            <h4 className="settings-section__title settings-section__title--cluster">Connection</h4>
+            {onOpenConnectionHelp ? (
+              <button
+                className="settings-info-button"
+                type="button"
+                aria-label="About OpenRouter, LM Studio, and OpenKiwi"
+                title="OpenRouter & LM Studio in OpenKiwi"
+                onClick={onOpenConnectionHelp}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
 
-          <label className="field">
-            <span>Provider</span>
+          <div className="field">
+            <span id="settings-connection-provider-label">Provider</span>
             <AppSelect
+              ariaLabelledBy="settings-connection-provider-label"
               options={providerOptions}
               value={settings.selectedProvider}
               onChange={(providerKind) => onChange({ ...settings, selectedProvider: providerKind })}
             />
-          </label>
+          </div>
 
           {isLmStudio ? (
             <label className="field">
@@ -378,12 +404,13 @@ export function SettingsPanel({
                         <button
                           key={theme.id}
                           className={`theme-tile ${settings.ui.themeId === theme.id ? 'is-active' : ''}`}
-                          onClick={() =>
-                            onChange({
+                          onClick={() => {
+                            const next: AppSettings = {
                               ...settings,
                               ui: { ...settings.ui, themeId: theme.id, customThemeTokens: undefined }
-                            })
-                          }
+                            };
+                            void onPresetPersist(next);
+                          }}
                           type="button"
                         >
                           <strong>{theme.name}</strong>
@@ -430,7 +457,8 @@ export function SettingsPanel({
               ['fileRead', 'Read files'],
               ['fileWrite', 'Write files'],
               ['workspaceSearch', 'Workspace search'],
-              ['commandDeck', 'Command deck']
+              ['commandDeck', 'Command deck'],
+              ['allowModelSystemPrompt', 'AI can change system prompt']
             ] as const).map(([key, label]) => (
               <label className={`toggle-row ${settings.tools[key] ? 'is-active-soft' : ''}`} key={key}>
                 <span>{label}</span>
@@ -441,6 +469,10 @@ export function SettingsPanel({
                 />
               </label>
             ))}
+          </div>
+          <div className="inline-hint">
+            When <strong>AI can change system prompt</strong> is on, Agent mode may call <code>set_system_prompt</code>{' '}
+            after you ask—saved to Settings for the selected provider (with approval unless Full access).
           </div>
         </div>
 

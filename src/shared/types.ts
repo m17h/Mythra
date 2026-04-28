@@ -35,6 +35,11 @@ export interface ToolPermissions {
   fileWrite: boolean;
   workspaceSearch: boolean;
   commandDeck: boolean;
+  /**
+   * When true (Agent mode only), the model may call `set_system_prompt` to replace the
+   * active provider’s system prompt in Settings, subject to approval unless Full access is on.
+   */
+  allowModelSystemPrompt: boolean;
 }
 
 export type SessionMode = 'agent' | 'talk';
@@ -95,6 +100,11 @@ export interface WorkspaceNode {
 export interface OpenFile {
   path: string;
   content: string;
+  /** When set (PNG, JPEG, GIF, WebP, SVG, …), the editor shows this preview instead of Monaco. */
+  imagePreview?: {
+    mimeType: string;
+    dataUrl: string;
+  };
 }
 
 export interface CommandChunk {
@@ -182,6 +192,14 @@ export interface WorkspaceChanged {
   fileDeleted?: string;
 }
 
+export interface WorkspaceChanges {
+  ok: boolean;
+  root: string;
+  status: string;
+  diff: string;
+  error?: string;
+}
+
 export interface SavedChat {
   id: string;
   title: string;
@@ -247,7 +265,8 @@ export const defaultSettings: AppSettings = {
     fileRead: true,
     fileWrite: true,
     workspaceSearch: true,
-    commandDeck: true
+    commandDeck: true,
+    allowModelSystemPrompt: false
   },
   agent: {
     fullAccess: false,

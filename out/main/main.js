@@ -1,12 +1,13 @@
 import { fileURLToPath } from "node:url";
-import { join as join$1, relative, dirname, resolve, basename, sep } from "node:path";
-import { app, dialog, BrowserWindow, ipcMain, nativeImage } from "electron";
+import { join as join$1, relative, dirname, extname, resolve, basename, sep } from "node:path";
+import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
-import { existsSync } from "node:fs";
-import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { existsSync, watch } from "node:fs";
+import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
+import { spawn, execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
+import { promisify } from "node:util";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
@@ -101,14 +102,14 @@ class ChatStore {
 class CommandService {
   jobs = /* @__PURE__ */ new Map();
   getShell() {
-    const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
+    const shell2 = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
     const args = process.platform === "win32" ? ["-Command"] : ["-lc"];
-    return { shell, args };
+    return { shell: shell2, args };
   }
   run(window, command, cwd) {
     const jobId = randomUUID();
-    const { shell, args } = this.getShell();
-    const child = spawn(shell, [...args, command], {
+    const { shell: shell2, args } = this.getShell();
+    const child = spawn(shell2, [...args, command], {
       cwd,
       env: process.env
     });
@@ -141,9 +142,9 @@ class CommandService {
     return { jobId };
   }
   async runAndCapture(command, cwd, timeoutMs = 2e4, abortSignal) {
-    const { shell, args } = this.getShell();
+    const { shell: shell2, args } = this.getShell();
     return new Promise((resolve2, reject) => {
-      const child = spawn(shell, [...args, command], {
+      const child = spawn(shell2, [...args, command], {
         cwd,
         env: process.env
       });
@@ -221,6 +222,71 @@ class CommandService {
 }
 const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
 const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
+const promptPresets = [
+  {
+    id: "general-coding",
+    label: "General Coding",
+    description: "Balanced default for coding assistance, refactors, debugging, and local tool use.",
+    prompt: `You are a pragmatic coding assistant inside a desktop editor.
+
+Use available tools to inspect the workspace, read files, write files, delete files when explicitly appropriate, and run workspace commands when useful.
+
+Work autonomously when the task is clear. Prefer taking the next useful step over stopping early. Keep going until one of these is true:
+1. the task is complete
+2. you are blocked by missing information or a risky ambiguity that requires user input
+3. a tool operation fails and you need user direction
+
+When you stop because the task is complete, begin your final response with TASK_COMPLETE.
+When you stop because you need user input, begin your final response with NEEDS_INPUT.
+
+Be concise, precise, and directly useful.`
+  },
+  {
+    id: "web-design",
+    label: "Web Design",
+    description: "Strong art direction, polished UI decisions, and decisive frontend implementation.",
+    prompt: `You are an expert web product designer and frontend engineer inside a desktop editor.
+
+Your job is to produce interfaces that feel intentional, premium, and visually distinctive. Avoid generic SaaS card grids, weak hierarchy, and filler copy. Prefer strong composition, clean spacing, clear typography, and a small number of memorable visual ideas.
+
+Use available tools to inspect the workspace, read and write files, and run commands as needed. Work autonomously until the task is complete or you truly need input.
+
+For UI work:
+- make one dominant idea per section or screen
+- keep copy tight and product-oriented
+- preserve usability and responsiveness
+- favor polished motion over noisy motion
+- maintain accessibility, contrast, and strong information hierarchy
+
+When you stop because the task is complete, begin your final response with TASK_COMPLETE.
+When you stop because you need user input, begin your final response with NEEDS_INPUT.
+
+Be opinionated, high quality, and implementation-ready.`
+  },
+  {
+    id: "software-engineering",
+    label: "Software Engineering",
+    description: "Systems-oriented prompt for architecture, correctness, maintainability, and delivery.",
+    prompt: `You are a senior software engineer operating inside a desktop coding workspace.
+
+Use available tools to inspect the project, read files, write files, delete files when necessary, and run workspace commands for builds, tests, linting, and debugging.
+
+Work autonomously when the task is clear. Make careful technical decisions with strong defaults:
+- prefer correct, maintainable solutions over flashy ones
+- preserve existing architecture when reasonable
+- validate assumptions against the codebase
+- run relevant checks when possible
+- explain blockers plainly when you truly need input
+
+Do not stop after partial analysis if you can continue implementing or verifying. Continue until the task is complete or genuinely blocked.
+
+When you stop because the task is complete, begin your final response with TASK_COMPLETE.
+When you stop because you need user input, begin your final response with NEEDS_INPUT.
+
+Optimize for correctness, clarity, and momentum.`
+  }
+];
+const getPromptPreset = (id) => promptPresets.find((preset) => preset.id === id) ?? promptPresets[0];
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
   { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
@@ -1057,8 +1123,11 @@ const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OP
 const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
 const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice." : "UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.";
 const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
-const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
 const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
+const openkiwiModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
+const openkiwiToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
+const openkiwiCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -1121,13 +1190,14 @@ const toApiMessage = (message) => {
   };
 };
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
     this.getAppThemeState = getAppThemeState2;
     this.mergeCustomThemeTokens = mergeCustomThemeTokens2;
     this.setCustomTheme = setCustomTheme2;
+    this.persistAppSettings = persistAppSettings;
   }
   workspaceService;
   commandService;
@@ -1135,6 +1205,7 @@ class ModelService {
   getAppThemeState;
   mergeCustomThemeTokens;
   setCustomTheme;
+  persistAppSettings;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -1439,6 +1510,34 @@ class ModelService {
       }
     };
   }
+  buildGetToolAccessTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_tool_access",
+        description: "Return which options are enabled under Settings → Tool access: read files, write files, workspace search, command deck, and whether the model may call set_system_prompt to change the stored system prompt. Read-only. (Reading the prompt uses get_system_prompt; that is not controlled by these toggles.)",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildGetSystemPromptTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_system_prompt",
+        description: "Return the full system prompt text and preset metadata for the **currently selected** LLM provider in Settings (read-only, never writes). Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildRevertAppThemeTool() {
     return {
       type: "function",
@@ -1546,7 +1645,29 @@ class ModelService {
     tools.push(this.buildSetAppThemeTool());
     tools.push(this.buildMergeCustomThemeTokensTool());
     tools.push(this.buildGetAppThemeTool());
+    tools.push(this.buildGetToolAccessTool());
+    tools.push(this.buildGetSystemPromptTool());
     tools.push(this.buildRevertAppThemeTool());
+    if (settings.tools.allowModelSystemPrompt) {
+      tools.push({
+        type: "function",
+        function: {
+          name: "set_system_prompt",
+          description: "Replace the entire system prompt for the **currently selected** LLM provider in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately; applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.",
+          parameters: {
+            type: "object",
+            properties: {
+              system_prompt: {
+                type: "string",
+                description: "Full new system prompt text (replaces the previous one for this provider)."
+              }
+            },
+            required: ["system_prompt"],
+            additionalProperties: false
+          }
+        }
+      });
+    }
     if (!workspaceRoot) {
       return tools;
     }
@@ -1589,6 +1710,24 @@ class ModelService {
         {
           type: "function",
           function: {
+            name: "apply_patch",
+            description: "Apply a unified diff patch inside the current workspace. Preferred for multi-line code edits because it preserves untouched content and creates a reviewable git diff.",
+            parameters: {
+              type: "object",
+              properties: {
+                patch: {
+                  type: "string",
+                  description: "A valid unified diff, suitable for `git apply`."
+                }
+              },
+              required: ["patch"],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
             name: "write_file",
             description: "Create or overwrite a UTF-8 text file inside the current workspace. Creates parent folders when needed.",
             parameters: {
@@ -1604,6 +1743,57 @@ class ModelService {
                 }
               },
               required: ["path", "content"],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "replace_in_file",
+            description: "Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Relative path inside the workspace." },
+                search: { type: "string", description: "Exact text to find." },
+                replacement: { type: "string", description: "Replacement text." },
+                replace_all: { type: "boolean", description: "Replace every occurrence instead of just the first." }
+              },
+              required: ["path", "search", "replacement"],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "insert_after",
+            description: "Insert text immediately after an exact anchor string in one UTF-8 file.",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Relative path inside the workspace." },
+                anchor: { type: "string", description: "Exact text to insert after." },
+                text: { type: "string", description: "Text to insert." }
+              },
+              required: ["path", "anchor", "text"],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "rename_file",
+            description: "Move or rename a file or folder inside the current workspace.",
+            parameters: {
+              type: "object",
+              properties: {
+                from: { type: "string", description: "Existing relative path." },
+                to: { type: "string", description: "New relative path." }
+              },
+              required: ["from", "to"],
               additionalProperties: false
             }
           }
@@ -1629,24 +1819,90 @@ class ModelService {
       );
     }
     if (settings.tools.commandDeck) {
-      tools.push({
-        type: "function",
-        function: {
-          name: "run_command",
-          description: "Run a shell command inside the current workspace and return stdout, stderr, and exit status. Use this for git, build, test, and search commands.",
-          parameters: {
-            type: "object",
-            properties: {
-              command: {
-                type: "string",
-                description: "Shell command to run inside the current workspace."
-              }
-            },
-            required: ["command"],
-            additionalProperties: false
+      tools.push(
+        {
+          type: "function",
+          function: {
+            name: "get_git_diff",
+            description: "Return git status and the current unstaged diff for the active workspace. Use after edits before summarizing changes.",
+            parameters: {
+              type: "object",
+              properties: {},
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "run_tests",
+            description: "Run the project test/build/check command in the current workspace. Prefer this over run_command for verification.",
+            parameters: {
+              type: "object",
+              properties: {
+                command: {
+                  type: "string",
+                  description: "Test/check/build command to run, e.g. npm run check. If omitted, OpenKiwi tries npm test."
+                }
+              },
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "run_command",
+            description: "Run a shell command inside the current workspace and return stdout, stderr, and exit status. Use for commands not covered by run_tests or get_git_diff.",
+            parameters: {
+              type: "object",
+              properties: {
+                command: {
+                  type: "string",
+                  description: "Shell command to run inside the current workspace."
+                }
+              },
+              required: ["command"],
+              additionalProperties: false
+            }
           }
         }
-      });
+      );
+    }
+    if (settings.tools.workspaceSearch) {
+      tools.push(
+        {
+          type: "function",
+          function: {
+            name: "search_symbols",
+            description: "Search likely code symbols/declarations across the workspace. Use before reading many files when looking for a function, class, component, type, or constant.",
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: "Symbol or text to search for." },
+                limit: { type: "number", description: "Maximum results, default 50." }
+              },
+              required: ["query"],
+              additionalProperties: false
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "get_file_outline",
+            description: "Return top-level functions/classes/types/constants for a source file.",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "Relative path to a source file." }
+              },
+              required: ["path"],
+              additionalProperties: false
+            }
+          }
+        }
+      );
     }
     return tools;
   }
@@ -1689,6 +1945,9 @@ class ModelService {
         openkiwiSessionModeEmbedInstruction,
         openkiwiWebSearchEmbedInstruction,
         openkiwiSetAppThemeAgentInstruction,
+        openkiwiToolAccessReadInstruction,
+        openkiwiModelSystemPromptInstruction,
+        settings.tools.allowModelSystemPrompt ? "set_system_prompt is enabled in Settings → you may update the system prompt when the user asks." : "set_system_prompt is disabled; the user can enable “AI can change system prompt” under Tool access. You can still call get_system_prompt anytime in Agent mode to read the stored prompt.",
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
         ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []
@@ -1701,12 +1960,16 @@ class ModelService {
       "set_app_theme",
       "merge_custom_theme_tokens",
       "get_app_theme",
+      "get_tool_access",
+      "get_system_prompt",
       "revert_app_theme",
       settings.ui.webSearch ? "web_search" : null,
       settings.tools.workspaceSearch ? "list_files" : null,
+      settings.tools.workspaceSearch ? "search_symbols, get_file_outline" : null,
       settings.tools.fileRead ? "read_file" : null,
-      settings.tools.fileWrite ? "write_file, delete_path" : null,
-      settings.tools.commandDeck ? "run_command" : null
+      settings.tools.fileWrite ? "apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path" : null,
+      settings.tools.commandDeck ? "get_git_diff, run_tests, run_command" : null,
+      settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null
     ].filter(Boolean).join(", ");
     return [
       "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
@@ -1718,10 +1981,13 @@ class ModelService {
       openkiwiWebSearchEmbedInstruction,
       webHeaderUiStateLine(settings.ui.webSearch),
       openkiwiSetAppThemeAgentInstruction,
+      openkiwiToolAccessReadInstruction,
+      openkiwiModelSystemPromptInstruction,
+      openkiwiCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
-      `Approval: ${settings.agent.fullAccess ? "writes/commands run without per-action approval" : "user approval may be required for some writes, deletes, and commands"}.`,
+      `Approval: ${settings.agent.fullAccess ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
@@ -1800,6 +2066,60 @@ class ModelService {
       }
       return this.getAppThemeState();
     }
+    if (toolCall.function.name === "get_tool_access") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "get_tool_access is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      return JSON.stringify(
+        {
+          tool_access: {
+            fileRead: settings.tools.fileRead,
+            fileWrite: settings.tools.fileWrite,
+            workspaceSearch: settings.tools.workspaceSearch,
+            commandDeck: settings.tools.commandDeck,
+            allowModelSystemPrompt: settings.tools.allowModelSystemPrompt
+          },
+          /** Matches labels in Settings → Tool access */
+          labels: {
+            fileRead: "Read files",
+            fileWrite: "Write files",
+            workspaceSearch: "Workspace search",
+            commandDeck: "Command deck",
+            allowModelSystemPrompt: "AI can change system prompt"
+          }
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "get_system_prompt") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "get_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      const kind = settings.selectedProvider;
+      const provider = settings.providers[kind];
+      const full = provider.systemPrompt ?? "";
+      const MAX_PREVIEW = 24e3;
+      const truncated = full.length > MAX_PREVIEW;
+      const system_prompt = truncated ? truncate(full, MAX_PREVIEW) : full;
+      const preset = provider.promptPresetId === "custom" ? { id: "custom", label: "Custom" } : { id: provider.promptPresetId, label: getPromptPreset(provider.promptPresetId).label };
+      return JSON.stringify(
+        {
+          provider: kind,
+          prompt_preset: preset,
+          active_custom_preset_id: provider.activeCustomPresetId,
+          system_prompt,
+          system_prompt_length: full.length,
+          system_prompt_truncated: truncated
+        },
+        null,
+        2
+      );
+    }
     if (toolCall.function.name === "revert_app_theme") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
@@ -1823,6 +2143,66 @@ class ModelService {
       const result = await this.applyAppTheme(state.previousThemeId);
       this.patchSettingsThemeFromToolResult(settings, result);
       return result;
+    }
+    if (toolCall.function.name === "set_system_prompt") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "set_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!settings.tools.allowModelSystemPrompt) {
+        throw new Error(
+          "Changing the system prompt from the model is turned off. The user can enable “AI can change system prompt” under Settings → Tool access."
+        );
+      }
+      if (!this.persistAppSettings) {
+        throw new Error("System prompt updates are not available in this build.");
+      }
+      const system_prompt = String(args.system_prompt ?? "");
+      if (!system_prompt.trim()) {
+        throw new Error("set_system_prompt requires a non-empty system_prompt string.");
+      }
+      const MAX_SYSTEM_PROMPT = 12e4;
+      if (system_prompt.length > MAX_SYSTEM_PROMPT) {
+        throw new Error(`system_prompt is too long (max ${MAX_SYSTEM_PROMPT} characters).`);
+      }
+      const providerKind = settings.selectedProvider;
+      await this.requestApprovalIfNeeded(
+        window,
+        requestId,
+        settings,
+        "Approve system prompt change",
+        `The model wants to replace the **${providerKind}** system prompt (${system_prompt.length} characters).
+
+Preview:
+${truncate(system_prompt, 900)}`
+      );
+      const saved = await this.persistAppSettings((base) => {
+        const p = base.providers[providerKind];
+        return {
+          ...base,
+          providers: {
+            ...base.providers,
+            [providerKind]: {
+              ...p,
+              systemPrompt: system_prompt,
+              promptPresetId: "custom",
+              activeCustomPresetId: null
+            }
+          }
+        };
+      });
+      Object.assign(settings, saved);
+      return JSON.stringify(
+        {
+          ok: true,
+          provider: providerKind,
+          length: system_prompt.length,
+          message: "System prompt saved for the active provider. It applies on the next message."
+        },
+        null,
+        2
+      );
     }
     if (!workspaceRoot) {
       throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
@@ -1852,6 +2232,18 @@ class ModelService {
           throw new Error("read_file requires a path.");
         }
         const file = await this.workspaceService.openFile(workspaceRoot, path);
+        if (file.imagePreview && !file.content) {
+          return JSON.stringify(
+            {
+              path: relative(workspaceRoot, file.path),
+              kind: "image",
+              mimeType: file.imagePreview.mimeType,
+              note: "Binary image file. Preview it in the Editor tab; no text content is returned here."
+            },
+            null,
+            2
+          );
+        }
         return JSON.stringify(
           {
             path: relative(workspaceRoot, file.path),
@@ -1892,6 +2284,112 @@ This will create or overwrite the file inside the current workspace.`
           2
         );
       }
+      case "apply_patch": {
+        if (!settings.tools.fileWrite) {
+          throw new Error("The apply_patch tool is disabled in settings.");
+        }
+        const patch = String(args.patch ?? "");
+        if (!patch.trim()) {
+          throw new Error("apply_patch requires a patch.");
+        }
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          "Approve patch",
+          `The model wants to apply a patch inside:
+${workspaceRoot}
+
+Patch preview:
+${truncate(patch, 2500)}`
+        );
+        const changes = await this.workspaceService.applyPatch(workspaceRoot, patch);
+        window.webContents.send("workspace:changed", { root: workspaceRoot });
+        return JSON.stringify({ ok: true, changes }, null, 2);
+      }
+      case "replace_in_file": {
+        if (!settings.tools.fileWrite) {
+          throw new Error("The replace_in_file tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        const search = String(args.search ?? "");
+        const replacement = String(args.replacement ?? "");
+        const replaceAll = Boolean(args.replace_all);
+        if (!path) throw new Error("replace_in_file requires a path.");
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          "Approve file edit",
+          `The model wants to replace text in:
+${path}
+
+Search:
+${truncate(search, 1200)}
+
+Replacement:
+${truncate(replacement, 1200)}`
+        );
+        const result = await this.workspaceService.replaceInFile(workspaceRoot, path, search, replacement, replaceAll);
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
+        return JSON.stringify(
+          { ok: true, path: relative(workspaceRoot, result.path), replacements: result.replacements },
+          null,
+          2
+        );
+      }
+      case "insert_after": {
+        if (!settings.tools.fileWrite) {
+          throw new Error("The insert_after tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        const anchor = String(args.anchor ?? "");
+        const text = String(args.text ?? "");
+        if (!path) throw new Error("insert_after requires a path.");
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          "Approve file insertion",
+          `The model wants to insert text in:
+${path}
+
+After:
+${truncate(anchor, 1200)}
+
+Insert:
+${truncate(text, 1200)}`
+        );
+        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text);
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
+        return JSON.stringify({ ok: true, path: relative(workspaceRoot, result.path) }, null, 2);
+      }
+      case "rename_file": {
+        if (!settings.tools.fileWrite) {
+          throw new Error("The rename_file tool is disabled in settings.");
+        }
+        const from = String(args.from ?? "");
+        const to = String(args.to ?? "");
+        if (!from || !to) throw new Error("rename_file requires from and to.");
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          "Approve rename",
+          `The model wants to rename:
+${from}
+
+to:
+${to}`
+        );
+        const result = await this.workspaceService.renamePath(workspaceRoot, from, to);
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileDeleted: result.from, fileWritten: result.to });
+        return JSON.stringify(
+          { ok: true, from: relative(workspaceRoot, result.from), to: relative(workspaceRoot, result.to) },
+          null,
+          2
+        );
+      }
       case "delete_path": {
         if (!settings.tools.fileWrite) {
           throw new Error("The delete_path tool is disabled in settings.");
@@ -1921,6 +2419,28 @@ This cannot be undone from the app.`
           2
         );
       }
+      case "get_git_diff": {
+        if (!settings.tools.commandDeck) {
+          throw new Error("The get_git_diff tool is disabled in settings.");
+        }
+        return JSON.stringify(await this.workspaceService.getChanges(workspaceRoot), null, 2);
+      }
+      case "search_symbols": {
+        if (!settings.tools.workspaceSearch) {
+          throw new Error("The search_symbols tool is disabled in settings.");
+        }
+        const query = String(args.query ?? "");
+        const limit = typeof args.limit === "number" ? Math.max(1, Math.min(200, args.limit)) : 50;
+        return JSON.stringify({ ok: true, results: await this.workspaceService.searchSymbols(workspaceRoot, query, limit) }, null, 2);
+      }
+      case "get_file_outline": {
+        if (!settings.tools.workspaceSearch) {
+          throw new Error("The get_file_outline tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        if (!path) throw new Error("get_file_outline requires a path.");
+        return JSON.stringify({ ok: true, ...await this.workspaceService.getFileOutline(workspaceRoot, path) }, null, 2);
+      }
       case "run_command": {
         if (!settings.tools.commandDeck) {
           throw new Error("The run_command tool is disabled in settings.");
@@ -1942,6 +2462,26 @@ ${workspaceRoot}`
         );
         const signal = this.activeRequests.get(requestId)?.controller.signal;
         const result = await this.commandService.runAndCapture(path, workspaceRoot, 2e4, signal);
+        return JSON.stringify(result, null, 2);
+      }
+      case "run_tests": {
+        if (!settings.tools.commandDeck) {
+          throw new Error("The run_tests tool is disabled in settings.");
+        }
+        const command = String(args.command ?? "").trim() || "npm test";
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          "Approve test command",
+          `The model wants to run:
+${command}
+
+The command will execute inside:
+${workspaceRoot}`
+        );
+        const signal = this.activeRequests.get(requestId)?.controller.signal;
+        const result = await this.commandService.runAndCapture(command, workspaceRoot, 6e4, signal);
         return JSON.stringify(result, null, 2);
       }
       default:
@@ -2001,71 +2541,6 @@ ${workspaceRoot}`
     window.webContents.send("chat:activity", payload);
   }
 }
-const promptPresets = [
-  {
-    id: "general-coding",
-    label: "General Coding",
-    description: "Balanced default for coding assistance, refactors, debugging, and local tool use.",
-    prompt: `You are a pragmatic coding assistant inside a desktop editor.
-
-Use available tools to inspect the workspace, read files, write files, delete files when explicitly appropriate, and run workspace commands when useful.
-
-Work autonomously when the task is clear. Prefer taking the next useful step over stopping early. Keep going until one of these is true:
-1. the task is complete
-2. you are blocked by missing information or a risky ambiguity that requires user input
-3. a tool operation fails and you need user direction
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be concise, precise, and directly useful.`
-  },
-  {
-    id: "web-design",
-    label: "Web Design",
-    description: "Strong art direction, polished UI decisions, and decisive frontend implementation.",
-    prompt: `You are an expert web product designer and frontend engineer inside a desktop editor.
-
-Your job is to produce interfaces that feel intentional, premium, and visually distinctive. Avoid generic SaaS card grids, weak hierarchy, and filler copy. Prefer strong composition, clean spacing, clear typography, and a small number of memorable visual ideas.
-
-Use available tools to inspect the workspace, read and write files, and run commands as needed. Work autonomously until the task is complete or you truly need input.
-
-For UI work:
-- make one dominant idea per section or screen
-- keep copy tight and product-oriented
-- preserve usability and responsiveness
-- favor polished motion over noisy motion
-- maintain accessibility, contrast, and strong information hierarchy
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be opinionated, high quality, and implementation-ready.`
-  },
-  {
-    id: "software-engineering",
-    label: "Software Engineering",
-    description: "Systems-oriented prompt for architecture, correctness, maintainability, and delivery.",
-    prompt: `You are a senior software engineer operating inside a desktop coding workspace.
-
-Use available tools to inspect the project, read files, write files, delete files when necessary, and run workspace commands for builds, tests, linting, and debugging.
-
-Work autonomously when the task is clear. Make careful technical decisions with strong defaults:
-- prefer correct, maintainable solutions over flashy ones
-- preserve existing architecture when reasonable
-- validate assumptions against the codebase
-- run relevant checks when possible
-- explain blockers plainly when you truly need input
-
-Do not stop after partial analysis if you can continue implementing or verifying. Continue until the task is complete or genuinely blocked.
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Optimize for correctness, clarity, and momentum.`
-  }
-];
-const getPromptPreset = (id) => promptPresets.find((preset) => preset.id === id) ?? promptPresets[0];
 const defaultSettings = {
   selectedProvider: "lmstudio",
   providers: {
@@ -2103,7 +2578,8 @@ const defaultSettings = {
     fileRead: true,
     fileWrite: true,
     workspaceSearch: true,
-    commandDeck: true
+    commandDeck: true,
+    allowModelSystemPrompt: false
   },
   agent: {
     fullAccess: false,
@@ -2188,6 +2664,23 @@ const MAX_TREE_DEPTH = 10;
 const MAX_LIST_DEPTH = 24;
 const MAX_TREE_ENTRIES = 2500;
 const MAX_LIST_ENTRIES = 5e3;
+const MAX_SEARCH_FILES = 1500;
+const MAX_SEARCH_FILE_BYTES = 5e5;
+const execFileAsync = promisify(execFile);
+const spawnWithInput = (cmd, args, cwd, input) => new Promise((resolvePromise, reject) => {
+  const child = spawn(cmd, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  child.on("error", reject);
+  child.on("close", (code) => {
+    if (code === 0) resolvePromise();
+    else reject(new Error(stderr.trim() || `${cmd} exited with code ${code}`));
+  });
+  child.stdin.end(input);
+});
 const ensureInsideRoot = (root, target) => {
   const resolvedRoot = resolve(root);
   const resolvedTarget = resolve(resolvedRoot, target);
@@ -2257,6 +2750,16 @@ const walkFiles = async (root, current, bucket, depth = 0) => {
     }
   }
 };
+const RASTER_IMAGE_EXT = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif"
+};
 class WorkspaceService {
   async chooseWorkspace() {
     const result = await dialog.showOpenDialog({
@@ -2281,6 +2784,26 @@ class WorkspaceService {
   }
   async openFile(root, target) {
     const safePath = ensureInsideRoot(root, target);
+    const ext = extname(safePath).toLowerCase();
+    if (ext === ".svg") {
+      const content2 = await readFile(safePath, "utf8");
+      const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content2)}`;
+      return {
+        path: safePath,
+        content: content2,
+        imagePreview: { mimeType: "image/svg+xml", dataUrl }
+      };
+    }
+    const rasterMime = RASTER_IMAGE_EXT[ext];
+    if (rasterMime) {
+      const buf = await readFile(safePath);
+      const dataUrl = `data:${rasterMime};base64,${buf.toString("base64")}`;
+      return {
+        path: safePath,
+        content: "",
+        imagePreview: { mimeType: rasterMime, dataUrl }
+      };
+    }
     const content = await readFile(safePath, "utf8");
     return { path: safePath, content };
   }
@@ -2288,7 +2811,43 @@ class WorkspaceService {
     const safePath = ensureInsideRoot(root, target);
     await mkdir(dirname(safePath), { recursive: true });
     await writeFile(safePath, content, "utf8");
-    return { path: safePath, content };
+    return this.openFile(root, target);
+  }
+  async replaceInFile(root, target, search, replacement, replaceAll) {
+    if (!search) {
+      throw new Error("Search text cannot be empty.");
+    }
+    const safePath = ensureInsideRoot(root, target);
+    const content = await readFile(safePath, "utf8");
+    const count = content.split(search).length - 1;
+    if (count === 0) {
+      throw new Error("Search text was not found.");
+    }
+    const next = replaceAll ? content.split(search).join(replacement) : content.replace(search, replacement);
+    await writeFile(safePath, next, "utf8");
+    return { path: safePath, replacements: replaceAll ? count : 1 };
+  }
+  async insertAfter(root, target, anchor, text) {
+    if (!anchor) {
+      throw new Error("Anchor text cannot be empty.");
+    }
+    const safePath = ensureInsideRoot(root, target);
+    const content = await readFile(safePath, "utf8");
+    const index = content.indexOf(anchor);
+    if (index < 0) {
+      throw new Error("Anchor text was not found.");
+    }
+    const at = index + anchor.length;
+    const next = `${content.slice(0, at)}${text}${content.slice(at)}`;
+    await writeFile(safePath, next, "utf8");
+    return { path: safePath };
+  }
+  async renamePath(root, from, to) {
+    const safeFrom = ensureInsideRoot(root, from);
+    const safeTo = ensureInsideRoot(root, to);
+    await mkdir(dirname(safeTo), { recursive: true });
+    await rename(safeFrom, safeTo);
+    return { from: safeFrom, to: safeTo };
   }
   async deletePath(root, target) {
     const safePath = ensureInsideRoot(root, target);
@@ -2301,8 +2860,165 @@ class WorkspaceService {
     await walkFiles(resolve(root), resolve(root), files);
     return files;
   }
+  async getChanges(root) {
+    const cwd = resolve(root);
+    try {
+      const [status, diff] = await Promise.all([
+        execFileAsync("git", ["status", "--short"], { cwd, maxBuffer: 2e6 }),
+        execFileAsync("git", ["diff", "--", "."], { cwd, maxBuffer: 8e6 })
+      ]);
+      return { ok: true, root: cwd, status: status.stdout, diff: diff.stdout };
+    } catch (error) {
+      return {
+        ok: false,
+        root: cwd,
+        status: "",
+        diff: "",
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+  async applyPatch(root, patch) {
+    if (!patch.trim()) {
+      throw new Error("Patch cannot be empty.");
+    }
+    const cwd = resolve(root);
+    await spawnWithInput("git", ["apply", "--whitespace=nowarn", "-"], cwd, patch);
+    return this.getChanges(root);
+  }
+  async searchSymbols(root, query, limit = 50) {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      throw new Error("search_symbols requires a query.");
+    }
+    const files = (await this.listFiles(root)).filter((entry) => entry.type === "file").slice(0, MAX_SEARCH_FILES);
+    const results = [];
+    for (const entry of files) {
+      if (results.length >= limit) break;
+      const full = ensureInsideRoot(root, entry.path);
+      try {
+        const s = await stat(full);
+        if (s.size > MAX_SEARCH_FILE_BYTES) continue;
+        const content = await readFile(full, "utf8");
+        const lines = content.split(/\r?\n/);
+        for (let i = 0; i < lines.length && results.length < limit; i += 1) {
+          const line = lines[i];
+          if (!line.toLowerCase().includes(q)) continue;
+          if (!/\b(class|function|const|let|var|interface|type|enum|def|struct|export|import)\b/.test(line)) continue;
+          results.push({ path: entry.path, line: i + 1, text: line.trim() });
+        }
+      } catch {
+      }
+    }
+    return results;
+  }
+  async getFileOutline(root, target) {
+    const safePath = ensureInsideRoot(root, target);
+    const content = await readFile(safePath, "utf8");
+    const ext = extname(safePath).toLowerCase();
+    const lines = content.split(/\r?\n/);
+    const patterns = ext === ".py" ? [/^\s*(?:async\s+)?def\s+([\w_]+)/, /^\s*class\s+([\w_]+)/] : [
+      /^\s*export\s+(?:default\s+)?(?:async\s+)?function\s+([\w$]+)/,
+      /^\s*(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=/,
+      /^\s*(?:export\s+)?(?:interface|type|class|enum)\s+([\w$]+)/
+    ];
+    const outline = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      for (const pattern of patterns) {
+        const match = pattern.exec(lines[i]);
+        if (match?.[1]) {
+          outline.push({ line: i + 1, name: match[1], text: lines[i].trim() });
+          break;
+        }
+      }
+    }
+    return { path: relative(resolve(root), safePath), outline };
+  }
   labelForRoot(root) {
     return basename(root);
+  }
+}
+const WATCH_IGNORE_SEGMENTS = /* @__PURE__ */ new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  "dist",
+  "out",
+  "build",
+  "coverage"
+]);
+const WATCH_DEBOUNCE_MS = 380;
+const POLL_FALLBACK_MS = 2e3;
+function shouldIgnoreWatchPath(rel) {
+  if (rel == null || rel === "") return false;
+  const norm = rel.replace(/\\/g, "/");
+  for (const seg of norm.split("/")) {
+    if (!seg) continue;
+    if (seg === ".DS_Store" || seg === "Thumbs.db") return true;
+    if (WATCH_IGNORE_SEGMENTS.has(seg)) return true;
+  }
+  return false;
+}
+function relToString(rel) {
+  if (rel == null) return null;
+  return typeof rel === "string" ? rel : rel.toString("utf8");
+}
+class WorkspaceWatchController {
+  constructor(getWindow) {
+    this.getWindow = getWindow;
+  }
+  getWindow;
+  fsWatcher = null;
+  pollTimer = null;
+  emitTimer = null;
+  stop() {
+    if (this.emitTimer != null) {
+      clearTimeout(this.emitTimer);
+      this.emitTimer = null;
+    }
+    if (this.pollTimer != null) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    if (this.fsWatcher != null) {
+      this.fsWatcher.removeAllListeners();
+      this.fsWatcher.close();
+      this.fsWatcher = null;
+    }
+  }
+  setRoot(root) {
+    this.stop();
+    const absRoot = resolve(root);
+    const flush = () => {
+      this.emitTimer = null;
+      const win = this.getWindow();
+      if (!win || win.isDestroyed()) return;
+      win.webContents.send("workspace:changed", { root: absRoot });
+    };
+    const scheduleEmit = () => {
+      if (this.emitTimer != null) clearTimeout(this.emitTimer);
+      this.emitTimer = setTimeout(flush, WATCH_DEBOUNCE_MS);
+    };
+    const onFsEvent = (_evt, rel) => {
+      const asStr = relToString(rel);
+      if (shouldIgnoreWatchPath(asStr)) return;
+      scheduleEmit();
+    };
+    let usedRecursive = false;
+    try {
+      this.fsWatcher = watch(absRoot, { recursive: true }, onFsEvent);
+      usedRecursive = true;
+    } catch {
+      try {
+        this.fsWatcher = watch(absRoot, onFsEvent);
+      } catch {
+        this.fsWatcher = null;
+      }
+    }
+    this.fsWatcher?.on("error", () => scheduleEmit());
+    if (!usedRecursive) {
+      this.pollTimer = setInterval(scheduleEmit, POLL_FALLBACK_MS);
+    }
   }
 }
 const settingsStore = new SettingsStore();
@@ -2311,6 +3027,10 @@ const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
 let mainWindow = null;
 let activeWorkspaceRoot;
+const workspaceWatch = new WorkspaceWatchController(() => {
+  const w = mainWindow;
+  return w && !w.isDestroyed() ? w : null;
+});
 let currentSettings = defaultSettings;
 let previousThemeId;
 const recordThemeTransition = (from, to) => {
@@ -2459,7 +3179,13 @@ const modelService = new ModelService(
   applyAppTheme,
   getAppThemeState,
   mergeCustomThemeTokens,
-  setCustomTheme
+  setCustomTheme,
+  async (updater) => {
+    const next = updater(structuredClone(currentSettings));
+    currentSettings = await settingsStore.save(next);
+    mainWindow?.webContents.send("settings:updated", currentSettings);
+    return currentSettings;
+  }
 );
 const assertActiveWorkspace = (root) => {
   if (!root) {
@@ -2481,7 +3207,8 @@ const sanitizeRuntime = (runtime) => {
 const sanitizeChatSettings = (requested) => ({
   ...requested,
   search: currentSettings.search,
-  tools: currentSettings.tools,
+  /** Use the renderer’s Tool access toggles so changes apply on the next message even before Save (disk is updated on Save). */
+  tools: requested.tools,
   agent: currentSettings.agent,
   ui: {
     ...requested.ui,
@@ -2527,6 +3254,7 @@ app.whenReady().then(async () => {
   });
 });
 app.on("window-all-closed", () => {
+  workspaceWatch.stop();
   if (process.platform !== "darwin") {
     app.quit();
   }
@@ -2551,6 +3279,7 @@ ipcMain.handle("workspace:choose", async () => {
     return null;
   }
   activeWorkspaceRoot = root;
+  workspaceWatch.setRoot(root);
   return {
     root,
     label: basename(root),
@@ -2561,6 +3290,10 @@ ipcMain.handle("workspace:tree", async (_event, root) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
 });
+ipcMain.handle("workspace:detach", async () => {
+  workspaceWatch.stop();
+  activeWorkspaceRoot = void 0;
+});
 ipcMain.handle("workspace:open-file", async (_event, root, target) => {
   assertActiveWorkspace(root);
   return workspaceService.openFile(root, target);
@@ -2568,6 +3301,21 @@ ipcMain.handle("workspace:open-file", async (_event, root, target) => {
 ipcMain.handle("workspace:save-file", async (_event, root, target, content) => {
   assertActiveWorkspace(root);
   return workspaceService.saveFile(root, target, content);
+});
+ipcMain.handle("workspace:changes", async (_event, root) => {
+  assertActiveWorkspace(root);
+  return workspaceService.getChanges(root);
+});
+ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
+  if (typeof rawUrl !== "string") return;
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return;
+  await shell.openExternal(parsed.href);
 });
 ipcMain.handle(
   "models:list",
