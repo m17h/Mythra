@@ -48,6 +48,11 @@ export interface SearchSettings {
 
 export interface UiSettings {
   themeId: ThemeId;
+  /**
+   * When `themeId` is `custom`, design-token overrides merged on top of the custom base stylesheet.
+   * Cleared when the user picks a preset theme.
+   */
+  customThemeTokens?: Record<string, string>;
   /** Agent: workspace, tools, and autonomous run markers. Chat (`talk`): plain chat, no file tools. */
   sessionMode: SessionMode;
   /** When on, the `web_search` tool is available in both Chat and Agent (public web via built-in search). */

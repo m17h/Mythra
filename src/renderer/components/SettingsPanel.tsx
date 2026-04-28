@@ -1,6 +1,8 @@
+import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SearchProvider } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
+import { getThemeName } from '@shared/themes';
 import { getPromptPreset } from '@shared/prompt-presets';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
@@ -15,6 +17,8 @@ interface SettingsPanelProps {
   /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
+  /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
+  onOpenWebSearchInfo?: () => void;
   focusSearchSettingsKey?: number;
 }
 
@@ -39,9 +43,11 @@ export function SettingsPanel({
   onSave,
   onPresetPersist,
   onRefreshModels,
+  onOpenWebSearchInfo,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [headerSaveAck, setHeaderSaveAck] = useState(false);
+  const [themeSectionExpanded, setThemeSectionExpanded] = useState(false);
   const saveAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSectionRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +78,8 @@ export function SettingsPanel({
       : activeSearchProvider === 'brave'
         ? Boolean(settings.search.braveApiKey.trim())
         : false;
+
+  const activeThemeLabel = getThemeName(settings.ui.themeId);
 
   const updateProvider = (patch: Partial<typeof provider>, opts?: PresetPatchOptions) => {
     const next: AppSettings = {
@@ -155,11 +163,7 @@ export function SettingsPanel({
               <span>Base URL</span>
               <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
             </label>
-          ) : (
-            <p className="inline-hint">
-              OpenRouter uses the official API at the default endpoint—no base URL to set here. Choose LM Studio above if you need a local or custom server URL.
-            </p>
-          )}
+          ) : null}
 
           <label className="field">
             <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
@@ -208,9 +212,11 @@ export function SettingsPanel({
                 </select>
               )}
             </label>
-            <button className="btn btn--secondary field-row__button" onClick={onRefreshModels} type="button">
-              Test + Refresh
-            </button>
+            {isLmStudio ? (
+              <button className="btn btn--secondary field-row__button" onClick={onRefreshModels} type="button">
+                Test + Refresh
+              </button>
+            ) : null}
           </div>
 
           {isLmStudio && modelOptions.length === 0 && (
@@ -255,7 +261,23 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-section" ref={searchSectionRef}>
-          <h4 className="settings-section__title">Web Search</h4>
+          <div className="settings-section__title-cluster">
+            <h4 className="settings-section__title settings-section__title--cluster">Web Search</h4>
+            {onOpenWebSearchInfo ? (
+              <button
+                className="settings-info-button"
+                type="button"
+                aria-label="About Web Search providers (Tavily and Brave)"
+                title="About Tavily and Brave Search"
+                onClick={onOpenWebSearchInfo}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
 
           <label className="field">
             <span>Search Provider</span>
@@ -302,42 +324,102 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">Theme</h4>
-          <div className="theme-grid">
-            {themes.map((theme) => (
-              <button
-                key={theme.id}
-                className={`theme-tile ${settings.ui.themeId === theme.id ? 'is-active' : ''}`}
-                onClick={() => onChange({ ...settings, ui: { ...settings.ui, themeId: theme.id } })}
-                type="button"
-              >
-                <strong>{theme.name}</strong>
-                <span>{theme.preview}</span>
-              </button>
-            ))}
-          </div>
-          <div className="field field--after-theme-grid">
-            <span>Session mode</span>
-            <div className="session-mode-toggle">
-              <button
-                className={`session-mode-toggle__option ${settings.ui.sessionMode === 'talk' ? 'is-active' : ''}`}
-                onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'talk' } })}
-                type="button"
-              >
-                Chat
-              </button>
-              <button
-                className={`session-mode-toggle__option ${settings.ui.sessionMode === 'agent' ? 'is-active' : ''}`}
-                onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'agent' } })}
-                type="button"
-              >
-                Agent
-              </button>
-              <span
-                className="session-mode-toggle__slider"
-                style={{ transform: settings.ui.sessionMode === 'agent' ? 'translateX(100%)' : 'translateX(0)' }}
-              />
-            </div>
+          <div className={`chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? 'is-expanded' : ''}`}>
+            <button
+              className="chat-thread-options__header"
+              onClick={() => setThemeSectionExpanded((v) => !v)}
+              type="button"
+            >
+              <span className="chat-thread-options__header-left">
+                <svg
+                  className="chat-thread-options__chevron"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M4 2.5L7.5 6 4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="chat-thread-options__title">Theme</span>
+              </span>
+              {!themeSectionExpanded ? <span className="chat-thread-options__badge">{activeThemeLabel}</span> : null}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {themeSectionExpanded ? (
+                <motion.div
+                  key="theme-body"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="chat-thread-options__body">
+                    <div className="theme-grid">
+                      {settings.ui.themeId === 'custom' ? (
+                        <div
+                          className="theme-tile is-active"
+                          role="status"
+                          aria-label="Theme: Custom, selected"
+                        >
+                          <strong>{getThemeName('custom')}</strong>
+                          <span>Adjusted by Agent (preset clears this)</span>
+                        </div>
+                      ) : null}
+                      {themes.map((theme) => (
+                        <button
+                          key={theme.id}
+                          className={`theme-tile ${settings.ui.themeId === theme.id ? 'is-active' : ''}`}
+                          onClick={() =>
+                            onChange({
+                              ...settings,
+                              ui: { ...settings.ui, themeId: theme.id, customThemeTokens: undefined }
+                            })
+                          }
+                          type="button"
+                        >
+                          <strong>{theme.name}</strong>
+                          <span>{theme.preview}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="field field--after-theme-grid">
+                      <span>Session mode</span>
+                      <div className="session-mode-toggle">
+                        <button
+                          className={`session-mode-toggle__option ${settings.ui.sessionMode === 'talk' ? 'is-active' : ''}`}
+                          onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'talk' } })}
+                          type="button"
+                        >
+                          Chat
+                        </button>
+                        <button
+                          className={`session-mode-toggle__option ${settings.ui.sessionMode === 'agent' ? 'is-active' : ''}`}
+                          onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'agent' } })}
+                          type="button"
+                        >
+                          Agent
+                        </button>
+                        <span
+                          className="session-mode-toggle__slider"
+                          style={{
+                            transform: settings.ui.sessionMode === 'agent' ? 'translateX(100%)' : 'translateX(0)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </div>
         </div>
 

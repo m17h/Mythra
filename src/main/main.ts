@@ -7,7 +7,23 @@ import { CommandService } from './command-service';
 import { ModelService } from './model-service';
 import { SettingsStore } from './settings-store';
 import { WorkspaceService } from './workspace-service';
-import { getThemeName, isThemeId, THEME_IDS, type ThemeId } from '@shared/themes';
+import {
+  buildSemanticCustomThemeTokens,
+  CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY,
+  flattenMergeThemeToolArgs,
+  getThemeName,
+  isLikelyLightCssBackground,
+  isPresetThemeId,
+  isSemanticCustomThemePaletteId,
+  isThemeId,
+  MERGE_THEME_PALETTE_IDS,
+  PRESET_THEME_IDS,
+  resolveCustomThemeFallback,
+  sanitizeCustomThemeTokens,
+  shouldReplaceFullCustomPalette,
+  type MergeThemePaletteId,
+  type ThemeId
+} from '@shared/themes';
 import { defaultSettings, type AppSettings, type ChatMessage, type SavedChat } from '@shared/types';
 
 const settingsStore = new SettingsStore();
@@ -29,12 +45,23 @@ const recordThemeTransition = (from: ThemeId, to: ThemeId) => {
 
 const applyAppTheme = async (rawId: string) => {
   if (!isThemeId(rawId)) {
-    return JSON.stringify({ ok: false, error: `Invalid theme_id. Use one of: ${THEME_IDS.join(', ')}` });
+    return JSON.stringify({
+      ok: false,
+      error: `Invalid theme_id. Presets: ${PRESET_THEME_IDS.join(', ')}. "custom" applies only when restoring the previous theme via revert_app_theme.`
+    });
   }
+
   recordThemeTransition(currentSettings.ui.themeId, rawId);
+
+  const nextUi = {
+    ...currentSettings.ui,
+    themeId: rawId,
+    customThemeTokens: isPresetThemeId(rawId) ? undefined : currentSettings.ui.customThemeTokens
+  };
+
   currentSettings = await settingsStore.save({
     ...currentSettings,
-    ui: { ...currentSettings.ui, themeId: rawId }
+    ui: nextUi
   });
   mainWindow?.webContents.send('settings:updated', currentSettings);
   const displayName = getThemeName(rawId);
@@ -42,7 +69,139 @@ const applyAppTheme = async (rawId: string) => {
     ok: true,
     themeId: rawId,
     displayName,
-    message: `Theme set to ${displayName}.`
+    message:
+      rawId === 'custom'
+        ? 'Theme set to Custom.'
+        : `Theme set to ${displayName}.`
+  });
+};
+
+const mergeCustomThemeTokens = async (incoming: Record<string, unknown>) => {
+  const paletteHint = typeof incoming['palette'] === 'string' ? incoming['palette'].trim() : undefined;
+  const modeHint = typeof incoming['mode'] === 'string' ? incoming['mode'].trim() : undefined;
+  const descriptionHint = typeof incoming['description'] === 'string' ? incoming['description'].trim() : undefined;
+
+  const flat = flattenMergeThemeToolArgs(incoming);
+  let partial = sanitizeCustomThemeTokens(flat);
+  const hadUserTokens = Object.keys(partial).length > 0;
+
+  let resolvedPaletteId: MergeThemePaletteId | undefined;
+  let semanticPaletteId: string | undefined;
+
+  if (!hadUserTokens) {
+    const paletteIsMergeFallback = paletteHint
+      ? (MERGE_THEME_PALETTE_IDS as readonly string[]).includes(paletteHint)
+      : false;
+    if (paletteHint && !paletteIsMergeFallback && isSemanticCustomThemePaletteId(paletteHint)) {
+      const semantic = buildSemanticCustomThemeTokens({
+        palette: paletteHint,
+        mode: modeHint,
+        description: descriptionHint
+      });
+      const targetText = `${descriptionHint ?? ''} ${Object.keys(incoming).join(' ')}`.toLowerCase();
+      const targetBubbles = /\b(chat\s*)?bubbles?\b|\b(user|assistant)\s*messages?\b/.test(targetText);
+      partial = targetBubbles
+        ? {
+            '--chat-assistant-bg': semantic.tokens['--accent-subtle'],
+            '--chat-user-bg': semantic.tokens['--accent-2-subtle'] ?? semantic.tokens['--accent-subtle']
+          }
+        : { ...semantic.tokens };
+      semanticPaletteId = semantic.palette;
+    } else {
+      const resolved = resolveCustomThemeFallback(paletteHint);
+      partial = { ...resolved.tokens };
+      resolvedPaletteId = resolved.id;
+    }
+  }
+
+  const prev = currentSettings.ui.themeId;
+  if (prev !== 'custom') {
+    recordThemeTransition(prev, 'custom');
+  }
+
+  const existing = currentSettings.ui.customThemeTokens ?? {};
+
+  /** Full light baseline + user overrides — avoids leftover dark `--bg-*` bleeding through. */
+  const userWantsLightPaper =
+    paletteHint === 'light_paper_gray' ||
+    paletteHint?.toLowerCase().includes('light_paper_gray') ||
+    (hadUserTokens && partial['--bg-0'] && isLikelyLightCssBackground(partial['--bg-0']));
+
+  let merged: Record<string, string>;
+  if (hadUserTokens && userWantsLightPaper) {
+    merged = { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY, ...partial };
+    resolvedPaletteId = resolvedPaletteId ?? 'light_paper_gray';
+  } else if (
+    shouldReplaceFullCustomPalette(hadUserTokens, partial, resolvedPaletteId, partial['--bg-0'])
+  ) {
+    merged =
+      resolvedPaletteId === 'light_paper_gray' ? { ...partial } : { ...existing, ...partial };
+  } else {
+    merged = { ...existing, ...partial };
+  }
+
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: {
+      ...currentSettings.ui,
+      themeId: 'custom',
+      customThemeTokens: merged
+    }
+  });
+  mainWindow?.webContents.send('settings:updated', currentSettings);
+
+  const message =
+    hadUserTokens && userWantsLightPaper
+      ? `Applied light paper + gray accent base with ${Object.keys(partial).length} token override(s).`
+      : hadUserTokens
+        ? `Applied ${Object.keys(partial).length} custom color override(s); theme set to Custom.`
+        : semanticPaletteId
+          ? `Applied semantic "${semanticPaletteId}" custom color fallback.`
+          : `Applied built-in "${resolvedPaletteId}" palette (${paletteHint ? `hint: "${paletteHint}"` : 'no palette hint'}).`;
+
+  return JSON.stringify({
+    ok: true,
+    themeId: 'custom',
+    displayName: getThemeName('custom'),
+    customThemeTokens: merged,
+    usedFallbackPalette: !hadUserTokens,
+    mergePaletteId: resolvedPaletteId,
+    semanticPaletteId,
+    message
+  });
+};
+
+const setCustomTheme = async (incoming: Record<string, unknown>) => {
+  const { tokens, palette, mode } = buildSemanticCustomThemeTokens({
+    palette: typeof incoming.palette === 'string' ? incoming.palette : undefined,
+    mode: typeof incoming.mode === 'string' ? incoming.mode : undefined,
+    description: typeof incoming.description === 'string' ? incoming.description : undefined,
+    intensity: typeof incoming.intensity === 'string' ? incoming.intensity : undefined
+  });
+
+  const prev = currentSettings.ui.themeId;
+  if (prev !== 'custom') {
+    recordThemeTransition(prev, 'custom');
+  }
+
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: {
+      ...currentSettings.ui,
+      themeId: 'custom',
+      customThemeTokens: tokens
+    }
+  });
+  mainWindow?.webContents.send('settings:updated', currentSettings);
+
+  return JSON.stringify({
+    ok: true,
+    themeId: 'custom',
+    displayName: getThemeName('custom'),
+    customThemeTokens: tokens,
+    semanticPalette: palette,
+    semanticMode: mode,
+    message: `Applied full custom ${mode} ${palette} theme.`
   });
 };
 
@@ -60,7 +219,14 @@ const getAppThemeState = () => {
   });
 };
 
-const modelService = new ModelService(workspaceService, commandService, applyAppTheme, getAppThemeState);
+const modelService = new ModelService(
+  workspaceService,
+  commandService,
+  applyAppTheme,
+  getAppThemeState,
+  mergeCustomThemeTokens,
+  setCustomTheme
+);
 
 const assertActiveWorkspace = (root: string | undefined) => {
   if (!root) {
@@ -96,8 +262,9 @@ const sanitizeChatSettings = (requested: AppSettings): AppSettings => ({
   agent: currentSettings.agent,
   ui: {
     ...requested.ui,
-    sessionMode: currentSettings.ui.sessionMode,
-    webSearch: currentSettings.ui.webSearch,
+    themeId: currentSettings.ui.themeId,
+    customThemeTokens: currentSettings.ui.customThemeTokens,
+    /** User toggles in the renderer header; trusting requested avoids a race vs main IPC. */
     favoriteModels: currentSettings.ui.favoriteModels
   }
 });
@@ -154,12 +321,15 @@ ipcMain.handle('settings:load', async () => {
   return currentSettings;
 });
 ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
+  const safe: AppSettings = isPresetThemeId(settings.ui.themeId)
+    ? { ...settings, ui: { ...settings.ui, customThemeTokens: undefined } }
+    : settings;
   const from = currentSettings.ui.themeId;
-  const to = settings.ui.themeId;
+  const to = safe.ui.themeId;
   if (from !== to) {
     recordThemeTransition(from, to);
   }
-  currentSettings = await settingsStore.save(settings);
+  currentSettings = await settingsStore.save(safe);
   return currentSettings;
 });
 

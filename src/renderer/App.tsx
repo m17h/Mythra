@@ -27,6 +27,7 @@ import {
   type SavedChatMeta,
   type WorkspaceNode
 } from '@shared/types';
+import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@shared/themes';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
@@ -90,6 +91,13 @@ interface FileBuffer extends OpenFile {
 type InspectorTab = 'editor' | 'console' | 'settings';
 type SidebarTab = 'chats' | 'files';
 
+interface InFlightChat {
+  chatId: string;
+  requestId: string;
+  messages: ChatMessage[];
+  timeline: ChatTimelineEntry[];
+}
+
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsStatus, setSettingsStatus] = useState('Load a provider profile, then refresh models.');
@@ -123,6 +131,8 @@ export function App() {
   const chatStreamingRef = useRef(false);
 
   const [activeChatId, setActiveChatId] = useState<string>();
+  const activeChatIdRef = useRef<string | undefined>(undefined);
+  const inFlightChatsRef = useRef<Map<string, InFlightChat>>(new Map());
   const [chatList, setChatList] = useState<SavedChatMeta[]>([]);
   /** Provider whose catalog to show in “This chat” model override (when enabled). */
   const [overrideModelProvider, setOverrideModelProvider] = useState<ProviderKind>('lmstudio');
@@ -148,9 +158,51 @@ export function App() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastContentFingerprintRef = useRef<string | null>(null);
   const skipNextRenameCommitRef = useRef(false);
+  activeChatIdRef.current = activeChatId;
+
+  const findInFlightByChatId = (chatId: string | undefined) => {
+    if (!chatId) return undefined;
+    for (const item of inFlightChatsRef.current.values()) {
+      if (item.chatId === chatId) return item;
+    }
+    return undefined;
+  };
+
+  const showInFlightIfActive = (snapshot: InFlightChat) => {
+    if (activeChatIdRef.current !== snapshot.chatId) return;
+    setChatMessages(snapshot.messages);
+    setChatTimeline(snapshot.timeline);
+    setChatStreaming(true);
+    setActiveRequestId(snapshot.requestId);
+  };
+
+  const updateInFlightMessage = (requestId: string, recipe: (msg: ChatMessage) => ChatMessage) => {
+    const snapshot = inFlightChatsRef.current.get(requestId);
+    if (!snapshot) {
+      setChatMessages((current) => current.map((m) => (m.id === requestId ? recipe(m) : m)));
+      updateTimelineMessage(requestId, recipe);
+      return undefined;
+    }
+
+    snapshot.messages = snapshot.messages.map((m) => (m.id === requestId ? recipe(m) : m));
+    snapshot.timeline = snapshot.timeline.map((entry) =>
+      entry.type === 'message' && entry.message.id === requestId
+        ? { ...entry, message: recipe(entry.message) }
+        : entry
+    );
+    showInFlightIfActive(snapshot);
+    return snapshot;
+  };
 
   const appendActivity = (activity: ChatActivity) => {
-    setChatTimeline((current) => [...current, { id: `activity-${activity.id}`, type: 'activity', activity }]);
+    const entry: ChatTimelineEntry = { id: `activity-${activity.id}`, type: 'activity', activity };
+    const snapshot = inFlightChatsRef.current.get(activity.requestId);
+    if (snapshot) {
+      snapshot.timeline = [...snapshot.timeline, entry];
+      showInFlightIfActive(snapshot);
+      return;
+    }
+    setChatTimeline((current) => [...current, entry]);
   };
 
   const updateTimelineMessage = (messageId: string, recipe: (msg: ChatMessage) => ChatMessage) => {
@@ -165,6 +217,22 @@ export function App() {
     const list = await window.electronAPI.listChats();
     setChatList(list);
   }, []);
+
+  const saveChatSnapshot = useCallback(
+    async (chatId: string, msgs: ChatMessage[], tl: ChatTimelineEntry[]) => {
+      const disk = await window.electronAPI.loadChat(chatId);
+      if (!disk) return;
+      await window.electronAPI.saveChat({
+        ...disk,
+        title: resolveChatTitle(msgs, disk.titleOverride),
+        messages: msgs,
+        timeline: tl,
+        updatedAt: Date.now()
+      });
+      await refreshChatList();
+    },
+    [refreshChatList]
+  );
 
   const activeChatMeta = useMemo(
     () => (activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined),
@@ -245,11 +313,12 @@ export function App() {
     [persistCurrentChat]
   );
 
+  const appliedCustomTokensRef = useRef(new Set<string>());
+
   useEffect(() => {
     const boot = async () => {
       const loaded = await window.electronAPI.loadSettings();
       setSettings(loaded);
-      document.documentElement.dataset.theme = loaded.ui.themeId;
       await refreshChatList();
     };
     void boot();
@@ -257,7 +326,33 @@ export function App() {
 
   useEffect(() => {
     if (!settings) return;
-    document.documentElement.dataset.theme = settings.ui.themeId;
+    const root = document.documentElement;
+    appliedCustomTokensRef.current.forEach((k) => root.style.removeProperty(k));
+    appliedCustomTokensRef.current.clear();
+    root.dataset.theme = settings.ui.themeId;
+
+    if (settings.ui.themeId === 'custom' && settings.ui.customThemeTokens) {
+      for (const [key, val] of Object.entries(settings.ui.customThemeTokens)) {
+        if (!isAllowedCustomThemeTokenKey(key)) continue;
+        root.style.setProperty(key, val);
+        appliedCustomTokensRef.current.add(key);
+      }
+    }
+
+    if (settings.ui.themeId === 'custom') {
+      const bgToken = settings.ui.customThemeTokens?.['--bg-0'];
+      const customLight =
+        bgToken == null || String(bgToken).trim() === '' ? true : isLikelyLightCssBackground(String(bgToken));
+      if (customLight) {
+        root.dataset.customLight = 'true';
+      } else {
+        delete root.dataset.customLight;
+      }
+      root.style.colorScheme = customLight ? 'light' : 'dark';
+    } else {
+      delete root.dataset.customLight;
+      root.style.removeProperty('color-scheme');
+    }
   }, [settings]);
 
   const openRouterKeyForEffect = settings?.selectedProvider === 'openrouter' ? settings.providers.openrouter.apiKey : null;
@@ -300,18 +395,7 @@ export function App() {
       setCommandLogs((c) => c + `\n[process exited ${payload.code ?? 'signal'}]\n`);
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
-      setChatMessages((current) =>
-        current.map((m) => {
-          if (m.id !== requestId) return m;
-          return {
-            ...m,
-            content: delta ? `${m.content}${delta}` : m.content,
-            reasoning: reasoningDelta ? `${m.reasoning ?? ''}${reasoningDelta}` : m.reasoning,
-            status: 'streaming' as const
-          };
-        })
-      );
-      updateTimelineMessage(requestId, (m) => ({
+      updateInFlightMessage(requestId, (m) => ({
         ...m,
         content: delta ? `${m.content}${delta}` : m.content,
         reasoning: reasoningDelta ? `${m.reasoning ?? ''}${reasoningDelta}` : m.reasoning,
@@ -319,37 +403,54 @@ export function App() {
       }));
     });
     const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning }) => {
-      setChatStreaming(false);
-      setActiveRequestId(undefined);
-      setChatMessages((current) =>
-        current.map((m) => {
-          if (m.id !== requestId) return m;
-          const next: ChatMessage = { ...m, content, status: 'done' as const };
-          if (reasoning !== undefined) next.reasoning = reasoning;
-          else if (m.reasoning !== undefined) next.reasoning = m.reasoning;
-          return next;
-        })
-      );
-      updateTimelineMessage(requestId, (m) => {
+      const snapshot = updateInFlightMessage(requestId, (m) => {
         const next: ChatMessage = { ...m, content, status: 'done' as const };
         if (reasoning !== undefined) next.reasoning = reasoning;
         else if (m.reasoning !== undefined) next.reasoning = m.reasoning;
         return next;
       });
-    });
-    const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      if (snapshot) {
+        if (activeChatIdRef.current === snapshot.chatId) {
+          setChatStreaming(false);
+          setActiveRequestId(undefined);
+        }
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
+          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+            inFlightChatsRef.current.delete(requestId);
+          }
+        });
+        return;
+      }
       setChatStreaming(false);
       setActiveRequestId(undefined);
-      setChatMessages((current) =>
-        current.map((m) => (m.id === requestId ? { ...m, content: error, status: 'error', role: 'assistant' } : m))
-      );
-      updateTimelineMessage(requestId, (m) => ({ ...m, content: error, status: 'error', role: 'assistant' }));
+    });
+    const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      const snapshot = updateInFlightMessage(requestId, (m) => ({
+        ...m,
+        content: error,
+        status: 'error',
+        role: 'assistant'
+      }));
       appendActivity({
         id: uid(),
         requestId,
         kind: error === 'Request stopped.' ? 'stopped' : 'error',
         message: error === 'Request stopped.' ? 'Model stopped.' : `Model error: ${error}`
       });
+      if (snapshot) {
+        if (activeChatIdRef.current === snapshot.chatId) {
+          setChatStreaming(false);
+          setActiveRequestId(undefined);
+        }
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
+          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+            inFlightChatsRef.current.delete(requestId);
+          }
+        });
+        return;
+      }
+      setChatStreaming(false);
+      setActiveRequestId(undefined);
     });
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
@@ -453,7 +554,7 @@ export function App() {
       const key = activeSettings.providers.openrouter.apiKey?.trim() ?? '';
       if (!key) {
         setModels([]);
-        setSettingsStatus('OpenRouter: add an API key in Settings, then use Test + refresh.');
+        setSettingsStatus('OpenRouter: add an API key in Settings; the catalog loads after the key is set.');
         setModelCatalogSettled(true);
         return;
       }
@@ -527,6 +628,8 @@ export function App() {
     const s = settingsRef.current;
     if (!s) return;
     const updated: AppSettings = { ...s, ui: { ...s.ui, webSearch: next } };
+    settingsRef.current = updated;
+    setSettings(updated);
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
@@ -550,6 +653,8 @@ export function App() {
     if (!s) return;
     const nextMode: SessionMode = s.ui.sessionMode === 'talk' ? 'agent' : 'talk';
     const updated: AppSettings = { ...s, ui: { ...s.ui, sessionMode: nextMode } };
+    settingsRef.current = updated;
+    setSettings(updated);
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
@@ -610,6 +715,7 @@ export function App() {
     setChatStreaming(false);
     setActiveRequestId(undefined);
     setActiveChatId(undefined);
+    activeChatIdRef.current = undefined;
     setNewChatModelOverride(null);
     const nextSid = uid();
     setChatSessionId(nextSid);
@@ -623,20 +729,29 @@ export function App() {
     }
     const chat = await window.electronAPI.loadChat(id);
     if (!chat) return;
-    lastContentFingerprintRef.current = chatFingerprint(chat.messages, chat.timeline);
-    setChatMessages(chat.messages);
-    setChatTimeline(chat.timeline);
+    const inFlight = findInFlightByChatId(id);
+    const messages = inFlight?.messages ?? chat.messages;
+    const timeline = inFlight?.timeline ?? chat.timeline;
+    lastContentFingerprintRef.current = chatFingerprint(messages, timeline);
+    setChatMessages(messages);
+    setChatTimeline(timeline);
     setActiveChatId(chat.id);
+    activeChatIdRef.current = chat.id;
     setChatSessionId(chat.id);
     chatSessionIdRef.current = chat.id;
     setNewChatModelOverride(null);
     setChatInput('');
     setChatAttachments([]);
-    setChatStreaming(false);
-    setActiveRequestId(undefined);
+    setChatStreaming(Boolean(inFlight));
+    setActiveRequestId(inFlight?.requestId);
   };
 
   const deleteChat = async (id: string) => {
+    const inFlight = findInFlightByChatId(id);
+    if (inFlight) {
+      await window.electronAPI.stopChat(inFlight.requestId);
+      inFlightChatsRef.current.delete(inFlight.requestId);
+    }
     await window.electronAPI.deleteChat(id);
     if (activeChatId === id) startNewChat();
     if (editingTitleId === id) {
@@ -737,12 +852,15 @@ export function App() {
     setActiveRequestId(requestId);
 
     const priorChatId = activeChatId;
+    let chatIdForStream = priorChatId;
     let overrideForStream: ChatModelOverride | null = null;
     if (!priorChatId) {
       const newId = uid();
+      chatIdForStream = newId;
       const mo = newChatModelOverrideRef.current;
       overrideForStream = mo;
       setActiveChatId(newId);
+      activeChatIdRef.current = newId;
       setChatSessionId(newId);
       chatSessionIdRef.current = newId;
       setNewChatModelOverride(null);
@@ -763,6 +881,13 @@ export function App() {
       const loaded = await window.electronAPI.loadChat(priorChatId);
       overrideForStream = loaded?.modelOverride ?? null;
     }
+    if (!chatIdForStream) return;
+    inFlightChatsRef.current.set(requestId, {
+      chatId: chatIdForStream,
+      requestId,
+      messages: [...nextHistory, assistantMessage],
+      timeline: nextTimeline
+    });
     const streamSettings = applyChatModelOverride(sendSettings, overrideForStream);
 
     await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
@@ -1319,6 +1444,7 @@ export function App() {
                     focusSearchSettingsKey={searchSettingsFocusKey}
                     modelOptions={models}
                     onChange={setSettings}
+                    onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                     onPresetPersist={persistAfterPresetAction}
                     onRefreshModels={refreshModels}
                     onSave={saveSettings}

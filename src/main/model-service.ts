@@ -16,10 +16,18 @@ import type {
   ChatStreamDone,
   ChatStreamError,
   ModelInfo,
-  ProviderKind
+  ProviderKind,
+  SessionMode
 } from '@shared/types';
 import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
-import { isThemeId, THEME_IDS } from '@shared/themes';
+import {
+  isPresetThemeId,
+  isThemeId,
+  MERGE_THEME_PALETTE_IDS,
+  PRESET_THEME_IDS,
+  SEMANTIC_CUSTOM_THEME_MODE_IDS,
+  SEMANTIC_CUSTOM_THEME_PALETTE_IDS
+} from '@shared/themes';
 import { CommandService } from './command-service';
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
@@ -73,7 +81,7 @@ const normalizeAssistantContent = (content: string) =>
   content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, 'i'), '').trim();
 
 /** Shown in the second system block so models can emit a placeholder replaced by a real UI control in the client. */
-const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use when explaining how to change session mode (e.g. user wants files or tools in Chat mode, or only chat in Agent mode). Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
 
 const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OPENKIWI_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
 
@@ -83,12 +91,18 @@ const webHeaderUiStateLine = (webOn: boolean) =>
     ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.`
     : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
 
+const sessionModeUiStateLine = (mode: SessionMode) =>
+  mode === 'agent'
+    ? 'UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice.'
+    : 'UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.';
+
 /** Shown when web_search is enabled; DuckDuckGo instant answers are not full search pages. */
 const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 
-const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_app_theme, or revert_app_theme). If the user asks what theme is active, to change the theme, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
 
-const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): theme tools — get_app_theme returns the active theme id and display name plus the previous theme (if any) so you can answer "what theme is this?" or decide how to revert; set_app_theme applies a theme by id; revert_app_theme restores the previous theme after a change (Settings or an earlier tool call in this session). Valid theme_id values: ${THEME_IDS.join(', ')} (Settings → Theme: Neon Grid, Sunset Terminal, Ice Station, Kiwi). After a successful theme change, reply in one short sentence.`;
+const openkiwiSetAppThemeAgentInstruction =
+  `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(', ')}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -190,7 +204,11 @@ export class ModelService {
     /** Apply theme from `set_app_theme` / `revert_app_theme`; returns JSON string for the tool result. */
     private readonly applyAppTheme?: (rawThemeId: string) => Promise<string>,
     /** Current + previous theme for `get_app_theme` / `revert_app_theme`; returns JSON string. */
-    private readonly getAppThemeState?: () => string
+    private readonly getAppThemeState?: () => string,
+    /** Merge whitelist token overrides into Custom theme; returns JSON for the tool result. */
+    private readonly mergeCustomThemeTokens?: (incoming: Record<string, unknown>) => Promise<string>,
+    /** Apply a complete semantic custom theme; returns JSON for the tool result. */
+    private readonly setCustomTheme?: (incoming: Record<string, unknown>) => Promise<string>
   ) {}
 
   async listModels(settings: AppSettings, providerKind?: ProviderKind): Promise<ModelInfo[]> {
@@ -515,15 +533,15 @@ export class ModelService {
       function: {
         name: 'set_app_theme',
         description:
-          "Change the OpenKiwi application's color theme (Settings → Theme). Only available in Agent mode. " +
-          'If the user is in Chat mode, do not call this; tell them to switch to Agent and use the session toggle.',
+          `Change the OpenKiwi preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(', ')}. ` +
+          'Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.',
         parameters: {
           type: 'object',
           properties: {
             theme_id: {
               type: 'string',
-              enum: [...THEME_IDS],
-              description: 'Target theme id (matches Settings theme tiles).'
+              enum: [...PRESET_THEME_IDS],
+              description: 'Preset theme id (matches Settings theme tiles; use set_custom_theme for custom colors).'
             }
           },
           required: ['theme_id'],
@@ -567,6 +585,77 @@ export class ModelService {
     };
   }
 
+  private buildMergeCustomThemeTokensTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'merge_custom_theme_tokens',
+        description:
+          'Exact Custom theme editor. Use this when the user wants a specific UI area recolored or gives exact colors. Prefer the slots object so you do not need to know CSS. ' +
+          'Supported slots include appBackground, titlebar, sidebar, chatPanel, chatThread, assistantMessage, userMessage, thinking, composer, messageInput, inspector, settings, editor, text, mutedText, border, primaryAccent, secondaryAccent, danger, and warning. ' +
+          'You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests like pink/purple/dark blue/white/orange/kiwi, use set_custom_theme first.',
+        parameters: {
+          type: 'object',
+          properties: {
+            palette: {
+              type: 'string',
+              enum: [...MERGE_THEME_PALETTE_IDS, ...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
+              description:
+                'Fallback palette if tokens/slots are missing. Semantic palettes like pink/purple/blue are accepted so they never fall back to Kiwi accidentally; for full-theme changes prefer set_custom_theme.'
+            },
+            tokens: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'CSS variable keys or named UI slots to colors, e.g. { "--accent": "#64748b", "assistantMessage": "rgba(255,182,193,0.20)", "userMessage": "rgba(255,182,193,0.28)" }.'
+            },
+            slots: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'Named UI areas to recolor without knowing CSS variables, e.g. { "sidebar": "#ffb3d9", "userMessage": "rgba(236, 72, 153, 0.16)", "editor": "#050505", "text": "#111827" }.'
+            }
+          },
+          required: [],
+          additionalProperties: true
+        }
+      }
+    };
+  }
+
+  private buildSetCustomThemeTool(): ChatCompletionTool {
+    return {
+      type: 'function',
+      function: {
+        name: 'set_custom_theme',
+        description:
+          'Preferred tool for custom theme requests. Sets a complete Custom theme from simple semantic choices, replacing old custom colors so leftover green/blue tokens do not remain. Use this for "completely pink", "dark purple", "light blue", "make it orange", "icy dark", "white theme", etc. Use merge_custom_theme_tokens only for advanced exact CSS-variable tweaks.',
+        parameters: {
+          type: 'object',
+          properties: {
+            palette: {
+              type: 'string',
+              enum: [...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
+              description:
+                'Main color family. For “pink”, “rose”, “magenta”, or “hot pink”, choose pink. For neutral gray choose slate; for white/paper choose white.'
+            },
+            mode: {
+              type: 'string',
+              enum: [...SEMANTIC_CUSTOM_THEME_MODE_IDS],
+              description: 'Use light for bright/pastel/white UI, dark for deep/night/black UI. Omit if the user did not specify.'
+            },
+            description: {
+              type: 'string',
+              description: 'Short copy of the user request, e.g. “completely pink theme”. Helps fallback routing.'
+            }
+          },
+          required: ['palette'],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+
   private buildWebSearchTool(): ChatCompletionTool {
     return {
       type: 'function',
@@ -603,7 +692,9 @@ export class ModelService {
       return tools;
     }
 
+    tools.push(this.buildSetCustomThemeTool());
     tools.push(this.buildSetAppThemeTool());
+    tools.push(this.buildMergeCustomThemeTokensTool());
     tools.push(this.buildGetAppThemeTool());
     tools.push(this.buildRevertAppThemeTool());
 
@@ -738,6 +829,7 @@ export class ModelService {
         this.threadPreamble(runtime) +
         [
           '[OpenKiwi model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
+          sessionModeUiStateLine(settings.ui.sessionMode),
           toolLine,
           webHeaderUiStateLine(settings.ui.webSearch),
           ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []),
@@ -761,6 +853,7 @@ export class ModelService {
         : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
       return [
         '[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]',
+        sessionModeUiStateLine(settings.ui.sessionMode),
         'No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.',
         'If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.',
         openkiwiSessionModeEmbedInstruction,
@@ -779,7 +872,9 @@ export class ModelService {
       .join('\n');
 
     const enabledTools = [
+      'set_custom_theme',
       'set_app_theme',
+      'merge_custom_theme_tokens',
       'get_app_theme',
       'revert_app_theme',
       settings.ui.webSearch ? 'web_search' : null,
@@ -793,6 +888,7 @@ export class ModelService {
 
     return [
       '[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]',
+      sessionModeUiStateLine(settings.ui.sessionMode),
       'Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.',
       'Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.',
       'If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.',
@@ -847,10 +943,38 @@ export class ModelService {
         throw new Error('Theme changes are not available in this build.');
       }
       const themeId = String((args as { theme_id?: string }).theme_id ?? '').trim();
-      if (!isThemeId(themeId)) {
-        throw new Error(`Invalid theme_id. Use one of: ${THEME_IDS.join(', ')}.`);
+      if (!isPresetThemeId(themeId)) {
+        throw new Error(`Invalid theme_id. Use one of: ${PRESET_THEME_IDS.join(', ')} (use merge_custom_theme_tokens for custom colors).`);
       }
       const result = await this.applyAppTheme(themeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+
+    if (toolCall.function.name === 'merge_custom_theme_tokens') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'merge_custom_theme_tokens is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!this.mergeCustomThemeTokens) {
+        throw new Error('Custom theme merges are not available in this build.');
+      }
+      const result = await this.mergeCustomThemeTokens(args);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+
+    if (toolCall.function.name === 'set_custom_theme') {
+      if (settings.ui.sessionMode === 'talk') {
+        throw new Error(
+          'set_custom_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again.'
+        );
+      }
+      if (!this.setCustomTheme) {
+        throw new Error('Custom theme changes are not available in this build.');
+      }
+      const result = await this.setCustomTheme(args);
       this.patchSettingsThemeFromToolResult(settings, result);
       return result;
     }
@@ -1027,9 +1151,17 @@ export class ModelService {
 
   private patchSettingsThemeFromToolResult(settings: AppSettings, result: string) {
     try {
-      const parsed = JSON.parse(result) as { ok?: boolean; themeId?: string };
-      if (parsed.ok && parsed.themeId && isThemeId(parsed.themeId)) {
-        settings.ui.themeId = parsed.themeId;
+      const parsed = JSON.parse(result) as {
+        ok?: boolean;
+        themeId?: string;
+        customThemeTokens?: Record<string, string>;
+      };
+      if (!parsed.ok || !parsed.themeId || !isThemeId(parsed.themeId)) return;
+      settings.ui.themeId = parsed.themeId;
+      if (isPresetThemeId(parsed.themeId)) {
+        delete settings.ui.customThemeTokens;
+      } else if (parsed.customThemeTokens) {
+        settings.ui.customThemeTokens = parsed.customThemeTokens;
       }
     } catch {
       // ignore malformed tool JSON

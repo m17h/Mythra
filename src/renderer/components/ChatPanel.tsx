@@ -461,7 +461,7 @@ export function ChatPanel({
                 ? isTalk
                   ? 'You\'re in Chat mode. Ask anything or switch to Agent for tools and file access.'
                   : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.`
-                : 'Connect a provider in Settings, then click Test + Refresh to get started.'}
+                : 'Connect in Settings → Connection, then pick a model.'}
             </p>
           </div>
         ) : null}

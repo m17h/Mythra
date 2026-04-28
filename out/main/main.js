@@ -227,13 +227,494 @@ const themeCatalog = [
   { id: "ice-station", name: "Ice Station", preview: "Blue / Mint / Graphite" },
   { id: "kiwi", name: "Kiwi", preview: "Green / Teal / Graphite (light)" }
 ];
-const THEME_IDS = themeCatalog.map((t) => t.id);
+const PRESET_THEME_IDS = themeCatalog.map((t) => t.id);
+function isPresetThemeId(value) {
+  return PRESET_THEME_IDS.includes(value);
+}
 function isThemeId(value) {
-  return THEME_IDS.includes(value);
+  return isPresetThemeId(value) || value === "custom";
 }
 function getThemeName(themeId) {
+  if (themeId === "custom") return "Custom";
   const entry = themeCatalog.find((t) => t.id === themeId);
   return entry?.name ?? themeId;
+}
+const CUSTOMIZABLE_THEME_TOKEN_KEYS = [
+  "--bg-0",
+  "--bg-1",
+  "--bg-2",
+  "--bg-surface",
+  "--bg-elevated",
+  "--panel",
+  "--panel-strong",
+  "--line",
+  "--line-strong",
+  "--text-0",
+  "--text-1",
+  "--text-2",
+  "--accent",
+  "--accent-light",
+  "--accent-subtle",
+  "--accent-2",
+  "--accent-2-subtle",
+  "--accent-rgb",
+  "--danger",
+  "--danger-subtle",
+  "--warning",
+  "--app-bg",
+  "--titlebar-bg",
+  "--sidebar-bg",
+  "--chat-panel-bg",
+  "--chat-thread-bg",
+  "--chat-assistant-bg",
+  "--chat-user-bg",
+  "--thinking-bg",
+  "--composer-bg",
+  "--composer-input-bg",
+  "--inspector-bg",
+  "--settings-bg",
+  "--editor-bg"
+];
+function isAllowedCustomThemeTokenKey(key) {
+  return CUSTOMIZABLE_THEME_TOKEN_KEYS.includes(key);
+}
+const THEME_COLOR_SLOT_ALIASES = {
+  app: ["--app-bg", "--bg-0"],
+  appbackground: ["--app-bg", "--bg-0"],
+  window: ["--app-bg", "--bg-0"],
+  windowbackground: ["--app-bg", "--bg-0"],
+  page: ["--app-bg", "--bg-0"],
+  background: ["--app-bg", "--bg-0"],
+  titlebar: ["--titlebar-bg"],
+  topbar: ["--titlebar-bg"],
+  sidebar: ["--sidebar-bg"],
+  leftsidebar: ["--sidebar-bg"],
+  chat: ["--chat-panel-bg"],
+  chatpanel: ["--chat-panel-bg"],
+  chatbackground: ["--chat-thread-bg"],
+  chatthread: ["--chat-thread-bg"],
+  thread: ["--chat-thread-bg"],
+  chatbubble: ["--chat-assistant-bg", "--chat-user-bg"],
+  chatbubbles: ["--chat-assistant-bg", "--chat-user-bg"],
+  bubbles: ["--chat-assistant-bg", "--chat-user-bg"],
+  assistant: ["--chat-assistant-bg"],
+  assistantmessage: ["--chat-assistant-bg"],
+  assistantbubble: ["--chat-assistant-bg"],
+  message: ["--chat-assistant-bg"],
+  bubble: ["--chat-assistant-bg"],
+  user: ["--chat-user-bg"],
+  usermessage: ["--chat-user-bg"],
+  userbubble: ["--chat-user-bg"],
+  thinking: ["--thinking-bg"],
+  reasoning: ["--thinking-bg"],
+  composer: ["--composer-bg"],
+  input: ["--composer-input-bg"],
+  messageinput: ["--composer-input-bg"],
+  inspector: ["--inspector-bg"],
+  rightpanel: ["--inspector-bg"],
+  settings: ["--settings-bg"],
+  editor: ["--editor-bg"],
+  fileeditor: ["--editor-bg"],
+  text: ["--text-0"],
+  primarytext: ["--text-0"],
+  bodytext: ["--text-0"],
+  mutedtext: ["--text-2"],
+  secondarytext: ["--text-1"],
+  border: ["--line", "--line-strong"],
+  borders: ["--line", "--line-strong"],
+  line: ["--line"],
+  accent: ["--accent"],
+  primaryaccent: ["--accent"],
+  primary: ["--accent"],
+  secondaryaccent: ["--accent-2"],
+  secondary: ["--accent-2"],
+  danger: ["--danger"],
+  error: ["--danger"],
+  warning: ["--warning"]
+};
+function expandThemeColorSlot(slot, value, out) {
+  if (typeof value !== "string" || value.trim().length === 0) return;
+  const normalized = slot.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const tokenKeys = THEME_COLOR_SLOT_ALIASES[normalized];
+  if (!tokenKeys) return;
+  for (const tokenKey of tokenKeys) {
+    out[tokenKey] = value;
+  }
+}
+function flattenMergeThemeToolArgs(args) {
+  const out = {};
+  const boxed = args.tokens ?? args.theme_tokens ?? args.token;
+  if (boxed != null && typeof boxed === "object" && !Array.isArray(boxed)) {
+    for (const [key, value] of Object.entries(boxed)) {
+      if (key.startsWith("--")) out[key] = value;
+      else expandThemeColorSlot(key, value, out);
+    }
+  }
+  const slots = args.slots ?? args.areas ?? args.ui ?? args.ui_colors;
+  if (slots != null && typeof slots === "object" && !Array.isArray(slots)) {
+    for (const [slot, value] of Object.entries(slots)) {
+      expandThemeColorSlot(slot, value, out);
+    }
+  }
+  for (const [k, v] of Object.entries(args)) {
+    if (k === "tokens" || k === "theme_tokens" || k === "token" || k === "slots" || k === "areas" || k === "ui" || k === "ui_colors" || k === "palette" || k === "preset") continue;
+    if (k.startsWith("--")) out[k] = v;
+    else expandThemeColorSlot(k, v, out);
+  }
+  return out;
+}
+function sanitizeCustomThemeTokens(input) {
+  const out = {};
+  for (const [rawK, rawV] of Object.entries(input)) {
+    const k = rawK.trim();
+    if (!isAllowedCustomThemeTokenKey(k)) continue;
+    if (typeof rawV !== "string") continue;
+    const v = rawV.trim();
+    if (!v) continue;
+    out[k] = v;
+  }
+  return out;
+}
+const MERGE_THEME_PALETTE_IDS = [
+  "soft_kiwi_dark",
+  "ice_cool_dark",
+  "neutral_slate_dark",
+  "light_paper_gray"
+];
+const SEMANTIC_CUSTOM_THEME_PALETTE_IDS = [
+  "pink",
+  "purple",
+  "blue",
+  "green",
+  "orange",
+  "slate",
+  "white",
+  "ice",
+  "kiwi"
+];
+const SEMANTIC_CUSTOM_THEME_MODE_IDS = ["light", "dark"];
+function isSemanticCustomThemePaletteId(value) {
+  return SEMANTIC_CUSTOM_THEME_PALETTE_IDS.includes(value);
+}
+function isSemanticCustomThemeModeId(value) {
+  return SEMANTIC_CUSTOM_THEME_MODE_IDS.includes(value);
+}
+const semanticHues = {
+  pink: {
+    accent: "#ec4899",
+    accentLight: "#f472b6",
+    accentRgb: "236, 72, 153",
+    accent2: "#db2777",
+    danger: "#e11d48",
+    warning: "#f59e0b"
+  },
+  purple: {
+    accent: "#8b5cf6",
+    accentLight: "#a78bfa",
+    accentRgb: "139, 92, 246",
+    accent2: "#d946ef",
+    danger: "#f43f5e",
+    warning: "#f59e0b"
+  },
+  blue: {
+    accent: "#2563eb",
+    accentLight: "#60a5fa",
+    accentRgb: "37, 99, 235",
+    accent2: "#06b6d4",
+    danger: "#ef4444",
+    warning: "#f59e0b"
+  },
+  green: {
+    accent: "#16a34a",
+    accentLight: "#22c55e",
+    accentRgb: "22, 163, 74",
+    accent2: "#0d9488",
+    danger: "#ef4444",
+    warning: "#d97706"
+  },
+  orange: {
+    accent: "#f97316",
+    accentLight: "#fb923c",
+    accentRgb: "249, 115, 22",
+    accent2: "#f59e0b",
+    danger: "#e11d48",
+    warning: "#facc15"
+  }
+};
+function semanticPaletteFromDescription(value) {
+  const raw = value?.toLowerCase() ?? "";
+  if (/\bpink|rose|magenta|fuchsia|hot\s*pink\b/.test(raw)) return "pink";
+  if (/\bpurple|violet|lavender\b/.test(raw)) return "purple";
+  if (/\bblue|cyan|aqua\b/.test(raw)) return "blue";
+  if (/\bgreen|kiwi|lime|mint\b/.test(raw)) return raw.includes("kiwi") ? "kiwi" : "green";
+  if (/\borange|amber|sunset|coral\b/.test(raw)) return "orange";
+  if (/\bice|icy|frost|winter\b/.test(raw)) return "ice";
+  if (/\bwhite|paper|cream|ivory|gray|grey|slate|neutral|mono/.test(raw)) {
+    return /\bwhite|paper|cream|ivory\b/.test(raw) ? "white" : "slate";
+  }
+  return void 0;
+}
+function semanticModeFromDescription(value) {
+  const raw = value?.toLowerCase() ?? "";
+  if (/\bdark|night|black|deep|midnight\b/.test(raw)) return "dark";
+  if (/\blight|white|bright|paper|pastel|cream|ivory\b/.test(raw)) return "light";
+  return void 0;
+}
+function buildSemanticCustomThemeTokens(input) {
+  const palette = input.palette && isSemanticCustomThemePaletteId(input.palette) ? input.palette : semanticPaletteFromDescription(input.description) ?? "pink";
+  const mode = input.mode && isSemanticCustomThemeModeId(input.mode) ? input.mode : semanticModeFromDescription(input.description) ?? "light";
+  if (palette === "white") {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY }, palette, mode: "light" };
+  }
+  if (palette === "slate") {
+    return {
+      tokens: mode === "light" ? { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY } : { ...CUSTOM_THEME_FALLBACK_NEUTRAL_SLATE },
+      palette,
+      mode
+    };
+  }
+  if (palette === "ice") {
+    return {
+      tokens: mode === "light" ? { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY, ...semanticLightTokens(semanticHues.blue, "ice") } : { ...CUSTOM_THEME_FALLBACK_ICE_COOL_DARK },
+      palette,
+      mode
+    };
+  }
+  if (palette === "kiwi") {
+    return {
+      tokens: mode === "light" ? semanticLightTokens(semanticHues.green, "kiwi") : { ...CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI },
+      palette,
+      mode
+    };
+  }
+  const hue = semanticHues[palette];
+  return {
+    tokens: mode === "dark" ? semanticDarkTokens(hue, palette) : semanticLightTokens(hue, palette),
+    palette,
+    mode
+  };
+}
+function semanticLightTokens(hue, palette) {
+  const tinted = palette === "pink" ? { bg0: "#fff1f7", bg1: "#ffe4f0", bg2: "#fbcfe8", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#f6f1ff", bg1: "#ede4ff", bg2: "#ddd6fe", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#fff7ed", bg1: "#ffedd5", bg2: "#fed7aa", line: "249, 115, 22" } : palette === "blue" || palette === "ice" ? { bg0: "#eff6ff", bg1: "#dbeafe", bg2: "#bfdbfe", line: "37, 99, 235" } : { bg0: "#f0fdf4", bg1: "#dcfce7", bg2: "#bbf7d0", line: "22, 163, 74" };
+  return {
+    "--bg-0": tinted.bg0,
+    "--bg-1": tinted.bg1,
+    "--bg-2": tinted.bg2,
+    "--bg-surface": "rgba(255, 255, 255, 0.94)",
+    "--bg-elevated": "rgba(255, 255, 255, 0.98)",
+    "--panel": "rgba(255, 255, 255, 0.92)",
+    "--panel-strong": "rgba(255, 255, 255, 0.97)",
+    "--line": `rgba(${tinted.line}, 0.14)`,
+    "--line-strong": `rgba(${tinted.line}, 0.24)`,
+    "--text-0": "#18181b",
+    "--text-1": "rgba(24, 24, 27, 0.78)",
+    "--text-2": "rgba(82, 82, 91, 0.58)",
+    "--accent": hue.accent,
+    "--accent-light": hue.accentLight,
+    "--accent-rgb": hue.accentRgb,
+    "--accent-subtle": `rgba(${hue.accentRgb}, 0.12)`,
+    "--accent-2": hue.accent2,
+    "--accent-2-subtle": `rgba(${hue.accentRgb}, 0.10)`,
+    "--chat-assistant-bg": `rgba(${hue.accentRgb}, 0.07)`,
+    "--chat-user-bg": `rgba(${hue.accentRgb}, 0.16)`,
+    "--thinking-bg": `rgba(${hue.accentRgb}, 0.07)`,
+    "--composer-input-bg": "rgba(255, 255, 255, 0.72)",
+    "--danger": hue.danger,
+    "--danger-subtle": "rgba(225, 29, 72, 0.08)",
+    "--warning": hue.warning
+  };
+}
+function semanticDarkTokens(hue, palette) {
+  const tinted = palette === "pink" ? { bg0: "#170812", bg1: "#230b1a", bg2: "#331127", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#10091f", bg1: "#18102b", bg2: "#24163f", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#160c05", bg1: "#211208", bg2: "#321a0b", line: "249, 115, 22" } : palette === "blue" ? { bg0: "#07101f", bg1: "#0b1730", bg2: "#102040", line: "37, 99, 235" } : { bg0: "#07140e", bg1: "#0b1e14", bg2: "#102b1c", line: "22, 163, 74" };
+  return {
+    "--bg-0": tinted.bg0,
+    "--bg-1": tinted.bg1,
+    "--bg-2": tinted.bg2,
+    "--bg-surface": `rgba(${tinted.line}, 0.06)`,
+    "--bg-elevated": `rgba(${tinted.line}, 0.10)`,
+    "--panel": "rgba(12, 12, 18, 0.88)",
+    "--panel-strong": "rgba(8, 8, 14, 0.96)",
+    "--line": `rgba(${tinted.line}, 0.18)`,
+    "--line-strong": `rgba(${tinted.line}, 0.30)`,
+    "--text-0": "#f8fafc",
+    "--text-1": "rgba(226, 232, 240, 0.84)",
+    "--text-2": "rgba(148, 163, 184, 0.62)",
+    "--accent": hue.accent,
+    "--accent-light": hue.accentLight,
+    "--accent-rgb": hue.accentRgb,
+    "--accent-subtle": `rgba(${hue.accentRgb}, 0.18)`,
+    "--accent-2": hue.accent2,
+    "--accent-2-subtle": `rgba(${hue.accentRgb}, 0.14)`,
+    "--chat-assistant-bg": `rgba(${hue.accentRgb}, 0.08)`,
+    "--chat-user-bg": `rgba(${hue.accentRgb}, 0.18)`,
+    "--thinking-bg": `rgba(${hue.accentRgb}, 0.08)`,
+    "--composer-input-bg": `rgba(${hue.accentRgb}, 0.08)`,
+    "--danger": hue.danger,
+    "--danger-subtle": "rgba(225, 29, 72, 0.14)",
+    "--warning": hue.warning
+  };
+}
+const CUSTOM_THEME_FALLBACK_ICE_COOL_DARK = {
+  "--bg-0": "#0a1018",
+  "--bg-1": "#0d1520",
+  "--bg-2": "#131c28",
+  "--bg-surface": "rgba(13, 21, 32, 0.94)",
+  "--bg-elevated": "rgba(19, 28, 40, 0.97)",
+  "--panel": "rgba(13, 21, 32, 0.92)",
+  "--panel-strong": "rgba(10, 16, 24, 0.96)",
+  "--line": "rgba(100, 150, 200, 0.14)",
+  "--line-strong": "rgba(120, 170, 220, 0.22)",
+  "--text-0": "#f0f6ff",
+  "--text-1": "rgba(199, 216, 240, 0.86)",
+  "--text-2": "rgba(130, 160, 200, 0.55)",
+  "--accent": "#3b82f6",
+  "--accent-light": "#60a5fa",
+  "--accent-rgb": "59, 130, 246",
+  "--accent-subtle": "rgba(59, 130, 246, 0.16)",
+  "--accent-2": "#22d3ee",
+  "--accent-2-subtle": "rgba(34, 211, 238, 0.12)",
+  "--chat-assistant-bg": "rgba(59, 130, 246, 0.08)",
+  "--chat-user-bg": "rgba(34, 211, 238, 0.16)",
+  "--thinking-bg": "rgba(59, 130, 246, 0.08)",
+  "--composer-input-bg": "rgba(59, 130, 246, 0.08)",
+  "--danger": "#fb7185",
+  "--danger-subtle": "rgba(251, 113, 133, 0.12)",
+  "--warning": "#fbbf24"
+};
+const CUSTOM_THEME_FALLBACK_NEUTRAL_SLATE = {
+  "--bg-0": "#0c0e12",
+  "--bg-1": "#11141a",
+  "--bg-2": "#181c24",
+  "--bg-surface": "rgba(17, 20, 26, 0.94)",
+  "--bg-elevated": "rgba(24, 28, 36, 0.97)",
+  "--panel": "rgba(17, 20, 26, 0.92)",
+  "--panel-strong": "rgba(12, 14, 18, 0.96)",
+  "--line": "rgba(148, 163, 184, 0.12)",
+  "--line-strong": "rgba(148, 163, 184, 0.22)",
+  "--text-0": "#f1f5f9",
+  "--text-1": "rgba(203, 213, 225, 0.84)",
+  "--text-2": "rgba(148, 163, 184, 0.58)",
+  "--accent": "#94a3b8",
+  "--accent-light": "#cbd5e1",
+  "--accent-rgb": "148, 163, 184",
+  "--accent-subtle": "rgba(148, 163, 184, 0.16)",
+  "--accent-2": "#64748b",
+  "--accent-2-subtle": "rgba(100, 116, 139, 0.14)",
+  "--chat-assistant-bg": "rgba(148, 163, 184, 0.08)",
+  "--chat-user-bg": "rgba(148, 163, 184, 0.16)",
+  "--thinking-bg": "rgba(148, 163, 184, 0.08)",
+  "--composer-input-bg": "rgba(148, 163, 184, 0.08)",
+  "--danger": "#f87171",
+  "--danger-subtle": "rgba(248, 113, 113, 0.12)",
+  "--warning": "#fbbf24"
+};
+const CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY = {
+  "--bg-0": "#fafafa",
+  "--bg-1": "#f4f4f5",
+  "--bg-2": "#e4e4e7",
+  "--bg-surface": "rgba(250, 250, 250, 0.96)",
+  "--bg-elevated": "rgba(255, 255, 255, 0.98)",
+  "--panel": "rgba(244, 244, 245, 0.94)",
+  "--panel-strong": "rgba(255, 255, 255, 0.97)",
+  "--line": "rgba(15, 23, 42, 0.08)",
+  "--line-strong": "rgba(15, 23, 42, 0.14)",
+  "--text-0": "#18181b",
+  "--text-1": "rgba(24, 24, 27, 0.78)",
+  "--text-2": "rgba(82, 82, 91, 0.58)",
+  "--accent": "#64748b",
+  "--accent-light": "#475569",
+  "--accent-rgb": "100, 116, 139",
+  "--accent-subtle": "rgba(100, 116, 139, 0.12)",
+  "--accent-2": "#71717a",
+  "--accent-2-subtle": "rgba(113, 113, 122, 0.12)",
+  "--chat-assistant-bg": "rgba(100, 116, 139, 0.06)",
+  "--chat-user-bg": "rgba(100, 116, 139, 0.13)",
+  "--thinking-bg": "rgba(100, 116, 139, 0.06)",
+  "--composer-input-bg": "rgba(255, 255, 255, 0.72)",
+  "--danger": "#dc2626",
+  "--danger-subtle": "rgba(220, 38, 38, 0.08)",
+  "--warning": "#d97706"
+};
+const CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI = {
+  "--bg-0": "#0b1210",
+  "--bg-1": "#0f1714",
+  "--bg-2": "#15201b",
+  "--bg-surface": "rgba(15, 23, 20, 0.94)",
+  "--bg-elevated": "rgba(22, 32, 28, 0.97)",
+  "--panel": "rgba(15, 23, 20, 0.92)",
+  "--panel-strong": "rgba(12, 18, 16, 0.96)",
+  "--line": "rgba(148, 180, 160, 0.12)",
+  "--line-strong": "rgba(148, 180, 160, 0.22)",
+  "--text-0": "#eef7f2",
+  "--text-1": "rgba(214, 232, 220, 0.85)",
+  "--text-2": "rgba(148, 180, 160, 0.58)",
+  "--accent": "#22c55e",
+  "--accent-light": "#4ade80",
+  "--accent-rgb": "34, 197, 94",
+  "--accent-subtle": "rgba(34, 197, 94, 0.14)",
+  "--accent-2": "#14b8a6",
+  "--accent-2-subtle": "rgba(20, 184, 166, 0.14)",
+  "--chat-assistant-bg": "rgba(34, 197, 94, 0.08)",
+  "--chat-user-bg": "rgba(34, 197, 94, 0.18)",
+  "--thinking-bg": "rgba(34, 197, 94, 0.08)",
+  "--composer-input-bg": "rgba(34, 197, 94, 0.08)",
+  "--danger": "#fb7185",
+  "--danger-subtle": "rgba(251, 113, 133, 0.12)",
+  "--warning": "#fbbf24"
+};
+function isLikelyLightCssBackground(value) {
+  if (value == null) return false;
+  const s = value.trim().toLowerCase();
+  if (s === "white" || s === "#fff" || s === "#ffffff" || s === "snow") return true;
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(s);
+  if (hex6) {
+    const r = parseInt(hex6[1].slice(0, 2), 16);
+    const g = parseInt(hex6[1].slice(2, 4), 16);
+    const b = parseInt(hex6[1].slice(4, 6), 16);
+    return (r + g + b) / 3 > 210 || r > 238 && g > 238;
+  }
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(s);
+  if (hex3) {
+    const ch = hex3[1];
+    const r = parseInt(ch[0] + ch[0], 16);
+    const g = parseInt(ch[1] + ch[1], 16);
+    const bch = parseInt(ch[2] + ch[2], 16);
+    return (r + g + bch) / 3 > 210;
+  }
+  return /^#f[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}/i.test(s);
+}
+function shouldReplaceFullCustomPalette(hadUserTokens, mergedPartial, resolvedPaletteId, mergedBgCandidate) {
+  if (resolvedPaletteId === "light_paper_gray") return true;
+  if (hadUserTokens && mergedBgCandidate && isLikelyLightCssBackground(mergedBgCandidate)) return true;
+  return false;
+}
+function resolveCustomThemeFallback(paletteHint) {
+  const raw = paletteHint?.trim().toLowerCase() ?? "";
+  if (raw === "ice_cool_dark") {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_ICE_COOL_DARK }, id: "ice_cool_dark" };
+  }
+  if (raw === "neutral_slate_dark") {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_NEUTRAL_SLATE }, id: "neutral_slate_dark" };
+  }
+  if (raw === "light_paper_gray") {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY }, id: "light_paper_gray" };
+  }
+  if (raw === "soft_kiwi_dark" || raw === "") {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI }, id: "soft_kiwi_dark" };
+  }
+  const mentionsWhitePaper = /\b(all[-_\s]?white|white\b|paper\b|ivory\b|cream\b|snow\b|milky\b|pastel\b|bright\b\s*(theme|bg|palette|appearance|ui))\b/i.test(raw) || /\blight\b/i.test(raw) && /\b(theme|themes|palette|appearance|bg|background|scheme|chrome|bright)\b/i.test(raw) && !/\bdark\b/i.test(raw);
+  const isIce = /\b(?:icy|ice[-_\s]?station|ice_cool|icecool)\b/i.test(raw) || /\bice\b/i.test(raw) && /\b(?:dark|blue|cool|station)\b/i.test(raw) || raw.includes("cool") && /\b(?:blue|icy|cold)\b/i.test(raw);
+  const looksNeutralMuted = /\bneutral\b/i.test(raw) || /\bgray\b|\bgrey\b|\bslate\b/i.test(raw) || /\bmuted\b|\bmonochrome\b/i.test(raw) || /\bneutral[-_\s]?slate\b/i.test(raw);
+  if (mentionsWhitePaper) {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY }, id: "light_paper_gray" };
+  }
+  if (looksNeutralMuted && !isIce) {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_NEUTRAL_SLATE }, id: "neutral_slate_dark" };
+  }
+  if (isIce) {
+    return { tokens: { ...CUSTOM_THEME_FALLBACK_ICE_COOL_DARK }, id: "ice_cool_dark" };
+  }
+  return { tokens: { ...CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI }, id: "soft_kiwi_dark" };
 }
 const pushUnique = (acc, line) => {
   const t = line.trim();
@@ -564,12 +1045,13 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
-const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use when explaining how to change session mode (e.g. user wants files or tools in Chat mode, or only chat in Agent mode). Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
 const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OPENKIWI_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
 const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
+const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice." : "UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.";
 const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
-const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_app_theme, or revert_app_theme). If the user asks what theme is active, to change the theme, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
-const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): theme tools — get_app_theme returns the active theme id and display name plus the previous theme (if any) so you can answer "what theme is this?" or decide how to revert; set_app_theme applies a theme by id; revert_app_theme restores the previous theme after a change (Settings or an earlier tool call in this session). Valid theme_id values: ${THEME_IDS.join(", ")} (Settings → Theme: Neon Grid, Sunset Terminal, Ice Station, Kiwi). After a successful theme change, reply in one short sentence.`;
+const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
+const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -632,16 +1114,20 @@ const toApiMessage = (message) => {
   };
 };
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
     this.getAppThemeState = getAppThemeState2;
+    this.mergeCustomThemeTokens = mergeCustomThemeTokens2;
+    this.setCustomTheme = setCustomTheme2;
   }
   workspaceService;
   commandService;
   applyAppTheme;
   getAppThemeState;
+  mergeCustomThemeTokens;
+  setCustomTheme;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -892,14 +1378,14 @@ class ModelService {
       type: "function",
       function: {
         name: "set_app_theme",
-        description: "Change the OpenKiwi application's color theme (Settings → Theme). Only available in Agent mode. If the user is in Chat mode, do not call this; tell them to switch to Agent and use the session toggle.",
+        description: `Change the OpenKiwi preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(", ")}. Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.`,
         parameters: {
           type: "object",
           properties: {
             theme_id: {
               type: "string",
-              enum: [...THEME_IDS],
-              description: "Target theme id (matches Settings theme tiles)."
+              enum: [...PRESET_THEME_IDS],
+              description: "Preset theme id (matches Settings theme tiles; use set_custom_theme for custom colors)."
             }
           },
           required: ["theme_id"],
@@ -936,6 +1422,67 @@ class ModelService {
       }
     };
   }
+  buildMergeCustomThemeTokensTool() {
+    return {
+      type: "function",
+      function: {
+        name: "merge_custom_theme_tokens",
+        description: "Exact Custom theme editor. Use this when the user wants a specific UI area recolored or gives exact colors. Prefer the slots object so you do not need to know CSS. Supported slots include appBackground, titlebar, sidebar, chatPanel, chatThread, assistantMessage, userMessage, thinking, composer, messageInput, inspector, settings, editor, text, mutedText, border, primaryAccent, secondaryAccent, danger, and warning. You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests like pink/purple/dark blue/white/orange/kiwi, use set_custom_theme first.",
+        parameters: {
+          type: "object",
+          properties: {
+            palette: {
+              type: "string",
+              enum: [...MERGE_THEME_PALETTE_IDS, ...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
+              description: "Fallback palette if tokens/slots are missing. Semantic palettes like pink/purple/blue are accepted so they never fall back to Kiwi accidentally; for full-theme changes prefer set_custom_theme."
+            },
+            tokens: {
+              type: "object",
+              additionalProperties: { type: "string" },
+              description: 'CSS variable keys or named UI slots to colors, e.g. { "--accent": "#64748b", "assistantMessage": "rgba(255,182,193,0.20)", "userMessage": "rgba(255,182,193,0.28)" }.'
+            },
+            slots: {
+              type: "object",
+              additionalProperties: { type: "string" },
+              description: 'Named UI areas to recolor without knowing CSS variables, e.g. { "sidebar": "#ffb3d9", "userMessage": "rgba(236, 72, 153, 0.16)", "editor": "#050505", "text": "#111827" }.'
+            }
+          },
+          required: [],
+          additionalProperties: true
+        }
+      }
+    };
+  }
+  buildSetCustomThemeTool() {
+    return {
+      type: "function",
+      function: {
+        name: "set_custom_theme",
+        description: 'Preferred tool for custom theme requests. Sets a complete Custom theme from simple semantic choices, replacing old custom colors so leftover green/blue tokens do not remain. Use this for "completely pink", "dark purple", "light blue", "make it orange", "icy dark", "white theme", etc. Use merge_custom_theme_tokens only for advanced exact CSS-variable tweaks.',
+        parameters: {
+          type: "object",
+          properties: {
+            palette: {
+              type: "string",
+              enum: [...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
+              description: "Main color family. For “pink”, “rose”, “magenta”, or “hot pink”, choose pink. For neutral gray choose slate; for white/paper choose white."
+            },
+            mode: {
+              type: "string",
+              enum: [...SEMANTIC_CUSTOM_THEME_MODE_IDS],
+              description: "Use light for bright/pastel/white UI, dark for deep/night/black UI. Omit if the user did not specify."
+            },
+            description: {
+              type: "string",
+              description: "Short copy of the user request, e.g. “completely pink theme”. Helps fallback routing."
+            }
+          },
+          required: ["palette"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildWebSearchTool() {
     return {
       type: "function",
@@ -964,7 +1511,9 @@ class ModelService {
     if (settings.ui.sessionMode === "talk") {
       return tools;
     }
+    tools.push(this.buildSetCustomThemeTool());
     tools.push(this.buildSetAppThemeTool());
+    tools.push(this.buildMergeCustomThemeTokensTool());
     tools.push(this.buildGetAppThemeTool());
     tools.push(this.buildRevertAppThemeTool());
     if (!workspaceRoot) {
@@ -1084,6 +1633,7 @@ class ModelService {
       const toolLine = settings.ui.webSearch ? 'Chat mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Chat mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
       return this.threadPreamble(runtime) + [
         '[OpenKiwi model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
+        sessionModeUiStateLine(settings.ui.sessionMode),
         toolLine,
         webHeaderUiStateLine(settings.ui.webSearch),
         ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
@@ -1102,6 +1652,7 @@ class ModelService {
       const webLine = settings.ui.webSearch ? 'The `web_search` tool is available for public web lookup (the user enabled "Web" in the chat header).' : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
       return [
         "[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]",
+        sessionModeUiStateLine(settings.ui.sessionMode),
         "No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.",
         "If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.",
         openkiwiSessionModeEmbedInstruction,
@@ -1115,7 +1666,9 @@ class ModelService {
     const files = await this.workspaceService.listFiles(runtime.workspaceRoot);
     const visibleFiles = files.slice(0, 140).map((entry) => `${entry.type === "directory" ? "[dir]" : "[file]"} ${entry.path}`).join("\n");
     const enabledTools = [
+      "set_custom_theme",
       "set_app_theme",
+      "merge_custom_theme_tokens",
       "get_app_theme",
       "revert_app_theme",
       settings.ui.webSearch ? "web_search" : null,
@@ -1126,6 +1679,7 @@ class ModelService {
     ].filter(Boolean).join(", ");
     return [
       "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
+      sessionModeUiStateLine(settings.ui.sessionMode),
       "Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.",
       "Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.",
       "If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.",
@@ -1171,10 +1725,36 @@ class ModelService {
         throw new Error("Theme changes are not available in this build.");
       }
       const themeId = String(args.theme_id ?? "").trim();
-      if (!isThemeId(themeId)) {
-        throw new Error(`Invalid theme_id. Use one of: ${THEME_IDS.join(", ")}.`);
+      if (!isPresetThemeId(themeId)) {
+        throw new Error(`Invalid theme_id. Use one of: ${PRESET_THEME_IDS.join(", ")} (use merge_custom_theme_tokens for custom colors).`);
       }
       const result = await this.applyAppTheme(themeId);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+    if (toolCall.function.name === "merge_custom_theme_tokens") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "merge_custom_theme_tokens is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!this.mergeCustomThemeTokens) {
+        throw new Error("Custom theme merges are not available in this build.");
+      }
+      const result = await this.mergeCustomThemeTokens(args);
+      this.patchSettingsThemeFromToolResult(settings, result);
+      return result;
+    }
+    if (toolCall.function.name === "set_custom_theme") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "set_custom_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!this.setCustomTheme) {
+        throw new Error("Custom theme changes are not available in this build.");
+      }
+      const result = await this.setCustomTheme(args);
       this.patchSettingsThemeFromToolResult(settings, result);
       return result;
     }
@@ -1340,8 +1920,12 @@ ${workspaceRoot}`
   patchSettingsThemeFromToolResult(settings, result) {
     try {
       const parsed = JSON.parse(result);
-      if (parsed.ok && parsed.themeId && isThemeId(parsed.themeId)) {
-        settings.ui.themeId = parsed.themeId;
+      if (!parsed.ok || !parsed.themeId || !isThemeId(parsed.themeId)) return;
+      settings.ui.themeId = parsed.themeId;
+      if (isPresetThemeId(parsed.themeId)) {
+        delete settings.ui.customThemeTokens;
+      } else if (parsed.customThemeTokens) {
+        settings.ui.customThemeTokens = parsed.customThemeTokens;
       }
     } catch {
     }
@@ -1705,12 +2289,20 @@ const recordThemeTransition = (from, to) => {
 };
 const applyAppTheme = async (rawId) => {
   if (!isThemeId(rawId)) {
-    return JSON.stringify({ ok: false, error: `Invalid theme_id. Use one of: ${THEME_IDS.join(", ")}` });
+    return JSON.stringify({
+      ok: false,
+      error: `Invalid theme_id. Presets: ${PRESET_THEME_IDS.join(", ")}. "custom" applies only when restoring the previous theme via revert_app_theme.`
+    });
   }
   recordThemeTransition(currentSettings.ui.themeId, rawId);
+  const nextUi = {
+    ...currentSettings.ui,
+    themeId: rawId,
+    customThemeTokens: isPresetThemeId(rawId) ? void 0 : currentSettings.ui.customThemeTokens
+  };
   currentSettings = await settingsStore.save({
     ...currentSettings,
-    ui: { ...currentSettings.ui, themeId: rawId }
+    ui: nextUi
   });
   mainWindow?.webContents.send("settings:updated", currentSettings);
   const displayName = getThemeName(rawId);
@@ -1718,7 +2310,103 @@ const applyAppTheme = async (rawId) => {
     ok: true,
     themeId: rawId,
     displayName,
-    message: `Theme set to ${displayName}.`
+    message: rawId === "custom" ? "Theme set to Custom." : `Theme set to ${displayName}.`
+  });
+};
+const mergeCustomThemeTokens = async (incoming) => {
+  const paletteHint = typeof incoming["palette"] === "string" ? incoming["palette"].trim() : void 0;
+  const modeHint = typeof incoming["mode"] === "string" ? incoming["mode"].trim() : void 0;
+  const descriptionHint = typeof incoming["description"] === "string" ? incoming["description"].trim() : void 0;
+  const flat = flattenMergeThemeToolArgs(incoming);
+  let partial = sanitizeCustomThemeTokens(flat);
+  const hadUserTokens = Object.keys(partial).length > 0;
+  let resolvedPaletteId;
+  let semanticPaletteId;
+  if (!hadUserTokens) {
+    const paletteIsMergeFallback = paletteHint ? MERGE_THEME_PALETTE_IDS.includes(paletteHint) : false;
+    if (paletteHint && !paletteIsMergeFallback && isSemanticCustomThemePaletteId(paletteHint)) {
+      const semantic = buildSemanticCustomThemeTokens({
+        palette: paletteHint,
+        mode: modeHint,
+        description: descriptionHint
+      });
+      const targetText = `${descriptionHint ?? ""} ${Object.keys(incoming).join(" ")}`.toLowerCase();
+      const targetBubbles = /\b(chat\s*)?bubbles?\b|\b(user|assistant)\s*messages?\b/.test(targetText);
+      partial = targetBubbles ? {
+        "--chat-assistant-bg": semantic.tokens["--accent-subtle"],
+        "--chat-user-bg": semantic.tokens["--accent-2-subtle"] ?? semantic.tokens["--accent-subtle"]
+      } : { ...semantic.tokens };
+      semanticPaletteId = semantic.palette;
+    } else {
+      const resolved = resolveCustomThemeFallback(paletteHint);
+      partial = { ...resolved.tokens };
+      resolvedPaletteId = resolved.id;
+    }
+  }
+  const prev = currentSettings.ui.themeId;
+  if (prev !== "custom") {
+    recordThemeTransition(prev, "custom");
+  }
+  const existing = currentSettings.ui.customThemeTokens ?? {};
+  const userWantsLightPaper = paletteHint === "light_paper_gray" || paletteHint?.toLowerCase().includes("light_paper_gray") || hadUserTokens && partial["--bg-0"] && isLikelyLightCssBackground(partial["--bg-0"]);
+  let merged;
+  if (hadUserTokens && userWantsLightPaper) {
+    merged = { ...CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY, ...partial };
+    resolvedPaletteId = resolvedPaletteId ?? "light_paper_gray";
+  } else if (shouldReplaceFullCustomPalette(hadUserTokens, partial, resolvedPaletteId, partial["--bg-0"])) {
+    merged = resolvedPaletteId === "light_paper_gray" ? { ...partial } : { ...existing, ...partial };
+  } else {
+    merged = { ...existing, ...partial };
+  }
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: {
+      ...currentSettings.ui,
+      themeId: "custom",
+      customThemeTokens: merged
+    }
+  });
+  mainWindow?.webContents.send("settings:updated", currentSettings);
+  const message = hadUserTokens && userWantsLightPaper ? `Applied light paper + gray accent base with ${Object.keys(partial).length} token override(s).` : hadUserTokens ? `Applied ${Object.keys(partial).length} custom color override(s); theme set to Custom.` : semanticPaletteId ? `Applied semantic "${semanticPaletteId}" custom color fallback.` : `Applied built-in "${resolvedPaletteId}" palette (${paletteHint ? `hint: "${paletteHint}"` : "no palette hint"}).`;
+  return JSON.stringify({
+    ok: true,
+    themeId: "custom",
+    displayName: getThemeName("custom"),
+    customThemeTokens: merged,
+    usedFallbackPalette: !hadUserTokens,
+    mergePaletteId: resolvedPaletteId,
+    semanticPaletteId,
+    message
+  });
+};
+const setCustomTheme = async (incoming) => {
+  const { tokens, palette, mode } = buildSemanticCustomThemeTokens({
+    palette: typeof incoming.palette === "string" ? incoming.palette : void 0,
+    mode: typeof incoming.mode === "string" ? incoming.mode : void 0,
+    description: typeof incoming.description === "string" ? incoming.description : void 0,
+    intensity: typeof incoming.intensity === "string" ? incoming.intensity : void 0
+  });
+  const prev = currentSettings.ui.themeId;
+  if (prev !== "custom") {
+    recordThemeTransition(prev, "custom");
+  }
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    ui: {
+      ...currentSettings.ui,
+      themeId: "custom",
+      customThemeTokens: tokens
+    }
+  });
+  mainWindow?.webContents.send("settings:updated", currentSettings);
+  return JSON.stringify({
+    ok: true,
+    themeId: "custom",
+    displayName: getThemeName("custom"),
+    customThemeTokens: tokens,
+    semanticPalette: palette,
+    semanticMode: mode,
+    message: `Applied full custom ${mode} ${palette} theme.`
   });
 };
 const getAppThemeState = () => {
@@ -1734,7 +2422,14 @@ const getAppThemeState = () => {
     canRevert
   });
 };
-const modelService = new ModelService(workspaceService, commandService, applyAppTheme, getAppThemeState);
+const modelService = new ModelService(
+  workspaceService,
+  commandService,
+  applyAppTheme,
+  getAppThemeState,
+  mergeCustomThemeTokens,
+  setCustomTheme
+);
 const assertActiveWorkspace = (root) => {
   if (!root) {
     throw new Error("No workspace is active.");
@@ -1759,8 +2454,9 @@ const sanitizeChatSettings = (requested) => ({
   agent: currentSettings.agent,
   ui: {
     ...requested.ui,
-    sessionMode: currentSettings.ui.sessionMode,
-    webSearch: currentSettings.ui.webSearch,
+    themeId: currentSettings.ui.themeId,
+    customThemeTokens: currentSettings.ui.customThemeTokens,
+    /** User toggles in the renderer header; trusting requested avoids a race vs main IPC. */
     favoriteModels: currentSettings.ui.favoriteModels
   }
 });
@@ -1809,12 +2505,13 @@ ipcMain.handle("settings:load", async () => {
   return currentSettings;
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
+  const safe = isPresetThemeId(settings.ui.themeId) ? { ...settings, ui: { ...settings.ui, customThemeTokens: void 0 } } : settings;
   const from = currentSettings.ui.themeId;
-  const to = settings.ui.themeId;
+  const to = safe.ui.themeId;
   if (from !== to) {
     recordThemeTransition(from, to);
   }
-  currentSettings = await settingsStore.save(settings);
+  currentSettings = await settingsStore.save(safe);
   return currentSettings;
 });
 ipcMain.handle("workspace:choose", async () => {
