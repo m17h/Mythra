@@ -12,7 +12,7 @@ import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
-const appIconPath = join(__dirname, "./chunks/openkiwi_icon-DIx-U6xG.png");
+const appIconPath = join(__dirname, "./chunks/openkiwi_icon-COisAVPz.png");
 const CHATS_DIR = "openkiwi-chats";
 const LEGACY_CHATS_DIR = "pixel-forge-chats";
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -222,71 +222,6 @@ class CommandService {
 }
 const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
 const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
-const promptPresets = [
-  {
-    id: "general-coding",
-    label: "General Coding",
-    description: "Balanced default for coding assistance, refactors, debugging, and local tool use.",
-    prompt: `You are a pragmatic coding assistant inside a desktop editor.
-
-Use available tools to inspect the workspace, read files, write files, delete files when explicitly appropriate, and run workspace commands when useful.
-
-Work autonomously when the task is clear. Prefer taking the next useful step over stopping early. Keep going until one of these is true:
-1. the task is complete
-2. you are blocked by missing information or a risky ambiguity that requires user input
-3. a tool operation fails and you need user direction
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be concise, precise, and directly useful.`
-  },
-  {
-    id: "web-design",
-    label: "Web Design",
-    description: "Strong art direction, polished UI decisions, and decisive frontend implementation.",
-    prompt: `You are an expert web product designer and frontend engineer inside a desktop editor.
-
-Your job is to produce interfaces that feel intentional, premium, and visually distinctive. Avoid generic SaaS card grids, weak hierarchy, and filler copy. Prefer strong composition, clean spacing, clear typography, and a small number of memorable visual ideas.
-
-Use available tools to inspect the workspace, read and write files, and run commands as needed. Work autonomously until the task is complete or you truly need input.
-
-For UI work:
-- make one dominant idea per section or screen
-- keep copy tight and product-oriented
-- preserve usability and responsiveness
-- favor polished motion over noisy motion
-- maintain accessibility, contrast, and strong information hierarchy
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be opinionated, high quality, and implementation-ready.`
-  },
-  {
-    id: "software-engineering",
-    label: "Software Engineering",
-    description: "Systems-oriented prompt for architecture, correctness, maintainability, and delivery.",
-    prompt: `You are a senior software engineer operating inside a desktop coding workspace.
-
-Use available tools to inspect the project, read files, write files, delete files when necessary, and run workspace commands for builds, tests, linting, and debugging.
-
-Work autonomously when the task is clear. Make careful technical decisions with strong defaults:
-- prefer correct, maintainable solutions over flashy ones
-- preserve existing architecture when reasonable
-- validate assumptions against the codebase
-- run relevant checks when possible
-- explain blockers plainly when you truly need input
-
-Do not stop after partial analysis if you can continue implementing or verifying. Continue until the task is complete or genuinely blocked.
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Optimize for correctness, clarity, and momentum.`
-  }
-];
-const getPromptPreset = (id) => promptPresets.find((preset) => preset.id === id) ?? promptPresets[0];
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
   { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
@@ -2106,12 +2041,18 @@ class ModelService {
       const MAX_PREVIEW = 24e3;
       const truncated = full.length > MAX_PREVIEW;
       const system_prompt = truncated ? truncate(full, MAX_PREVIEW) : full;
-      const preset = provider.promptPresetId === "custom" ? { id: "custom", label: "Custom" } : { id: provider.promptPresetId, label: getPromptPreset(provider.promptPresetId).label };
+      const preset = provider.activePromptPresetId == null ? { id: "draft", label: "Draft" } : (() => {
+        const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+        return {
+          id: provider.activePromptPresetId,
+          label: row?.name ?? "Preset"
+        };
+      })();
       return JSON.stringify(
         {
           provider: kind,
           prompt_preset: preset,
-          active_custom_preset_id: provider.activeCustomPresetId,
+          active_prompt_preset_id: provider.activePromptPresetId,
           system_prompt,
           system_prompt_length: full.length,
           system_prompt_truncated: truncated
@@ -2186,8 +2127,7 @@ ${truncate(system_prompt, 900)}`
             [providerKind]: {
               ...p,
               systemPrompt: system_prompt,
-              promptPresetId: "custom",
-              activeCustomPresetId: null
+              activePromptPresetId: null
             }
           }
         };
@@ -2549,10 +2489,9 @@ const defaultSettings = {
       baseUrl: "http://127.0.0.1:1234/v1",
       apiKey: "lm-studio",
       model: "",
-      promptPresetId: "general-coding",
-      systemPrompt: getPromptPreset("general-coding").prompt,
-      activeCustomPresetId: null,
-      customPromptPresets: [],
+      systemPrompt: "",
+      activePromptPresetId: null,
+      promptPresets: [],
       appName: "OpenKiwi",
       appUrl: "https://example.local"
     },
@@ -2561,10 +2500,9 @@ const defaultSettings = {
       baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "",
       model: "",
-      promptPresetId: "general-coding",
-      systemPrompt: getPromptPreset("general-coding").prompt,
-      activeCustomPresetId: null,
-      customPromptPresets: [],
+      systemPrompt: "",
+      activePromptPresetId: null,
+      promptPresets: [],
       appName: "OpenKiwi",
       appUrl: "https://example.local"
     }
@@ -2594,6 +2532,53 @@ const defaultSettings = {
   },
   lastWorkspaceRoot: null
 };
+function isSavedPromptPresetList(v) {
+  return Array.isArray(v) && v.every(
+    (x) => x != null && typeof x === "object" && typeof x.id === "string" && typeof x.name === "string" && typeof x.prompt === "string" && typeof x.updatedAt === "number"
+  );
+}
+function rawHasPromptPresetsKey(raw) {
+  return Object.prototype.hasOwnProperty.call(raw, "promptPresets");
+}
+function normalizeProviderProfile(defaults, saved) {
+  const raw = saved ?? {};
+  const base = { ...defaults, ...raw };
+  if (rawHasPromptPresetsKey(raw) && isSavedPromptPresetList(raw.promptPresets)) {
+    const v = raw.activePromptPresetId;
+    const activePromptPresetId2 = typeof v === "string" ? v : null;
+    return {
+      kind: base.kind ?? defaults.kind,
+      baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
+      apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
+      model: typeof base.model === "string" ? base.model : defaults.model,
+      systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
+      activePromptPresetId: activePromptPresetId2,
+      promptPresets: raw.promptPresets,
+      appName: typeof base.appName === "string" ? base.appName : defaults.appName,
+      appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl
+    };
+  }
+  const promptPresets = isSavedPromptPresetList(raw.customPromptPresets) ? raw.customPromptPresets : [];
+  const oldPid = raw.promptPresetId;
+  const oldA = raw.activeCustomPresetId;
+  let activePromptPresetId = null;
+  if (oldPid === "custom") {
+    activePromptPresetId = typeof oldA === "string" ? oldA : null;
+  } else {
+    activePromptPresetId = null;
+  }
+  return {
+    kind: base.kind ?? defaults.kind,
+    baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
+    apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
+    model: typeof base.model === "string" ? base.model : defaults.model,
+    systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
+    activePromptPresetId,
+    promptPresets,
+    appName: typeof base.appName === "string" ? base.appName : defaults.appName,
+    appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl
+  };
+}
 const SETTINGS_FILE = "openkiwi-settings.json";
 const LEGACY_SETTINGS_FILE = "pixel-forge-settings.json";
 const mergeSettings = (saved) => ({
@@ -2601,14 +2586,14 @@ const mergeSettings = (saved) => ({
   ...saved,
   lastWorkspaceRoot: typeof saved?.lastWorkspaceRoot === "string" && saved.lastWorkspaceRoot.trim().length > 0 ? saved.lastWorkspaceRoot.trim() : null,
   providers: {
-    lmstudio: {
-      ...defaultSettings.providers.lmstudio,
-      ...saved?.providers?.lmstudio
-    },
-    openrouter: {
-      ...defaultSettings.providers.openrouter,
-      ...saved?.providers?.openrouter
-    }
+    lmstudio: normalizeProviderProfile(
+      defaultSettings.providers.lmstudio,
+      saved?.providers?.lmstudio
+    ),
+    openrouter: normalizeProviderProfile(
+      defaultSettings.providers.openrouter,
+      saved?.providers?.openrouter
+    )
   },
   search: {
     ...defaultSettings.search,

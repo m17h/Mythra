@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SearchProvider } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getThemeName } from '@shared/themes';
-import { getPromptPreset } from '@shared/prompt-presets';
+import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
 import { PromptPresetMenu, type PresetPatchOptions } from './PromptPresetMenu';
@@ -21,6 +21,8 @@ interface SettingsPanelProps {
   onOpenConnectionHelp?: () => void;
   /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
   onOpenWebSearchInfo?: () => void;
+  /** Opens the large system prompt editor (same dialog animation as Web Search info). */
+  onOpenSystemPromptModal?: () => void;
   focusSearchSettingsKey?: number;
 }
 
@@ -47,6 +49,7 @@ export function SettingsPanel({
   onRefreshModels,
   onOpenConnectionHelp,
   onOpenWebSearchInfo,
+  onOpenSystemPromptModal,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [headerSaveAck, setHeaderSaveAck] = useState(false);
@@ -253,32 +256,43 @@ export function SettingsPanel({
         <div className="settings-section">
           <h4 className="settings-section__title">System Prompt</h4>
 
-          <label className="field">
+          <div className="field">
             <span>Preset</span>
             <PromptPresetMenu onPatch={updateProvider} provider={provider} />
-          </label>
+          </div>
 
-          {provider.promptPresetId !== 'custom' ? (
-            <div className="inline-hint">{getPromptPreset(provider.promptPresetId).description}</div>
+          {provider.promptPresets.length === 0 ? (
+            <div className="inline-hint">
+              Add presets to save reusable system prompts for this provider. Use <strong>New preset…</strong> or{' '}
+              <strong>Save as new…</strong> from the menu.
+            </div>
           ) : null}
 
           <label className="field">
-            <span>Prompt</span>
+            <span className="field__label-row">
+              <span>Prompt</span>
+              {onOpenSystemPromptModal ? (
+                <button
+                  aria-label="Open system prompt in a larger editor"
+                  className="settings-info-button"
+                  onClick={() => onOpenSystemPromptModal()}
+                  title="Expand editor"
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeWidth="2"
+                    />
+                  </svg>
+                </button>
+              ) : null}
+            </span>
             <textarea
               onChange={(e) => {
-                const v = e.target.value;
-                if (provider.promptPresetId === 'custom' && provider.activeCustomPresetId) {
-                  const id = provider.activeCustomPresetId;
-                  updateProvider({
-                    promptPresetId: 'custom',
-                    systemPrompt: v,
-                    customPromptPresets: provider.customPromptPresets.map((c) =>
-                      c.id === id ? { ...c, prompt: v, updatedAt: Date.now() } : c
-                    )
-                  });
-                } else {
-                  updateProvider({ promptPresetId: 'custom', systemPrompt: v });
-                }
+                onChange(patchSystemPromptInSettings(settings, e.target.value));
               }}
               rows={6}
               value={provider.systemPrompt}

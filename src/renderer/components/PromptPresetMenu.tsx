@@ -1,21 +1,29 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import type { CustomPromptPreset, ProviderProfile } from '@shared/types';
-import { getPromptPreset, promptPresets } from '@shared/prompt-presets';
+import type { ProviderProfile, SavedPromptPreset } from '@shared/types';
+import { AppConfirmDialog } from './AppConfirmDialog';
 
 const uid = () => Math.random().toString(36).slice(2, 11);
 
-function nextCustomName(list: CustomPromptPreset[]) {
-  return `My preset ${list.length + 1}`;
+function nextPresetName(list: SavedPromptPreset[]) {
+  return `Preset ${list.length + 1}`;
 }
 
-function buttonLabel(provider: ProviderProfile) {
-  if (provider.promptPresetId !== 'custom') return getPromptPreset(provider.promptPresetId).label;
-  if (provider.activeCustomPresetId) {
-    const c = provider.customPromptPresets.find((x) => x.id === provider.activeCustomPresetId);
-    if (c) return `Custom · ${c.name}`;
-  }
-  return 'Custom';
+function savedBaselineForProvider(provider: ProviderProfile): string {
+  if (!provider.activePromptPresetId) return '';
+  const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+  return row?.prompt ?? '';
+}
+
+function isPromptDirty(provider: ProviderProfile): boolean {
+  return provider.systemPrompt !== savedBaselineForProvider(provider);
+}
+
+/** Main trigger label: Draft while textarea differs from saved preset (or non-empty “empty” slot). */
+function presetBarLabel(provider: ProviderProfile): string {
+  if (isPromptDirty(provider)) return 'Draft';
+  if (!provider.activePromptPresetId) return 'Empty';
+  const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+  return row?.name ?? 'Empty';
 }
 
 export type PresetPatchOptions = { persist?: boolean };
@@ -25,50 +33,21 @@ interface PromptPresetMenuProps {
   onPatch: (patch: Partial<ProviderProfile>, opts?: PresetPatchOptions) => void;
 }
 
-const FLYOUT_W = 292;
-
 export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
   const [mainOpen, setMainOpen] = useState(false);
-  const [subOpen, setSubOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   /** In-app name step — `window.prompt` is unreliable in Electron. */
   const [nameForNewOpen, setNameForNewOpen] = useState(false);
   const [nameForNewDraft, setNameForNewDraft] = useState('');
-  const [flyoutPos, setFlyoutPos] = useState({ top: 0, left: 0 });
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const deleteTargetRef = useRef<{ id: string; name: string } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const customBtnRef = useRef<HTMLButtonElement>(null);
-  const subCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newPresetNameInputRef = useRef<HTMLInputElement>(null);
 
-  const clearSubCloseTimer = () => {
-    if (subCloseTimer.current) {
-      clearTimeout(subCloseTimer.current);
-      subCloseTimer.current = null;
-    }
-  };
-
-  const scheduleSubClose = () => {
-    clearSubCloseTimer();
-    subCloseTimer.current = setTimeout(() => setSubOpen(false), 220);
-  };
-
-  const openSub = () => {
-    clearSubCloseTimer();
-    setSubOpen(true);
-  };
-
-  useEffect(
-    () => () => {
-      clearSubCloseTimer();
-    },
-    []
-  );
-
   useEffect(() => {
     if (!mainOpen) {
-      setSubOpen(false);
       setNameForNewOpen(false);
     }
   }, [mainOpen]);
@@ -79,76 +58,49 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     newPresetNameInputRef.current?.select();
   }, [nameForNewOpen]);
 
-  useLayoutEffect(() => {
-    if (!subOpen) return;
-    const update = () => {
-      const el = customBtnRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const left = r.left - FLYOUT_W + 1;
-      setFlyoutPos({ top: r.top, left: Math.max(8, left) });
-    };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, [subOpen, mainOpen, nameForNewOpen]);
-
-
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (rootRef.current?.contains(t)) return;
-      if (document.getElementById('prompt-preset-flyout')?.contains(t)) return;
       setMainOpen(false);
-      setSubOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
-  const applyBuiltin = (id: string) => {
-    const preset = getPromptPreset(id);
-    onPatch({ promptPresetId: preset.id, systemPrompt: preset.prompt, activeCustomPresetId: null });
-    setMainOpen(false);
-    setSubOpen(false);
-  };
-
   const createNewPreset = () => {
-    const newPreset: CustomPromptPreset = {
+    const newPreset: SavedPromptPreset = {
       id: uid(),
-      name: nextCustomName(provider.customPromptPresets),
+      name: nextPresetName(provider.promptPresets),
       prompt: '',
       updatedAt: Date.now()
     };
     onPatch(
       {
-        promptPresetId: 'custom',
-        activeCustomPresetId: newPreset.id,
+        activePromptPresetId: newPreset.id,
         systemPrompt: '',
-        customPromptPresets: [...provider.customPromptPresets, newPreset]
+        promptPresets: [...provider.promptPresets, newPreset]
       },
       { persist: true }
     );
     setMainOpen(false);
-    setSubOpen(false);
   };
 
-  const loadCustomPreset = (id: string) => {
-    const p = provider.customPromptPresets.find((c) => c.id === id);
+  const loadPreset = (id: string) => {
+    const p = provider.promptPresets.find((c) => c.id === id);
     if (!p) return;
-    onPatch({ promptPresetId: 'custom', activeCustomPresetId: id, systemPrompt: p.prompt });
+    onPatch({ activePromptPresetId: id, systemPrompt: p.prompt });
     setMainOpen(false);
-    setSubOpen(false);
   };
 
   const openNameForNewPreset = () => {
     setNameForNewOpen(true);
-    setNameForNewDraft(nextCustomName(provider.customPromptPresets));
+    setNameForNewDraft(nextPresetName(provider.promptPresets));
   };
 
   const commitNewNamedPreset = () => {
     const t = nameForNewDraft.trim() || 'Untitled';
-    const newPreset: CustomPromptPreset = {
+    const newPreset: SavedPromptPreset = {
       id: uid(),
       name: t,
       prompt: provider.systemPrompt,
@@ -156,15 +108,13 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     };
     onPatch(
       {
-        promptPresetId: 'custom',
-        activeCustomPresetId: newPreset.id,
-        customPromptPresets: [...provider.customPromptPresets, newPreset]
+        activePromptPresetId: newPreset.id,
+        promptPresets: [...provider.promptPresets, newPreset]
       },
       { persist: true }
     );
     setNameForNewOpen(false);
     setMainOpen(false);
-    setSubOpen(false);
   };
 
   const cancelNameForNewPreset = () => {
@@ -172,12 +122,11 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
   };
 
   const savePresetFromEditor = () => {
-    if (provider.activeCustomPresetId) {
-      const id = provider.activeCustomPresetId;
+    if (provider.activePromptPresetId) {
+      const id = provider.activePromptPresetId;
       onPatch(
         {
-          promptPresetId: 'custom',
-          customPromptPresets: provider.customPromptPresets.map((c) =>
+          promptPresets: provider.promptPresets.map((c) =>
             c.id === id ? { ...c, prompt: provider.systemPrompt, updatedAt: Date.now() } : c
           )
         },
@@ -188,22 +137,32 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     openNameForNewPreset();
   };
 
-  const saveAsNew = () => {
-    openNameForNewPreset();
+  const beginDeletePreset = (id: string, name: string) => {
+    const payload = { id, name };
+    deleteTargetRef.current = payload;
+    setDeleteTarget(payload);
   };
 
-  const deletePreset = (id: string, name: string) => {
-    if (!window.confirm(`Delete preset “${name}”?`)) return;
+  const cancelDeletePreset = () => {
+    setDeleteTarget(null);
+  };
+
+  const confirmDeletePreset = () => {
+    const t = deleteTarget ?? deleteTargetRef.current;
+    if (!t) return;
+    setDeleteTarget(null);
     setRenamingId(null);
-    const next = provider.customPromptPresets.filter((c) => c.id !== id);
-    const patch: Partial<ProviderProfile> = { customPromptPresets: next };
-    if (provider.activeCustomPresetId === id) {
-      patch.activeCustomPresetId = null;
+    const next = provider.promptPresets.filter((c) => c.id !== t.id);
+    const patch: Partial<ProviderProfile> = { promptPresets: next };
+    if (provider.activePromptPresetId === t.id) {
+      patch.activePromptPresetId = null;
     }
     onPatch(patch, { persist: true });
   };
 
-  const startRename = (c: CustomPromptPreset) => {
+  const deleteLabelCopy = deleteTarget ?? deleteTargetRef.current;
+
+  const startRename = (c: SavedPromptPreset) => {
     setRenamingId(c.id);
     setRenameDraft(c.name);
     queueMicrotask(() => {
@@ -217,7 +176,7 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     if (t) {
       onPatch(
         {
-          customPromptPresets: provider.customPromptPresets.map((c) =>
+          promptPresets: provider.promptPresets.map((c) =>
             c.id === id ? { ...c, name: t, updatedAt: Date.now() } : c
           )
         },
@@ -231,234 +190,212 @@ export function PromptPresetMenu({ provider, onPatch }: PromptPresetMenuProps) {
     setRenamingId(null);
   };
 
-  const sortedCustom = [...provider.customPromptPresets].sort((a, b) => b.updatedAt - a.updatedAt);
+  const sortedPresets = [...provider.promptPresets].sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const dirty = isPromptDirty(provider);
+  const showQuickSave = dirty && !nameForNewOpen;
+
+  const runQuickSave = () => {
+    if (provider.activePromptPresetId) {
+      savePresetFromEditor();
+      setMainOpen(false);
+      return;
+    }
+    setMainOpen(true);
+    openNameForNewPreset();
+  };
 
   return (
-    <div className="prompt-preset-menu" ref={rootRef}>
-      <button
-        className="prompt-preset-menu__button"
-        onClick={() => setMainOpen((o) => !o)}
-        type="button"
-      >
-        <span className="prompt-preset-menu__button-text">{buttonLabel(provider)}</span>
-        <span className="prompt-preset-menu__button-caret" aria-hidden>
-          {mainOpen ? '▲' : '▼'}
-        </span>
-      </button>
-
-      {mainOpen && (
-        <div className="prompt-preset-menu__dropdown" role="listbox">
-          {promptPresets.map((p) => (
-            <button
-              className={`prompt-preset-menu__item ${provider.promptPresetId === p.id ? 'is-active' : ''}`}
-              key={p.id}
-              onClick={() => applyBuiltin(p.id)}
-              type="button"
-            >
-              {p.label}
-            </button>
-          ))}
-
-          <div
-            className="prompt-preset-menu__sub-wrap"
-            onMouseEnter={openSub}
-            onMouseLeave={(e) => {
-              const to = e.relatedTarget as Node | null;
-              if (to && document.getElementById('prompt-preset-flyout')?.contains(to)) return;
-              scheduleSubClose();
-            }}
+    <>
+      <div className="prompt-preset-menu" ref={rootRef}>
+        <div className="prompt-preset-menu__bar">
+          <button
+            aria-expanded={mainOpen}
+            aria-haspopup="listbox"
+            className="prompt-preset-menu__button"
+            onClick={() => setMainOpen((o) => !o)}
+            type="button"
           >
+            <span className="prompt-preset-menu__button-text">{presetBarLabel(provider)}</span>
+            <span className="prompt-preset-menu__button-caret" aria-hidden>
+              {mainOpen ? '▲' : '▼'}
+            </span>
+          </button>
+          {showQuickSave ? (
             <button
-              ref={customBtnRef}
-              className={`prompt-preset-menu__item prompt-preset-menu__item--custom ${
-                provider.promptPresetId === 'custom' ? 'is-active' : ''
-              }`}
+              aria-label={provider.activePromptPresetId ? 'Save changes to the active preset' : 'Save as a new preset'}
+              className="prompt-preset-menu__quick-save"
               onClick={(e) => {
                 e.stopPropagation();
-                openSub();
+                runQuickSave();
               }}
               type="button"
             >
-              <span>Custom</span>
-              <span className="prompt-preset-menu__sub-hint" aria-hidden>
-                ◀
-              </span>
+              Save
             </button>
-            {subOpen &&
-              createPortal(
-                <div
-                  className="prompt-preset-menu__flyout prompt-preset-menu__flyout--fixed"
-                  id="prompt-preset-flyout"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onMouseEnter={openSub}
-                  onMouseLeave={(e) => {
-                    if (nameForNewOpen) return;
-                    const to = e.relatedTarget as Node | null;
-                    if (to && (rootRef.current?.contains(to) || customBtnRef.current?.contains(to))) return;
-                    scheduleSubClose();
-                  }}
-                  role="menu"
-                  style={{ top: flyoutPos.top, left: flyoutPos.left, width: FLYOUT_W }}
-                >
-                  {nameForNewOpen ? (
-                    <div className="prompt-preset-menu__name-wizard" onKeyDown={(e) => e.stopPropagation()}>
-                      <div className="prompt-preset-menu__name-wizard-title">Name this preset</div>
-                      <input
-                        className="prompt-preset-menu__name-wizard-input"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            commitNewNamedPreset();
-                          } else if (e.key === 'Escape') {
-                            e.preventDefault();
-                            cancelNameForNewPreset();
-                          }
-                        }}
-                        onChange={(e) => setNameForNewDraft(e.target.value)}
-                        placeholder="e.g. Agent workspace v2"
-                        ref={newPresetNameInputRef}
-                        type="text"
-                        value={nameForNewDraft}
-                      />
-                      <div className="prompt-preset-menu__name-wizard-actions">
-                        <button
-                          className="prompt-preset-menu__name-wizard-btn prompt-preset-menu__name-wizard-btn--primary"
-                          onClick={commitNewNamedPreset}
-                          type="button"
-                        >
-                          Save
-                        </button>
-                        <button
-                          className="prompt-preset-menu__name-wizard-btn"
-                          onClick={cancelNameForNewPreset}
-                          type="button"
-                        >
-                          Back
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                  <button
-                    className="prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--action"
-                    onClick={createNewPreset}
-                    type="button"
-                  >
-                    New preset…
-                  </button>
-                  <button
-                    className="prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--action"
-                    onClick={savePresetFromEditor}
-                    title={
-                      provider.activeCustomPresetId
-                        ? 'Save the prompt box into the active custom preset'
-                        : 'Name and save the current prompt text as a new custom preset'
-                    }
-                    type="button"
-                  >
-                    {provider.activeCustomPresetId ? 'Save' : 'Save as new…'}
-                  </button>
-                  {provider.activeCustomPresetId ? (
-                    <button
-                      className="prompt-preset-menu__flyout-item"
-                      onClick={saveAsNew}
-                      type="button"
-                    >
-                      Save copy as new…
-                    </button>
-                  ) : null}
-                  {sortedCustom.length > 0 ? (
-                    <>
-                      <div className="prompt-preset-menu__flyout-sep" />
-                      {sortedCustom.map((c) => (
-                        <div
-                          className="prompt-preset-menu__flyout-row"
-                          key={c.id}
-                        >
-                          {renamingId === c.id ? (
-                            <input
-                              className="prompt-preset-menu__flyout-rename prompt-preset-menu__flyout-rename--full"
-                              onBlur={() => commitRename(c.id)}
-                              onChange={(e) => setRenameDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.currentTarget.blur();
-                                } else if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  cancelRename();
-                                }
-                              }}
-                              ref={renameInputRef}
-                              value={renameDraft}
-                            />
-                          ) : (
-                            <button
-                              className={`prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--row ${
-                                provider.activeCustomPresetId === c.id && provider.promptPresetId === 'custom'
-                                  ? 'is-active'
-                                  : ''
-                              }`}
-                              onClick={() => loadCustomPreset(c.id)}
-                              type="button"
-                              title={c.name}
-                            >
-                              <span className="prompt-preset-menu__flyout-name">{c.name}</span>
-                            </button>
-                          )}
-                          {renamingId === c.id ? null : (
-                            <div className="prompt-preset-menu__flyout-tools">
-                              <button
-                                className="prompt-preset-menu__icon-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  startRename(c);
-                                }}
-                                type="button"
-                                title="Rename"
-                              >
-                                <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden>
-                                  <path
-                                    d="M7.5 1.2L1.2 7.5v2.1h2.1l6.3-6.3L7.5 1.2zM1.5 8.6v-1.2L7.5 1.1l1.1 1.1-6.1 6.1H1.5v.2z"
-                                    fill="currentColor"
-                                  />
-                                </svg>
-                              </button>
-                              <button
-                                className="prompt-preset-menu__icon-btn prompt-preset-menu__icon-btn--danger"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  deletePreset(c.id, c.name);
-                                }}
-                                type="button"
-                                title="Delete"
-                              >
-                                <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden>
-                                  <path
-                                    d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3"
-                                    stroke="currentColor"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth="1.1"
-                                  />
-                                </svg>
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </>
-                  ) : null}
-                    </>
-                  )}
-                </div>,
-                document.body
-              )}
-          </div>
+          ) : null}
         </div>
-      )}
-    </div>
+
+        {mainOpen ? (
+          <div className="prompt-preset-menu__dropdown" role="listbox">
+            {nameForNewOpen ? (
+              <div className="prompt-preset-menu__name-wizard" onKeyDown={(e) => e.stopPropagation()}>
+                <div className="prompt-preset-menu__name-wizard-title">Name this preset</div>
+                <input
+                  className="prompt-preset-menu__name-wizard-input"
+                  onChange={(e) => setNameForNewDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitNewNamedPreset();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelNameForNewPreset();
+                    }
+                  }}
+                  placeholder="e.g. Workspace agent v2"
+                  ref={newPresetNameInputRef}
+                  type="text"
+                  value={nameForNewDraft}
+                />
+                <div className="prompt-preset-menu__name-wizard-actions">
+                  <button
+                    className="prompt-preset-menu__name-wizard-btn prompt-preset-menu__name-wizard-btn--primary"
+                    onClick={commitNewNamedPreset}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="prompt-preset-menu__name-wizard-btn"
+                    onClick={cancelNameForNewPreset}
+                    type="button"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button className="prompt-preset-menu__item" onClick={createNewPreset} type="button">
+                  New preset…
+                </button>
+                <button
+                  className="prompt-preset-menu__item"
+                  disabled={!provider.activePromptPresetId}
+                  onClick={savePresetFromEditor}
+                  title={
+                    provider.activePromptPresetId
+                      ? 'Save the prompt box into the active preset'
+                      : 'Select a preset to overwrite, or use Save as new…'
+                  }
+                  type="button"
+                >
+                  Save
+                </button>
+                <button className="prompt-preset-menu__item" onClick={openNameForNewPreset} type="button">
+                  Save as new…
+                </button>
+                {sortedPresets.length > 0 ? (
+                  <>
+                    <div className="prompt-preset-menu__flyout-sep" role="separator" />
+                    {sortedPresets.map((c) => (
+                      <div className="prompt-preset-menu__flyout-row" key={c.id}>
+                        {renamingId === c.id ? (
+                          <input
+                            className="prompt-preset-menu__flyout-rename prompt-preset-menu__flyout-rename--full"
+                            onBlur={() => commitRename(c.id)}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.currentTarget.blur();
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelRename();
+                              }
+                            }}
+                            ref={renameInputRef}
+                            value={renameDraft}
+                          />
+                        ) : (
+                          <button
+                            className={`prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--row ${
+                              provider.activePromptPresetId === c.id ? 'is-active' : ''
+                            }`}
+                            onClick={() => loadPreset(c.id)}
+                            title={c.name}
+                            type="button"
+                          >
+                            <span className="prompt-preset-menu__flyout-name">{c.name}</span>
+                          </button>
+                        )}
+                        {renamingId === c.id ? null : (
+                          <div className="prompt-preset-menu__flyout-tools">
+                            <button
+                              className="prompt-preset-menu__icon-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                startRename(c);
+                              }}
+                              title="Rename"
+                              type="button"
+                            >
+                              <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden>
+                                <path
+                                  d="M7.5 1.2L1.2 7.5v2.1h2.1l6.3-6.3L7.5 1.2zM1.5 8.6v-1.2L7.5 1.1l1.1 1.1-6.1 6.1H1.5v.2z"
+                                  fill="currentColor"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              className="prompt-preset-menu__icon-btn prompt-preset-menu__icon-btn--danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                beginDeletePreset(c.id, c.name);
+                              }}
+                              title="Delete"
+                              type="button"
+                            >
+                              <svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden>
+                                <path
+                                  d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3"
+                                  stroke="currentColor"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="1.1"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+      <AppConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        description={
+          deleteLabelCopy ? (
+            <>
+              Delete <strong>{deleteLabelCopy.name}</strong>? This cannot be undone.
+            </>
+          ) : null
+        }
+        kicker="Preset"
+        open={deleteTarget != null}
+        title="Delete preset?"
+        onCancel={cancelDeletePreset}
+        onConfirm={confirmDeletePreset}
+      />
+    </>
   );
 }
-

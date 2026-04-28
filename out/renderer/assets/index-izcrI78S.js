@@ -20457,7 +20457,7 @@ const featureBundle = {
   ...layout
 };
 const motion = /* @__PURE__ */ createMotionProxy(featureBundle, createDomVisualElement);
-const openkiwiLogo = "" + new URL("openkiwi-B7TdZd16.png", import.meta.url).href;
+const openkiwiLogo = "" + new URL("openkiwi-D1aerqyI.png", import.meta.url).href;
 function applyChatModelOverride(settings, override) {
   if (!override?.model?.trim()) {
     return settings;
@@ -35088,80 +35088,7 @@ function ModelSearch({
     )
   ] });
 }
-const promptPresets = [
-  {
-    id: "general-coding",
-    label: "General Coding",
-    description: "Balanced default for coding assistance, refactors, debugging, and local tool use.",
-    prompt: `You are a pragmatic coding assistant inside a desktop editor.
-
-Use available tools to inspect the workspace, read files, write files, delete files when explicitly appropriate, and run workspace commands when useful.
-
-Work autonomously when the task is clear. Prefer taking the next useful step over stopping early. Keep going until one of these is true:
-1. the task is complete
-2. you are blocked by missing information or a risky ambiguity that requires user input
-3. a tool operation fails and you need user direction
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be concise, precise, and directly useful.`
-  },
-  {
-    id: "web-design",
-    label: "Web Design",
-    description: "Strong art direction, polished UI decisions, and decisive frontend implementation.",
-    prompt: `You are an expert web product designer and frontend engineer inside a desktop editor.
-
-Your job is to produce interfaces that feel intentional, premium, and visually distinctive. Avoid generic SaaS card grids, weak hierarchy, and filler copy. Prefer strong composition, clean spacing, clear typography, and a small number of memorable visual ideas.
-
-Use available tools to inspect the workspace, read and write files, and run commands as needed. Work autonomously until the task is complete or you truly need input.
-
-For UI work:
-- make one dominant idea per section or screen
-- keep copy tight and product-oriented
-- preserve usability and responsiveness
-- favor polished motion over noisy motion
-- maintain accessibility, contrast, and strong information hierarchy
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Be opinionated, high quality, and implementation-ready.`
-  },
-  {
-    id: "software-engineering",
-    label: "Software Engineering",
-    description: "Systems-oriented prompt for architecture, correctness, maintainability, and delivery.",
-    prompt: `You are a senior software engineer operating inside a desktop coding workspace.
-
-Use available tools to inspect the project, read files, write files, delete files when necessary, and run workspace commands for builds, tests, linting, and debugging.
-
-Work autonomously when the task is clear. Make careful technical decisions with strong defaults:
-- prefer correct, maintainable solutions over flashy ones
-- preserve existing architecture when reasonable
-- validate assumptions against the codebase
-- run relevant checks when possible
-- explain blockers plainly when you truly need input
-
-Do not stop after partial analysis if you can continue implementing or verifying. Continue until the task is complete or genuinely blocked.
-
-When you stop because the task is complete, begin your final response with TASK_COMPLETE.
-When you stop because you need user input, begin your final response with NEEDS_INPUT.
-
-Optimize for correctness, clarity, and momentum.`
-  }
-];
-const getPromptPreset = (id2) => promptPresets.find((preset) => preset.id === id2) ?? promptPresets[0];
 const defaultSettings = {
-  providers: {
-    lmstudio: {
-      systemPrompt: getPromptPreset("general-coding").prompt
-    },
-    openrouter: {
-      systemPrompt: getPromptPreset("general-coding").prompt
-    }
-  },
   ui: {
     favoriteModels: { lmstudio: [], openrouter: [] }
   }
@@ -35239,55 +35166,128 @@ function isLikelyLightCssBackground(value) {
   return /^#f[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}/i.test(s);
 }
 const themes = themeCatalog;
+function patchSystemPromptInSettings(settings, v2) {
+  const selected = settings.selectedProvider;
+  const provider = settings.providers[selected];
+  if (provider.activePromptPresetId) {
+    const id2 = provider.activePromptPresetId;
+    return {
+      ...settings,
+      providers: {
+        ...settings.providers,
+        [selected]: {
+          ...provider,
+          systemPrompt: v2,
+          promptPresets: provider.promptPresets.map(
+            (c) => c.id === id2 ? { ...c, prompt: v2, updatedAt: Date.now() } : c
+          )
+        }
+      }
+    };
+  }
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      [selected]: {
+        ...provider,
+        systemPrompt: v2
+      }
+    }
+  };
+}
+const dialogTransition$1 = { duration: 0.18, ease: "easeOut" };
+function AppConfirmDialog({
+  open,
+  kicker,
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  confirmVariant = "primary",
+  onConfirm,
+  onCancel
+}) {
+  const uid2 = reactExports.useId();
+  const titleId = `${uid2}-title`;
+  const descId = `${uid2}-desc`;
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+  return reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            animate: { opacity: 1, scale: 1, y: 0 },
+            "aria-describedby": descId,
+            "aria-labelledby": titleId,
+            "aria-modal": "true",
+            className: "app-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: dialogTransition$1,
+            children: [
+              kicker ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: kicker }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: titleId, children: title }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descId, children: description }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: onCancel, type: "button", children: cancelLabel }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `btn ${confirmVariant === "danger" ? "btn--danger" : "btn--primary"}`,
+                    onClick: onConfirm,
+                    type: "button",
+                    children: confirmLabel
+                  }
+                )
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
+    document.body
+  );
+}
 const uid$1 = () => Math.random().toString(36).slice(2, 11);
-function nextCustomName(list2) {
-  return `My preset ${list2.length + 1}`;
+function nextPresetName(list2) {
+  return `Preset ${list2.length + 1}`;
 }
 function buttonLabel(provider) {
-  if (provider.promptPresetId !== "custom") return getPromptPreset(provider.promptPresetId).label;
-  if (provider.activeCustomPresetId) {
-    const c = provider.customPromptPresets.find((x) => x.id === provider.activeCustomPresetId);
-    if (c) return `Custom · ${c.name}`;
+  if (provider.activePromptPresetId) {
+    const c = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+    if (c) return c.name;
   }
-  return "Custom";
+  return "Draft";
 }
-const FLYOUT_W = 292;
 function PromptPresetMenu({ provider, onPatch }) {
   const [mainOpen, setMainOpen] = reactExports.useState(false);
-  const [subOpen, setSubOpen] = reactExports.useState(false);
   const [renamingId, setRenamingId] = reactExports.useState(null);
   const [renameDraft, setRenameDraft] = reactExports.useState("");
   const [nameForNewOpen, setNameForNewOpen] = reactExports.useState(false);
   const [nameForNewDraft, setNameForNewDraft] = reactExports.useState("");
-  const [flyoutPos, setFlyoutPos] = reactExports.useState({ top: 0, left: 0 });
+  const [deleteTarget, setDeleteTarget] = reactExports.useState(null);
+  const deleteTargetRef = reactExports.useRef(null);
   const rootRef = reactExports.useRef(null);
-  const customBtnRef = reactExports.useRef(null);
-  const subCloseTimer = reactExports.useRef(null);
   const renameInputRef = reactExports.useRef(null);
   const newPresetNameInputRef = reactExports.useRef(null);
-  const clearSubCloseTimer = () => {
-    if (subCloseTimer.current) {
-      clearTimeout(subCloseTimer.current);
-      subCloseTimer.current = null;
-    }
-  };
-  const scheduleSubClose = () => {
-    clearSubCloseTimer();
-    subCloseTimer.current = setTimeout(() => setSubOpen(false), 220);
-  };
-  const openSub = () => {
-    clearSubCloseTimer();
-    setSubOpen(true);
-  };
-  reactExports.useEffect(
-    () => () => {
-      clearSubCloseTimer();
-    },
-    []
-  );
   reactExports.useEffect(() => {
     if (!mainOpen) {
-      setSubOpen(false);
       setNameForNewOpen(false);
     }
   }, [mainOpen]);
@@ -35296,65 +35296,41 @@ function PromptPresetMenu({ provider, onPatch }) {
     newPresetNameInputRef.current?.focus();
     newPresetNameInputRef.current?.select();
   }, [nameForNewOpen]);
-  reactExports.useLayoutEffect(() => {
-    if (!subOpen) return;
-    const update = () => {
-      const el = customBtnRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const left = r.left - FLYOUT_W + 1;
-      setFlyoutPos({ top: r.top, left: Math.max(8, left) });
-    };
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [subOpen, mainOpen, nameForNewOpen]);
   reactExports.useEffect(() => {
     const onDown = (e) => {
       const t = e.target;
       if (rootRef.current?.contains(t)) return;
-      if (document.getElementById("prompt-preset-flyout")?.contains(t)) return;
       setMainOpen(false);
-      setSubOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
-  const applyBuiltin = (id2) => {
-    const preset = getPromptPreset(id2);
-    onPatch({ promptPresetId: preset.id, systemPrompt: preset.prompt, activeCustomPresetId: null });
-    setMainOpen(false);
-    setSubOpen(false);
-  };
   const createNewPreset = () => {
     const newPreset = {
       id: uid$1(),
-      name: nextCustomName(provider.customPromptPresets),
+      name: nextPresetName(provider.promptPresets),
       prompt: "",
       updatedAt: Date.now()
     };
     onPatch(
       {
-        promptPresetId: "custom",
-        activeCustomPresetId: newPreset.id,
+        activePromptPresetId: newPreset.id,
         systemPrompt: "",
-        customPromptPresets: [...provider.customPromptPresets, newPreset]
+        promptPresets: [...provider.promptPresets, newPreset]
       },
       { persist: true }
     );
     setMainOpen(false);
-    setSubOpen(false);
   };
-  const loadCustomPreset = (id2) => {
-    const p = provider.customPromptPresets.find((c) => c.id === id2);
+  const loadPreset = (id2) => {
+    const p = provider.promptPresets.find((c) => c.id === id2);
     if (!p) return;
-    onPatch({ promptPresetId: "custom", activeCustomPresetId: id2, systemPrompt: p.prompt });
+    onPatch({ activePromptPresetId: id2, systemPrompt: p.prompt });
     setMainOpen(false);
-    setSubOpen(false);
   };
   const openNameForNewPreset = () => {
     setNameForNewOpen(true);
-    setNameForNewDraft(nextCustomName(provider.customPromptPresets));
+    setNameForNewDraft(nextPresetName(provider.promptPresets));
   };
   const commitNewNamedPreset = () => {
     const t = nameForNewDraft.trim() || "Untitled";
@@ -35366,26 +35342,23 @@ function PromptPresetMenu({ provider, onPatch }) {
     };
     onPatch(
       {
-        promptPresetId: "custom",
-        activeCustomPresetId: newPreset.id,
-        customPromptPresets: [...provider.customPromptPresets, newPreset]
+        activePromptPresetId: newPreset.id,
+        promptPresets: [...provider.promptPresets, newPreset]
       },
       { persist: true }
     );
     setNameForNewOpen(false);
     setMainOpen(false);
-    setSubOpen(false);
   };
   const cancelNameForNewPreset = () => {
     setNameForNewOpen(false);
   };
   const savePresetFromEditor = () => {
-    if (provider.activeCustomPresetId) {
-      const id2 = provider.activeCustomPresetId;
+    if (provider.activePromptPresetId) {
+      const id2 = provider.activePromptPresetId;
       onPatch(
         {
-          promptPresetId: "custom",
-          customPromptPresets: provider.customPromptPresets.map(
+          promptPresets: provider.promptPresets.map(
             (c) => c.id === id2 ? { ...c, prompt: provider.systemPrompt, updatedAt: Date.now() } : c
           )
         },
@@ -35395,19 +35368,30 @@ function PromptPresetMenu({ provider, onPatch }) {
     }
     openNameForNewPreset();
   };
-  const saveAsNew = () => {
+  const saveCopyAsNew = () => {
     openNameForNewPreset();
   };
-  const deletePreset = (id2, name2) => {
-    if (!window.confirm(`Delete preset “${name2}”?`)) return;
+  const beginDeletePreset = (id2, name2) => {
+    const payload = { id: id2, name: name2 };
+    deleteTargetRef.current = payload;
+    setDeleteTarget(payload);
+  };
+  const cancelDeletePreset = () => {
+    setDeleteTarget(null);
+  };
+  const confirmDeletePreset = () => {
+    const t = deleteTarget ?? deleteTargetRef.current;
+    if (!t) return;
+    setDeleteTarget(null);
     setRenamingId(null);
-    const next = provider.customPromptPresets.filter((c) => c.id !== id2);
-    const patch2 = { customPromptPresets: next };
-    if (provider.activeCustomPresetId === id2) {
-      patch2.activeCustomPresetId = null;
+    const next = provider.promptPresets.filter((c) => c.id !== t.id);
+    const patch2 = { promptPresets: next };
+    if (provider.activePromptPresetId === t.id) {
+      patch2.activePromptPresetId = null;
     }
     onPatch(patch2, { persist: true });
   };
+  const deleteLabelCopy = deleteTarget ?? deleteTargetRef.current;
   const startRename = (c) => {
     setRenamingId(c.id);
     setRenameDraft(c.name);
@@ -35421,7 +35405,7 @@ function PromptPresetMenu({ provider, onPatch }) {
     if (t) {
       onPatch(
         {
-          customPromptPresets: provider.customPromptPresets.map(
+          promptPresets: provider.promptPresets.map(
             (c) => c.id === id2 ? { ...c, name: t, updatedAt: Date.now() } : c
           )
         },
@@ -35433,238 +35417,177 @@ function PromptPresetMenu({ provider, onPatch }) {
   const cancelRename = () => {
     setRenamingId(null);
   };
-  const sortedCustom = [...provider.customPromptPresets].sort((a, b) => b.updatedAt - a.updatedAt);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu", ref: rootRef, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "button",
-      {
-        className: "prompt-preset-menu__button",
-        onClick: () => setMainOpen((o) => !o),
-        type: "button",
-        children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-text", children: buttonLabel(provider) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-caret", "aria-hidden": true, children: mainOpen ? "▲" : "▼" })
-        ]
-      }
-    ),
-    mainOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__dropdown", role: "listbox", children: [
-      promptPresets.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+  const sortedPresets = [...provider.promptPresets].sort((a, b) => b.updatedAt - a.updatedAt);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu", ref: rootRef, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          className: `prompt-preset-menu__item ${provider.promptPresetId === p.id ? "is-active" : ""}`,
-          onClick: () => applyBuiltin(p.id),
+          "aria-expanded": mainOpen,
+          "aria-haspopup": "listbox",
+          className: "prompt-preset-menu__button",
+          onClick: () => setMainOpen((o) => !o),
           type: "button",
-          children: p.label
-        },
-        p.id
-      )),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
-        {
-          className: "prompt-preset-menu__sub-wrap",
-          onMouseEnter: openSub,
-          onMouseLeave: (e) => {
-            const to = e.relatedTarget;
-            if (to && document.getElementById("prompt-preset-flyout")?.contains(to)) return;
-            scheduleSubClose();
-          },
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                ref: customBtnRef,
-                className: `prompt-preset-menu__item prompt-preset-menu__item--custom ${provider.promptPresetId === "custom" ? "is-active" : ""}`,
-                onClick: (e) => {
-                  e.stopPropagation();
-                  openSub();
-                },
-                type: "button",
-                children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Custom" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__sub-hint", "aria-hidden": true, children: "◀" })
-                ]
-              }
-            ),
-            subOpen && reactDomExports.createPortal(
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "div",
-                {
-                  className: "prompt-preset-menu__flyout prompt-preset-menu__flyout--fixed",
-                  id: "prompt-preset-flyout",
-                  onMouseDown: (e) => e.stopPropagation(),
-                  onMouseEnter: openSub,
-                  onMouseLeave: (e) => {
-                    if (nameForNewOpen) return;
-                    const to = e.relatedTarget;
-                    if (to && (rootRef.current?.contains(to) || customBtnRef.current?.contains(to))) return;
-                    scheduleSubClose();
-                  },
-                  role: "menu",
-                  style: { top: flyoutPos.top, left: flyoutPos.left, width: FLYOUT_W },
-                  children: nameForNewOpen ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__name-wizard", onKeyDown: (e) => e.stopPropagation(), children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__name-wizard-title", children: "Name this preset" }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "input",
-                      {
-                        className: "prompt-preset-menu__name-wizard-input",
-                        onKeyDown: (e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitNewNamedPreset();
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelNameForNewPreset();
-                          }
-                        },
-                        onChange: (e) => setNameForNewDraft(e.target.value),
-                        placeholder: "e.g. Agent workspace v2",
-                        ref: newPresetNameInputRef,
-                        type: "text",
-                        value: nameForNewDraft
-                      }
-                    ),
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__name-wizard-actions", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "button",
-                        {
-                          className: "prompt-preset-menu__name-wizard-btn prompt-preset-menu__name-wizard-btn--primary",
-                          onClick: commitNewNamedPreset,
-                          type: "button",
-                          children: "Save"
-                        }
-                      ),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "button",
-                        {
-                          className: "prompt-preset-menu__name-wizard-btn",
-                          onClick: cancelNameForNewPreset,
-                          type: "button",
-                          children: "Back"
-                        }
-                      )
-                    ] })
-                  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "button",
-                      {
-                        className: "prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--action",
-                        onClick: createNewPreset,
-                        type: "button",
-                        children: "New preset…"
-                      }
-                    ),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "button",
-                      {
-                        className: "prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--action",
-                        onClick: savePresetFromEditor,
-                        title: provider.activeCustomPresetId ? "Save the prompt box into the active custom preset" : "Name and save the current prompt text as a new custom preset",
-                        type: "button",
-                        children: provider.activeCustomPresetId ? "Save" : "Save as new…"
-                      }
-                    ),
-                    provider.activeCustomPresetId ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "button",
-                      {
-                        className: "prompt-preset-menu__flyout-item",
-                        onClick: saveAsNew,
-                        type: "button",
-                        children: "Save copy as new…"
-                      }
-                    ) : null,
-                    sortedCustom.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__flyout-sep" }),
-                      sortedCustom.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                        "div",
-                        {
-                          className: "prompt-preset-menu__flyout-row",
-                          children: [
-                            renamingId === c.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "input",
-                              {
-                                className: "prompt-preset-menu__flyout-rename prompt-preset-menu__flyout-rename--full",
-                                onBlur: () => commitRename(c.id),
-                                onChange: (e) => setRenameDraft(e.target.value),
-                                onKeyDown: (e) => {
-                                  if (e.key === "Enter") {
-                                    e.currentTarget.blur();
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelRename();
-                                  }
-                                },
-                                ref: renameInputRef,
-                                value: renameDraft
-                              }
-                            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "button",
-                              {
-                                className: `prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--row ${provider.activeCustomPresetId === c.id && provider.promptPresetId === "custom" ? "is-active" : ""}`,
-                                onClick: () => loadCustomPreset(c.id),
-                                type: "button",
-                                title: c.name,
-                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__flyout-name", children: c.name })
-                              }
-                            ),
-                            renamingId === c.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__flyout-tools", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "button",
-                                {
-                                  className: "prompt-preset-menu__icon-btn",
-                                  onClick: (e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    startRename(c);
-                                  },
-                                  type: "button",
-                                  title: "Rename",
-                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 12 12", width: "12", height: "12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                    "path",
-                                    {
-                                      d: "M7.5 1.2L1.2 7.5v2.1h2.1l6.3-6.3L7.5 1.2zM1.5 8.6v-1.2L7.5 1.1l1.1 1.1-6.1 6.1H1.5v.2z",
-                                      fill: "currentColor"
-                                    }
-                                  ) })
-                                }
-                              ),
-                              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "button",
-                                {
-                                  className: "prompt-preset-menu__icon-btn prompt-preset-menu__icon-btn--danger",
-                                  onClick: (e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    deletePreset(c.id, c.name);
-                                  },
-                                  type: "button",
-                                  title: "Delete",
-                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 12 12", width: "12", height: "12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                    "path",
-                                    {
-                                      d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
-                                      stroke: "currentColor",
-                                      strokeLinecap: "round",
-                                      strokeLinejoin: "round",
-                                      strokeWidth: "1.1"
-                                    }
-                                  ) })
-                                }
-                              )
-                            ] })
-                          ]
-                        },
-                        c.id
-                      ))
-                    ] }) : null
-                  ] })
-                }
-              ),
-              document.body
-            )
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-text", children: buttonLabel(provider) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-caret", "aria-hidden": true, children: mainOpen ? "▲" : "▼" })
           ]
         }
-      )
-    ] })
+      ),
+      mainOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__dropdown", role: "listbox", children: nameForNewOpen ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__name-wizard", onKeyDown: (e) => e.stopPropagation(), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__name-wizard-title", children: "Name this preset" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            className: "prompt-preset-menu__name-wizard-input",
+            onChange: (e) => setNameForNewDraft(e.target.value),
+            onKeyDown: (e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitNewNamedPreset();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelNameForNewPreset();
+              }
+            },
+            placeholder: "e.g. Workspace agent v2",
+            ref: newPresetNameInputRef,
+            type: "text",
+            value: nameForNewDraft
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__name-wizard-actions", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "prompt-preset-menu__name-wizard-btn prompt-preset-menu__name-wizard-btn--primary",
+              onClick: commitNewNamedPreset,
+              type: "button",
+              children: "Save"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "prompt-preset-menu__name-wizard-btn",
+              onClick: cancelNameForNewPreset,
+              type: "button",
+              children: "Back"
+            }
+          )
+        ] })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "prompt-preset-menu__item", onClick: createNewPreset, type: "button", children: "New preset…" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "prompt-preset-menu__item",
+            disabled: !provider.activePromptPresetId,
+            onClick: savePresetFromEditor,
+            title: provider.activePromptPresetId ? "Save the prompt box into the active preset" : "Select a preset to overwrite, or use Save as new…",
+            type: "button",
+            children: "Save"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "prompt-preset-menu__item", onClick: openNameForNewPreset, type: "button", children: "Save as new…" }),
+        provider.activePromptPresetId ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "prompt-preset-menu__item", onClick: saveCopyAsNew, type: "button", children: "Save copy as new…" }) : null,
+        sortedPresets.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__flyout-sep", role: "separator" }),
+          sortedPresets.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__flyout-row", children: [
+            renamingId === c.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "prompt-preset-menu__flyout-rename prompt-preset-menu__flyout-rename--full",
+                onBlur: () => commitRename(c.id),
+                onChange: (e) => setRenameDraft(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelRename();
+                  }
+                },
+                ref: renameInputRef,
+                value: renameDraft
+              }
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `prompt-preset-menu__flyout-item prompt-preset-menu__flyout-item--row ${provider.activePromptPresetId === c.id ? "is-active" : ""}`,
+                onClick: () => loadPreset(c.id),
+                title: c.name,
+                type: "button",
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__flyout-name", children: c.name })
+              }
+            ),
+            renamingId === c.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__flyout-tools", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "prompt-preset-menu__icon-btn",
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    startRename(c);
+                  },
+                  title: "Rename",
+                  type: "button",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 12 12", width: "12", height: "12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "path",
+                    {
+                      d: "M7.5 1.2L1.2 7.5v2.1h2.1l6.3-6.3L7.5 1.2zM1.5 8.6v-1.2L7.5 1.1l1.1 1.1-6.1 6.1H1.5v.2z",
+                      fill: "currentColor"
+                    }
+                  ) })
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "prompt-preset-menu__icon-btn prompt-preset-menu__icon-btn--danger",
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    beginDeletePreset(c.id, c.name);
+                  },
+                  title: "Delete",
+                  type: "button",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { viewBox: "0 0 12 12", width: "12", height: "12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "path",
+                    {
+                      d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
+                      stroke: "currentColor",
+                      strokeLinecap: "round",
+                      strokeLinejoin: "round",
+                      strokeWidth: "1.1"
+                    }
+                  ) })
+                }
+              )
+            ] })
+          ] }, c.id))
+        ] }) : null
+      ] }) }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Cancel",
+        confirmLabel: "Delete",
+        confirmVariant: "danger",
+        description: deleteLabelCopy ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: deleteLabelCopy.name }),
+          "? This cannot be undone."
+        ] }) : null,
+        kicker: "Preset",
+        open: deleteTarget != null,
+        title: "Delete preset?",
+        onCancel: cancelDeletePreset,
+        onConfirm: confirmDeletePreset
+      }
+    )
   ] });
 }
 const providerOptions$1 = [
@@ -35687,6 +35610,7 @@ function SettingsPanel({
   onRefreshModels,
   onOpenConnectionHelp,
   onOpenWebSearchInfo,
+  onOpenSystemPromptModal,
   focusSearchSettingsKey = 0
 }) {
   const [headerSaveAck, setHeaderSaveAck] = reactExports.useState(false);
@@ -35863,30 +35787,46 @@ function SettingsPanel({
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "System Prompt" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Preset" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(PromptPresetMenu, { onPatch: updateProvider, provider })
         ] }),
-        provider.promptPresetId !== "custom" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: getPromptPreset(provider.promptPresetId).description }) : null,
+        provider.promptPresets.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+          "Add presets to save reusable system prompts for this provider. Use ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "New preset…" }),
+          " or",
+          " ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Save as new…" }),
+          " from the menu."
+        ] }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Prompt" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "field__label-row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Prompt" }),
+            onOpenSystemPromptModal ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                "aria-label": "Open system prompt in a larger editor",
+                className: "settings-info-button",
+                onClick: () => onOpenSystemPromptModal(),
+                title: "Expand editor",
+                type: "button",
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "path",
+                  {
+                    d: "M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4",
+                    stroke: "currentColor",
+                    strokeLinecap: "round",
+                    strokeWidth: "2"
+                  }
+                ) })
+              }
+            ) : null
+          ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "textarea",
             {
               onChange: (e) => {
-                const v2 = e.target.value;
-                if (provider.promptPresetId === "custom" && provider.activeCustomPresetId) {
-                  const id2 = provider.activeCustomPresetId;
-                  updateProvider({
-                    promptPresetId: "custom",
-                    systemPrompt: v2,
-                    customPromptPresets: provider.customPromptPresets.map(
-                      (c) => c.id === id2 ? { ...c, prompt: v2, updatedAt: Date.now() } : c
-                    )
-                  });
-                } else {
-                  updateProvider({ promptPresetId: "custom", systemPrompt: v2 });
-                }
+                onChange(patchSystemPromptInSettings(settings, e.target.value));
               },
               rows: 6,
               value: provider.systemPrompt
@@ -36145,6 +36085,54 @@ function SettingsPanel({
     ] })
   ] });
 }
+const dialogTransition = { duration: 0.18, ease: "easeOut" };
+function SystemPromptModal({ open, value, onChange, onClose }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          animate: { opacity: 1, scale: 1, y: 0 },
+          "aria-describedby": "system-prompt-modal-hint",
+          "aria-labelledby": "system-prompt-modal-title",
+          "aria-modal": "true",
+          className: "app-dialog app-dialog--system-prompt",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          role: "dialog",
+          transition: dialogTransition,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Settings" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "system-prompt-modal-title", children: "System prompt" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "system-prompt-modal__hint", id: "system-prompt-modal-hint", children: [
+              "Changes apply in memory to the active provider. Use ",
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Save" }),
+              " in Settings to write your profile to disk."
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "textarea",
+              {
+                autoFocus: true,
+                className: "system-prompt-modal__textarea",
+                id: "system-prompt-modal-field",
+                onChange: (e) => onChange(e.target.value),
+                spellCheck: false,
+                value
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: onClose, type: "button", children: "Done" }) })
+          ]
+        }
+      )
+    }
+  ) : null });
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 const isEmbeddingModel = (modelId) => /embed|embedding/i.test(modelId);
@@ -36241,6 +36229,7 @@ function App() {
   const [changesLoading, setChangesLoading] = reactExports.useState(false);
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
   const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
+  const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
@@ -37076,6 +37065,17 @@ function App() {
         )
       }
     ) : null }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      SystemPromptModal,
+      {
+        open: showSystemPromptModal && Boolean(settings),
+        value: settings?.providers[settings.selectedProvider].systemPrompt ?? "",
+        onChange: (v2) => {
+          setSettings((s) => s ? patchSystemPromptInSettings(s, v2) : s);
+        },
+        onClose: () => setShowSystemPromptModal(false)
+      }
+    ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
       {
@@ -37712,6 +37712,7 @@ function App() {
                       modelOptions: models,
                       onChange: setSettings,
                       onOpenConnectionHelp: () => setShowConnectionHelp(true),
+                      onOpenSystemPromptModal: () => setShowSystemPromptModal(true),
                       onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
                       onPresetPersist: persistAfterPresetAction,
                       onRefreshModels: refreshModels,

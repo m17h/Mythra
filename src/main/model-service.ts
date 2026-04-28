@@ -21,17 +21,6 @@ import type {
   SessionMode
 } from '@shared/types';
 import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
-import { getPromptPreset } from '@shared/prompt-presets';
-
-function mapCompletionUsage(
-  u: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null | undefined
-): ChatCompletionTokenUsage | undefined {
-  if (!u) return undefined;
-  const pt = u.prompt_tokens ?? 0;
-  const ct = u.completion_tokens ?? 0;
-  const tt = u.total_tokens ?? pt + ct;
-  return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
-}
 import {
   isPresetThemeId,
   isThemeId,
@@ -43,6 +32,16 @@ import {
 import { CommandService } from './command-service';
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
+
+function mapCompletionUsage(
+  u: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null | undefined
+): ChatCompletionTokenUsage | undefined {
+  if (!u) return undefined;
+  const pt = u.prompt_tokens ?? 0;
+  const ct = u.completion_tokens ?? 0;
+  const tt = u.total_tokens ?? pt + ct;
+  return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
+}
 
 const normalizeBaseUrl = (kind: ProviderKind, baseUrl: string) => {
   const trimmed = baseUrl.trim().replace(/\/$/, '');
@@ -1289,14 +1288,20 @@ export class ModelService {
       const truncated = full.length > MAX_PREVIEW;
       const system_prompt = truncated ? truncate(full, MAX_PREVIEW) : full;
       const preset =
-        provider.promptPresetId === 'custom'
-          ? { id: 'custom' as const, label: 'Custom' }
-          : { id: provider.promptPresetId, label: getPromptPreset(provider.promptPresetId).label };
+        provider.activePromptPresetId == null
+          ? { id: 'draft' as const, label: 'Draft' }
+          : (() => {
+              const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+              return {
+                id: provider.activePromptPresetId,
+                label: row?.name ?? 'Preset'
+              };
+            })();
       return JSON.stringify(
         {
           provider: kind,
           prompt_preset: preset,
-          active_custom_preset_id: provider.activeCustomPresetId,
+          active_prompt_preset_id: provider.activePromptPresetId,
           system_prompt,
           system_prompt_length: full.length,
           system_prompt_truncated: truncated
@@ -1370,8 +1375,7 @@ export class ModelService {
             [providerKind]: {
               ...p,
               systemPrompt: system_prompt,
-              promptPresetId: 'custom',
-              activeCustomPresetId: null
+              activePromptPresetId: null
             }
           }
         };

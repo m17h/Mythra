@@ -10,6 +10,7 @@ import { FileTree } from './components/FileTree';
 import { ModelSearch } from './components/ModelSearch';
 import { OpenKiwiMark } from './components/OpenKiwiMark';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SystemPromptModal } from './components/SystemPromptModal';
 import {
   defaultSettings,
   type AppSettings,
@@ -28,6 +29,7 @@ import {
   type WorkspaceChanges,
   type WorkspaceNode
 } from '@shared/types';
+import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
 import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@shared/themes';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -157,6 +159,7 @@ export function App() {
   const [changesLoading, setChangesLoading] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
+  const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
@@ -1076,6 +1079,14 @@ export function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+      <SystemPromptModal
+        open={showSystemPromptModal && Boolean(settings)}
+        value={settings?.providers[settings.selectedProvider].systemPrompt ?? ''}
+        onChange={(v) => {
+          setSettings((s) => (s ? patchSystemPromptInSettings(s, v) : s));
+        }}
+        onClose={() => setShowSystemPromptModal(false)}
+      />
       <AnimatePresence>
         {showConnectionHelp ? (
           <motion.div
@@ -1683,6 +1694,7 @@ export function App() {
                     modelOptions={models}
                     onChange={setSettings}
                     onOpenConnectionHelp={() => setShowConnectionHelp(true)}
+                    onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
                     onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                     onPresetPersist={persistAfterPresetAction}
                     onRefreshModels={refreshModels}

@@ -223,6 +223,11 @@ html[data-platform='darwin'] .app-shell {
   backdrop-filter: blur(10px);
 }
 
+/** Above nested UI (e.g. prompt preset flyout z-index 10050). */
+.app-dialog-backdrop--overlay-top {
+  z-index: 20000;
+}
+
 .app-dialog {
   width: min(440px, 100%);
   border: 1px solid var(--line-strong);
@@ -292,6 +297,60 @@ html[data-platform='darwin'] .app-shell {
   width: min(520px, 100%);
   max-height: min(calc(100vh - 40px), 620px);
   overflow-y: auto;
+}
+
+.app-dialog--system-prompt {
+  width: min(920px, calc(100vw - 40px));
+  max-height: min(calc(100vh - 40px), 840px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 16px;
+}
+
+.system-prompt-modal__hint {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  flex-shrink: 0;
+}
+
+.system-prompt-modal__textarea {
+  flex: 1;
+  min-height: min(480px, 52vh);
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-0);
+  font-size: 0.84rem;
+  font-family: 'JetBrains Mono', var(--font-mono, ui-monospace, monospace);
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+:root[data-theme='ice-station'] .system-prompt-modal__textarea,
+:root[data-theme='kiwi'] .system-prompt-modal__textarea,
+:root[data-theme='custom'][data-custom-light='true'] .system-prompt-modal__textarea {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.system-prompt-modal__textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.app-dialog--system-prompt .app-dialog__actions {
+  flex-shrink: 0;
+  margin-top: 4px;
 }
 
 .app-dialog__section {
@@ -444,7 +503,7 @@ html[data-platform='darwin'] .app-shell {
   object-fit: contain;
   flex-shrink: 0;
   display: block;
-  transform: translateY(3px);
+  transform: translate(-3px, 6px);
 }
 
 .sidebar-brand__copy {
@@ -2610,6 +2669,15 @@ details.chat-activity--collapsible {
 
 .btn--primary:hover { background: var(--accent-light); }
 
+.btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn--danger:hover {
+  filter: brightness(1.08);
+}
+
 .btn--secondary {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--line);
@@ -2650,6 +2718,17 @@ details.chat-activity--collapsible {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.field .field__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.field .field__label-row > span {
+  min-width: 0;
 }
 
 .field input,
@@ -2961,10 +3040,81 @@ details.chat-activity--collapsible {
   pointer-events: none;
 }
 
-/* Prompt preset (nested: Custom → flyout) */
+/* Prompt presets (settings) */
+@keyframes prompt-preset-save-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+      0 0 14px color-mix(in srgb, var(--accent) 25%, transparent);
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 30%, transparent));
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--accent-light) 45%, transparent),
+      0 0 24px color-mix(in srgb, var(--accent) 38%, transparent);
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent-light) 38%, transparent));
+  }
+}
+
 .prompt-preset-menu {
   position: relative;
   width: 100%;
+}
+
+.prompt-preset-menu__bar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.prompt-preset-menu__bar .prompt-preset-menu__button {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.prompt-preset-menu__quick-save {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-light);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: prompt-preset-save-glow 2s ease-in-out infinite;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.prompt-preset-menu__quick-save:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text-0);
+  border-color: var(--accent-light);
+}
+
+.prompt-preset-menu__quick-save:focus-visible {
+  outline: 2px solid var(--accent-subtle);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-preset-menu__quick-save {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+    filter: none;
+  }
 }
 
 .prompt-preset-menu__button {
@@ -3042,6 +3192,16 @@ details.chat-activity--collapsible {
 .prompt-preset-menu__item.is-active {
   color: var(--accent-light);
   background: var(--accent-subtle);
+}
+
+.prompt-preset-menu__item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.prompt-preset-menu__item:disabled:hover {
+  background: transparent;
+  color: var(--text-1);
 }
 
 .prompt-preset-menu__item--custom {

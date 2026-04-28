@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, type AppSettings } from '@shared/types';
+import { normalizeProviderProfile } from '@shared/provider-profile';
 
 const SETTINGS_FILE = 'openkiwi-settings.json';
 const LEGACY_SETTINGS_FILE = 'pixel-forge-settings.json';
@@ -15,14 +16,14 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       ? saved.lastWorkspaceRoot.trim()
       : null,
   providers: {
-    lmstudio: {
-      ...defaultSettings.providers.lmstudio,
-      ...saved?.providers?.lmstudio
-    },
-    openrouter: {
-      ...defaultSettings.providers.openrouter,
-      ...saved?.providers?.openrouter
-    }
+    lmstudio: normalizeProviderProfile(
+      defaultSettings.providers.lmstudio,
+      saved?.providers?.lmstudio as Partial<Record<string, unknown>> | undefined
+    ),
+    openrouter: normalizeProviderProfile(
+      defaultSettings.providers.openrouter,
+      saved?.providers?.openrouter as Partial<Record<string, unknown>> | undefined
+    )
   },
   search: {
     ...defaultSettings.search,

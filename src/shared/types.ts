@@ -1,4 +1,3 @@
-import { getPromptPreset } from './prompt-presets';
 import type { ThemeId } from './themes';
 
 export type ProviderKind = 'lmstudio' | 'openrouter';
@@ -9,7 +8,8 @@ export interface ChatModelOverride {
   model: string;
 }
 
-export interface CustomPromptPreset {
+/** User-saved system prompt preset for a provider profile. */
+export interface SavedPromptPreset {
   id: string;
   name: string;
   prompt: string;
@@ -21,11 +21,10 @@ export interface ProviderProfile {
   baseUrl: string;
   apiKey: string;
   model: string;
-  promptPresetId: string;
   systemPrompt: string;
-  /** When `promptPresetId` is `custom`, the saved preset being edited (drives the prompt textarea and list). */
-  activeCustomPresetId: string | null;
-  customPromptPresets: CustomPromptPreset[];
+  /** Selected preset row, or `null` when the prompt box is a draft not tied to a saved preset. */
+  activePromptPresetId: string | null;
+  promptPresets: SavedPromptPreset[];
   appName: string;
   appUrl: string;
 }
@@ -241,10 +240,9 @@ export const defaultSettings: AppSettings = {
       baseUrl: 'http://127.0.0.1:1234/v1',
       apiKey: 'lm-studio',
       model: '',
-      promptPresetId: 'general-coding',
-      systemPrompt: getPromptPreset('general-coding').prompt,
-      activeCustomPresetId: null,
-      customPromptPresets: [],
+      systemPrompt: '',
+      activePromptPresetId: null,
+      promptPresets: [],
       appName: 'OpenKiwi',
       appUrl: 'https://example.local'
     },
@@ -253,10 +251,9 @@ export const defaultSettings: AppSettings = {
       baseUrl: 'https://openrouter.ai/api/v1',
       apiKey: '',
       model: '',
-      promptPresetId: 'general-coding',
-      systemPrompt: getPromptPreset('general-coding').prompt,
-      activeCustomPresetId: null,
-      customPromptPresets: [],
+      systemPrompt: '',
+      activePromptPresetId: null,
+      promptPresets: [],
       appName: 'OpenKiwi',
       appUrl: 'https://example.local'
     }
