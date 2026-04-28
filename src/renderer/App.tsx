@@ -17,6 +17,7 @@ import {
   type ChatAttachment,
   type ChatMessage,
   type ChatModelOverride,
+  type ChatCompletionTokenUsage,
   type ChatTimelineEntry,
   type CommandResult,
   type ModelInfo,
@@ -106,6 +107,8 @@ export function App() {
   const [buffers, setBuffers] = useState<Record<string, FileBuffer>>({});
   const [activeFilePath, setActiveFilePath] = useState<string>();
   const [models, setModels] = useState<ModelInfo[]>([]);
+  /** Last reported token totals from an completed provider response (streaming include_usage). */
+  const [lastTokenUsage, setLastTokenUsage] = useState<ChatCompletionTokenUsage | null>(null);
   /** After at least one model-catalog fetch (success or fail); used so we show "Disconnected" instead of "Waiting" only once we know. */
   const [modelCatalogSettled, setModelCatalogSettled] = useState(false);
 
@@ -402,7 +405,7 @@ export function App() {
         status: 'streaming' as const
       }));
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning }) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, usage }) => {
       const snapshot = updateInFlightMessage(requestId, (m) => {
         const next: ChatMessage = { ...m, content, status: 'done' as const };
         if (reasoning !== undefined) next.reasoning = reasoning;
@@ -410,6 +413,9 @@ export function App() {
         return next;
       });
       if (snapshot) {
+        if (usage && activeChatIdRef.current === snapshot.chatId) {
+          setLastTokenUsage(usage);
+        }
         if (activeChatIdRef.current === snapshot.chatId) {
           setChatStreaming(false);
           setActiveRequestId(undefined);
@@ -712,6 +718,7 @@ export function App() {
     setChatTimeline([]);
     setChatInput('');
     setChatAttachments([]);
+    setLastTokenUsage(null);
     setChatStreaming(false);
     setActiveRequestId(undefined);
     setActiveChatId(undefined);
@@ -742,6 +749,7 @@ export function App() {
     setNewChatModelOverride(null);
     setChatInput('');
     setChatAttachments([]);
+    setLastTokenUsage(null);
     setChatStreaming(Boolean(inFlight));
     setActiveRequestId(inFlight?.requestId);
   };
@@ -930,6 +938,13 @@ export function App() {
   const providerConnected = Boolean(
     settings && openRouterReady && models.length > 0 && selectedProvider?.model
   );
+  /** Catalog row for context window size (respects per-chat provider override lists). */
+  const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
+  const resolvedContextLimit = (() => {
+    const id = effectiveHeaderModelId.trim();
+    if (!id) return 131072;
+    return modelCatalogForLimit.find((m) => m.id === id)?.contextLength ?? 131072;
+  })();
   const selectedProviderLabel = settings?.selectedProvider === 'openrouter' ? 'OpenRouter' : 'LM Studio';
   const sessionMode = settings?.ui.sessionMode ?? 'agent';
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
@@ -1352,8 +1367,11 @@ export function App() {
         >
           <ChatPanel
             attachments={chatAttachments}
+            chatMessages={chatMessages}
+            contextLimit={resolvedContextLimit}
             input={chatInput}
             isStreaming={chatStreaming}
+            lastTokenUsage={lastTokenUsage}
             sessionSubheading={chatSessionSubheading}
             timeline={chatTimeline}
             onAttachImages={addChatAttachments}

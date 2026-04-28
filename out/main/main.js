@@ -1011,6 +1011,13 @@ async function tryOpenMeteoWeatherSupplement(q) {
   lines.push("Source: Open-Meteo (open-meteo.com). Not a replacement for official alerts or forecasts.");
   return lines.join("\n");
 }
+function mapCompletionUsage(u) {
+  if (!u) return void 0;
+  const pt = u.prompt_tokens ?? 0;
+  const ct = u.completion_tokens ?? 0;
+  const tt = u.total_tokens ?? pt + ct;
+  return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
+}
 const normalizeBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
   if (kind !== "lmstudio") {
@@ -1172,6 +1179,7 @@ class ModelService {
         return;
       }
       const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
+      let lastRoundUsage;
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
         const stream = await client.chat.completions.create(
@@ -1180,7 +1188,8 @@ class ModelService {
             messages: apiMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : void 0,
             tool_choice: toolDefinitions.length > 0 ? "auto" : void 0,
-            stream: true
+            stream: true,
+            stream_options: { include_usage: true }
           },
           {
             signal: controller.signal
@@ -1190,8 +1199,15 @@ class ModelService {
         let assembledReasoning = "";
         const toolAcc = /* @__PURE__ */ new Map();
         let lastFinish = null;
+        let lastStreamUsage;
         for await (const chunk of stream) {
           this.assertNotStopped(requestId);
+          if (chunk.usage) {
+            const mapped = mapCompletionUsage(chunk.usage);
+            if (mapped) {
+              lastStreamUsage = mapped;
+            }
+          }
           const ch = chunk.choices[0];
           if (!ch) {
             continue;
@@ -1217,6 +1233,9 @@ class ModelService {
           }
         }
         this.assertNotStopped(requestId);
+        if (lastStreamUsage) {
+          lastRoundUsage = lastStreamUsage;
+        }
         const toolCallsFromStream = streamingToolAccToFunctionCalls(toolAcc);
         if (lastFinish === "tool_calls" && toolCallsFromStream.length === 0) {
           throw new Error("The model requested tools but the streamed tool payload was incomplete. Try again.");
@@ -1266,7 +1285,8 @@ class ModelService {
         const done2 = {
           requestId,
           content: normalizedContent,
-          reasoning: assembledReasoning.trim() || void 0
+          reasoning: assembledReasoning.trim() || void 0,
+          usage: lastStreamUsage
         };
         window.webContents.send("chat:done", done2);
         this.activeRequests.delete(requestId);
@@ -1280,7 +1300,8 @@ class ModelService {
       );
       const done = {
         requestId,
-        content: lastVisibleAssistantContent || `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`
+        content: lastVisibleAssistantContent || `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`,
+        usage: lastRoundUsage
       };
       window.webContents.send("chat:done", done);
       this.activeRequests.delete(requestId);
@@ -1296,14 +1317,21 @@ class ModelService {
     };
     try {
       const stream = await client.chat.completions.create(
-        { model, messages: apiMessages, stream: true },
+        { model, messages: apiMessages, stream: true, stream_options: { include_usage: true } },
         { signal: controller.signal }
       );
       let assembled = "";
       let assembledReasoning = "";
       let sawTool = false;
+      let lastStreamUsage;
       for await (const chunk of stream) {
         this.assertNotStopped(requestId);
+        if (chunk.usage) {
+          const mapped = mapCompletionUsage(chunk.usage);
+          if (mapped) {
+            lastStreamUsage = mapped;
+          }
+        }
         const ch = chunk.choices[0];
         if (ch?.finish_reason === "tool_calls") {
           sawTool = true;
@@ -1330,23 +1358,25 @@ class ModelService {
       if (sawTool) {
         finish({
           requestId,
-          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again."
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.",
+          usage: lastStreamUsage
         });
         return;
       }
       const talkNorm = normalizeAssistantContent(assembled);
       if (!talkNorm) {
-        finish({ requestId, content: "The model returned an empty reply. Try your message again." });
+        finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: lastStreamUsage });
         return;
       }
       const reasoning = assembledReasoning.trim() || void 0;
-      finish({ requestId, content: talkNorm, reasoning });
+      finish({ requestId, content: talkNorm, reasoning, usage: lastStreamUsage });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
       }
       const completion = await client.chat.completions.create({ model, messages: apiMessages }, { signal: controller.signal });
       this.assertNotStopped(requestId);
+      const fallbackUsage = mapCompletionUsage(completion.usage ?? void 0);
       const assistantMessage = completion.choices[0]?.message;
       if (!assistantMessage) {
         throw new Error("The model returned no message.");
@@ -1354,18 +1384,19 @@ class ModelService {
       if (assistantMessage.tool_calls?.length) {
         finish({
           requestId,
-          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again."
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.",
+          usage: fallbackUsage
         });
         return;
       }
       const talkContent = contentToString(assistantMessage.content);
       const talkNorm = normalizeAssistantContent(talkContent);
       if (!talkNorm) {
-        finish({ requestId, content: "The model returned an empty reply. Try your message again." });
+        finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: fallbackUsage });
         return;
       }
       const reasoning = extractModelReasoning(assistantMessage);
-      finish({ requestId, content: talkNorm, reasoning });
+      finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
     }
   }
   sendError(window, requestId, error) {

@@ -12,6 +12,7 @@ import { dialog, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import type {
   AppSettings,
   ChatActivity,
+  ChatCompletionTokenUsage,
   ChatMessage,
   ChatStreamDone,
   ChatStreamError,
@@ -20,6 +21,16 @@ import type {
   SessionMode
 } from '@shared/types';
 import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+
+function mapCompletionUsage(
+  u: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null | undefined
+): ChatCompletionTokenUsage | undefined {
+  if (!u) return undefined;
+  const pt = u.prompt_tokens ?? 0;
+  const ct = u.completion_tokens ?? 0;
+  const tt = u.total_tokens ?? pt + ct;
+  return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
+}
 import {
   isPresetThemeId,
   isThemeId,
@@ -275,6 +286,8 @@ export class ModelService {
 
       const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
 
+      let lastRoundUsage: ChatCompletionTokenUsage | undefined;
+
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
 
@@ -284,7 +297,8 @@ export class ModelService {
             messages: apiMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
             tool_choice: toolDefinitions.length > 0 ? 'auto' : undefined,
-            stream: true
+            stream: true,
+            stream_options: { include_usage: true }
           },
           {
             signal: controller.signal
@@ -295,9 +309,16 @@ export class ModelService {
         let assembledReasoning = '';
         const toolAcc: StreamingToolAcc = new Map();
         let lastFinish: ChatCompletionChunk.Choice['finish_reason'] = null;
+        let lastStreamUsage: ChatCompletionTokenUsage | undefined;
 
         for await (const chunk of stream) {
           this.assertNotStopped(requestId);
+          if (chunk.usage) {
+            const mapped = mapCompletionUsage(chunk.usage);
+            if (mapped) {
+              lastStreamUsage = mapped;
+            }
+          }
           const ch = chunk.choices[0];
           if (!ch) {
             continue;
@@ -324,6 +345,9 @@ export class ModelService {
         }
 
         this.assertNotStopped(requestId);
+        if (lastStreamUsage) {
+          lastRoundUsage = lastStreamUsage;
+        }
 
         const toolCallsFromStream = streamingToolAccToFunctionCalls(toolAcc);
         if (lastFinish === 'tool_calls' && toolCallsFromStream.length === 0) {
@@ -386,7 +410,8 @@ export class ModelService {
         const done: ChatStreamDone = {
           requestId,
           content: normalizedContent,
-          reasoning: assembledReasoning.trim() || undefined
+          reasoning: assembledReasoning.trim() || undefined,
+          usage: lastStreamUsage
         };
         window.webContents.send('chat:done', done);
         this.activeRequests.delete(requestId);
@@ -403,7 +428,8 @@ export class ModelService {
         requestId,
         content:
           lastVisibleAssistantContent ||
-          `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`
+          `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`,
+        usage: lastRoundUsage
       };
       window.webContents.send('chat:done', done);
       this.activeRequests.delete(requestId);
@@ -428,16 +454,23 @@ export class ModelService {
 
     try {
       const stream = await client.chat.completions.create(
-        { model, messages: apiMessages, stream: true },
+        { model, messages: apiMessages, stream: true, stream_options: { include_usage: true } },
         { signal: controller.signal }
       );
 
       let assembled = '';
       let assembledReasoning = '';
       let sawTool = false;
+      let lastStreamUsage: ChatCompletionTokenUsage | undefined;
 
       for await (const chunk of stream) {
         this.assertNotStopped(requestId);
+        if (chunk.usage) {
+          const mapped = mapCompletionUsage(chunk.usage);
+          if (mapped) {
+            lastStreamUsage = mapped;
+          }
+        }
         const ch = chunk.choices[0];
         if (ch?.finish_reason === 'tool_calls') {
           sawTool = true;
@@ -470,19 +503,20 @@ export class ModelService {
         finish({
           requestId,
           content:
-            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.'
+            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.',
+          usage: lastStreamUsage
         });
         return;
       }
 
       const talkNorm = normalizeAssistantContent(assembled);
       if (!talkNorm) {
-        finish({ requestId, content: 'The model returned an empty reply. Try your message again.' });
+        finish({ requestId, content: 'The model returned an empty reply. Try your message again.', usage: lastStreamUsage });
         return;
       }
 
       const reasoning = assembledReasoning.trim() || undefined;
-      finish({ requestId, content: talkNorm, reasoning });
+      finish({ requestId, content: talkNorm, reasoning, usage: lastStreamUsage });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw err;
@@ -490,6 +524,7 @@ export class ModelService {
 
       const completion = await client.chat.completions.create({ model, messages: apiMessages }, { signal: controller.signal });
       this.assertNotStopped(requestId);
+      const fallbackUsage = mapCompletionUsage(completion.usage ?? undefined);
       const assistantMessage = completion.choices[0]?.message;
       if (!assistantMessage) {
         throw new Error('The model returned no message.');
@@ -499,7 +534,8 @@ export class ModelService {
         finish({
           requestId,
           content:
-            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.'
+            'In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.',
+          usage: fallbackUsage
         });
         return;
       }
@@ -507,12 +543,12 @@ export class ModelService {
       const talkContent = contentToString(assistantMessage.content);
       const talkNorm = normalizeAssistantContent(talkContent);
       if (!talkNorm) {
-        finish({ requestId, content: 'The model returned an empty reply. Try your message again.' });
+        finish({ requestId, content: 'The model returned an empty reply. Try your message again.', usage: fallbackUsage });
         return;
       }
 
       const reasoning = extractModelReasoning(assistantMessage);
-      finish({ requestId, content: talkNorm, reasoning });
+      finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
     }
   }
 

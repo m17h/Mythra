@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import type { ChatActivity, ChatAttachment, ChatTimelineEntry, SessionMode } from '@shared/types';
+import type {
+  ChatActivity,
+  ChatAttachment,
+  ChatCompletionTokenUsage,
+  ChatMessage,
+  ChatTimelineEntry,
+  SessionMode
+} from '@shared/types';
+import {
+  DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS,
+  roughTokensForDraft,
+  roughTokensFromMessages
+} from '@renderer/lib/estimate-context-tokens';
 import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
 import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
@@ -10,6 +23,154 @@ function getCopyableMessageText(content: string): string {
     .replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, '')
     .replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, '')
     .trim();
+}
+
+function formatTokensShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
+function formatTokensExact(n: number): string {
+  return Math.max(0, Math.round(n)).toLocaleString();
+}
+
+function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
+  const safeLimit = Math.max(limit, 1);
+  const usedRounded = Math.max(0, Math.round(used));
+  const available = Math.max(0, safeLimit - usedRounded);
+  const pct = Math.min(100, Math.max(0, (usedRounded / safeLimit) * 100));
+  const r = 9;
+  const c = 2 * Math.PI * r;
+  const dashOffset = c * (1 - pct / 100);
+  const ariaSummary = `${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
+  const warn = pct >= 88;
+  const tooltipId = useId();
+
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [anchor, setAnchor] = useState({ top: 0, left: 0 });
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current != null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const updateAnchor = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+
+  const handleOpen = useCallback(() => {
+    clearCloseTimer();
+    updateAnchor();
+    setOpen(true);
+  }, [clearCloseTimer, updateAnchor]);
+
+  const handleScheduleClose = useCallback(() => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => setOpen(false), 180);
+  }, [clearCloseTimer]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onReposition = () => updateAnchor();
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [open, updateAnchor]);
+
+  useEffect(() => {
+    return () => clearCloseTimer();
+  }, [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [open]);
+
+  const popover =
+    open &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <div
+        className="chat-context-meter__popup"
+        id={tooltipId}
+        onMouseEnter={handleOpen}
+        onMouseLeave={handleScheduleClose}
+        role="tooltip"
+        style={{
+          left: anchor.left,
+          top: anchor.top - 8,
+          transform: 'translate(-50%, -100%)'
+        }}
+      >
+        <div className="chat-context-meter__popup-inner">
+          <div className="chat-context-meter__row">
+            <span className="chat-context-meter__label">Used</span>
+            <span className="chat-context-meter__value">{formatTokensExact(usedRounded)}</span>
+          </div>
+          <div className="chat-context-meter__row">
+            <span className="chat-context-meter__label">Available</span>
+            <span className="chat-context-meter__value">{formatTokensExact(available)}</span>
+          </div>
+          <div className="chat-context-meter__meta">
+            {pct.toFixed(1)}% · {formatTokensShort(safeLimit)} context window
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        aria-describedby={open ? tooltipId : undefined}
+        aria-expanded={open}
+        aria-label={ariaSummary}
+        className={`chat-context-meter${warn ? ' chat-context-meter--warn' : ''}`}
+        onBlur={handleScheduleClose}
+        onFocus={handleOpen}
+        onMouseEnter={handleOpen}
+        onMouseLeave={handleScheduleClose}
+        type="button"
+      >
+        <svg aria-hidden height="22" viewBox="0 0 22 22" width="22">
+          <circle className="chat-context-meter__track" cx="11" cy="11" fill="none" r={r} strokeWidth="2" />
+          <circle
+            className="chat-context-meter__fill"
+            cx="11"
+            cy="11"
+            fill="none"
+            r={r}
+            strokeDasharray={c}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            strokeWidth="2"
+            transform="rotate(-90 11 11)"
+          />
+        </svg>
+      </button>
+      {popover}
+    </>
+  );
 }
 
 function CopyMessageIcon({ copied }: { copied: boolean }) {
@@ -62,6 +223,12 @@ interface ChatPanelProps {
   onRemoveAttachment: (id: string) => void;
   onSend: () => void;
   onStop: () => void;
+  /** Messages in the active thread (for rough context estimate). */
+  chatMessages: ChatMessage[];
+  /** Max context from model catalog, or a default when unknown. */
+  contextLimit: number;
+  /** Last API usage for this thread, if the provider reported it. */
+  lastTokenUsage: ChatCompletionTokenUsage | null;
   /** Toggle Chat ↔ Agent; persisted with settings. */
   onSessionModeToggle: () => void;
   /** True while settings are not loaded (toggle no-ops). */
@@ -247,6 +414,9 @@ export function ChatPanel({
   onRemoveAttachment,
   onSend,
   onStop,
+  chatMessages,
+  contextLimit,
+  lastTokenUsage,
   onSessionModeToggle,
   sessionModeToggleDisabled = false
 }: ChatPanelProps) {
@@ -255,6 +425,15 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  const contextUsedEstimate = useMemo(() => {
+    const threadRough =
+      roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS;
+    const draftRough = roughTokensForDraft(input, attachments);
+    const rough = threadRough + draftRough;
+    if (lastTokenUsage == null) return rough;
+    return Math.max(rough, lastTokenUsage.totalTokens);
+  }, [attachments, chatMessages, input, lastTokenUsage]);
   /** User is within this many px of the bottom, or we just forced scroll (e.g. new content). */
   const userNearBottomRef = useRef(true);
 
@@ -594,6 +773,7 @@ export function ChatPanel({
             rows={1}
             value={input}
           />
+          <ChatContextMeter limit={contextLimit} used={contextUsedEstimate} />
           {isStreaming ? (
             <button className="chat-compose__stop" onClick={onStop} type="button" title="Stop">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/></svg>

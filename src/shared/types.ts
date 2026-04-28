@@ -134,11 +134,20 @@ export interface ChatStreamDelta {
   reasoningDelta?: string;
 }
 
+/** When the provider returns usage (OpenAI-compatible stream with stream_options.include_usage). */
+export interface ChatCompletionTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface ChatStreamDone {
   requestId: string;
   content: string;
   /** Final model reasoning, if the provider sent any (e.g. non-streaming message.reasoning). */
   reasoning?: string;
+  /** Present when the upstream API reported token usage for this completion. */
+  usage?: ChatCompletionTokenUsage;
 }
 
 export interface ChatStreamError {

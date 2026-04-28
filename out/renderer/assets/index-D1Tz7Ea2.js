@@ -20458,6 +20458,142 @@ const featureBundle = {
 };
 const motion = /* @__PURE__ */ createMotionProxy(featureBundle, createDomVisualElement);
 const openkiwiLogo = "" + new URL("openkiwi-B7TdZd16.png", import.meta.url).href;
+function applyChatModelOverride(settings, override) {
+  if (!override?.model?.trim()) {
+    return settings;
+  }
+  const { provider, model } = override;
+  return {
+    ...settings,
+    selectedProvider: provider,
+    providers: {
+      ...settings.providers,
+      [provider]: {
+        ...settings.providers[provider],
+        model: model.trim()
+      }
+    }
+  };
+}
+function formatOverrideLabel(override, pathLabel2) {
+  const prov = override.provider === "openrouter" ? "OpenRouter" : "LM Studio";
+  return `${prov}: ${pathLabel2(override.model)}`;
+}
+var reactDomExports = requireReactDom();
+function AppSelect({
+  options,
+  value,
+  onChange,
+  className = "",
+  portalDropdown = false
+}) {
+  const [open, setOpen] = reactExports.useState(false);
+  const [dropdownPos, setDropdownPos] = reactExports.useState(null);
+  const rootRef = reactExports.useRef(null);
+  const menuRef = reactExports.useRef(null);
+  const activeOption = reactExports.useMemo(() => options.find((option) => option.value === value) ?? options[0], [options, value]);
+  reactExports.useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) {
+        if (portalDropdown && menuRef.current?.contains(event.target)) return;
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [portalDropdown]);
+  reactExports.useLayoutEffect(() => {
+    if (!open || !portalDropdown || !rootRef.current) {
+      setDropdownPos(null);
+      return;
+    }
+    const update = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setDropdownPos({ top: rect.bottom + 5, left: rect.left, width: rect.width });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, portalDropdown]);
+  const menu = open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: `app-select__menu ${portalDropdown ? "app-select__menu--portal" : ""}`,
+      ref: menuRef,
+      role: "listbox",
+      style: portalDropdown && dropdownPos ? { position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width } : void 0,
+      children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          "aria-selected": option.value === value,
+          className: `app-select__option ${option.value === value ? "is-active" : ""}`,
+          onClick: () => {
+            onChange(option.value);
+            setOpen(false);
+          },
+          role: "option",
+          type: "button",
+          children: option.label
+        },
+        option.value
+      ))
+    }
+  ) : null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `app-select ${open ? "is-open" : ""} ${className}`.trim(), ref: rootRef, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        "aria-expanded": open,
+        className: "app-select__button",
+        onClick: () => setOpen((current) => !current),
+        onKeyDown: (event) => {
+          if (event.key === "Escape") {
+            setOpen(false);
+          }
+        },
+        type: "button",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: activeOption?.label ?? value }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { "aria-hidden": true, width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 5.5L7 8.5l3-3", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }) })
+        ]
+      }
+    ),
+    portalDropdown ? reactDomExports.createPortal(menu, document.body) : menu
+  ] });
+}
+function roughTokensFromText(text2) {
+  if (!text2.length) return 0;
+  return Math.max(1, Math.ceil(text2.length / 4));
+}
+function attachmentHeuristicTokens(att) {
+  const len = att.dataUrl?.length ?? 0;
+  if (len === 0) return 0;
+  return Math.ceil(len / 96);
+}
+function roughTokensFromMessages(messages) {
+  let n = 0;
+  for (const m of messages) {
+    n += roughTokensFromText(m.content);
+    if (m.reasoning?.length) n += roughTokensFromText(m.reasoning);
+    for (const a of m.attachments ?? []) {
+      n += attachmentHeuristicTokens(a);
+    }
+  }
+  return n;
+}
+function roughTokensForDraft(input, attachments) {
+  let n = roughTokensFromText(input);
+  for (const a of attachments) n += attachmentHeuristicTokens(a);
+  return n;
+}
+const DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS = 8200;
+const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
+const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
 function ok$1() {
 }
 function unreachable() {
@@ -33029,6 +33165,319 @@ const markdownComponents = {
 function ChatMarkdown({ text: text2 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-markdown", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { components: markdownComponents, remarkPlugins: [remarkGfm], children: text2 }) });
 }
+function SessionModeMessageEmbed({ sessionMode, onSessionModeToggle, disabled }) {
+  const isChat = sessionMode === "talk";
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "aside",
+    {
+      className: "message-embed message-embed--session-mode",
+      "aria-label": "Change session mode",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed__row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Session mode" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle message-embed__toggle ${disabled ? "is-disabled" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: `chat-panel__mode-option ${isChat ? "is-active" : ""}`,
+              disabled,
+              onClick: () => {
+                if (!isChat) onSessionModeToggle();
+              },
+              title: "Chat mode (no tools)",
+              type: "button",
+              children: "Chat"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: `chat-panel__mode-option ${!isChat ? "is-active" : ""}`,
+              disabled,
+              onClick: () => {
+                if (isChat) onSessionModeToggle();
+              },
+              title: "Agent mode (tools & workspace)",
+              type: "button",
+              children: "Agent"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: "chat-panel__mode-slider",
+              style: { transform: isChat ? "translateX(0)" : "translateX(100%)" }
+            }
+          )
+        ] })
+      ] })
+    }
+  );
+}
+function WebSearchMessageEmbed({ webSearch, onWebSearchChange, disabled }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "aside",
+    {
+      className: "message-embed message-embed--web-search",
+      "aria-label": "Web search for model",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed__row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Web search" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "label",
+          {
+            className: `chat-panel__web-toggle message-embed__toggle ${disabled ? "is-disabled" : ""} ${webSearch ? "is-on" : ""}`,
+            title: "Allow the model to call web_search in Chat or Agent",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  checked: webSearch,
+                  disabled,
+                  onChange: (e) => onWebSearchChange(e.target.checked),
+                  type: "checkbox"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
+            ]
+          }
+        )
+      ] })
+    }
+  );
+}
+function parseAssistantEmbeds(text2) {
+  if (!text2.includes(OPENKIWI_SESSION_MODE_TOGGLE) && !text2.includes(OPENKIWI_WEB_SEARCH_TOGGLE)) {
+    return [{ type: "md", text: text2 }];
+  }
+  const out = [];
+  let rest = text2;
+  while (rest.length > 0) {
+    const iSession = rest.indexOf(OPENKIWI_SESSION_MODE_TOGGLE);
+    const iWeb = rest.indexOf(OPENKIWI_WEB_SEARCH_TOGGLE);
+    const next = iSession < 0 && iWeb < 0 ? null : iSession < 0 ? { i: iWeb, kind: "web", len: OPENKIWI_WEB_SEARCH_TOGGLE.length } : iWeb < 0 ? { i: iSession, kind: "session", len: OPENKIWI_SESSION_MODE_TOGGLE.length } : iSession <= iWeb ? { i: iSession, kind: "session", len: OPENKIWI_SESSION_MODE_TOGGLE.length } : { i: iWeb, kind: "web", len: OPENKIWI_WEB_SEARCH_TOGGLE.length };
+    if (!next) {
+      out.push({ type: "md", text: rest });
+      break;
+    }
+    if (next.i > 0) {
+      out.push({ type: "md", text: rest.slice(0, next.i) });
+    }
+    out.push({ type: next.kind });
+    rest = rest.slice(next.i + next.len);
+  }
+  return out;
+}
+function AssistantMessageContent({
+  text: text2,
+  sessionMode,
+  onSessionModeToggle,
+  sessionModeToggleDisabled = false,
+  webSearch,
+  onWebSearchChange,
+  webSearchDisabled = false
+}) {
+  const segments = parseAssistantEmbeds(text2);
+  if (segments.length === 1 && segments[0].type === "md") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: segments[0].text });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: segments.map((seg, i) => {
+    if (seg.type === "md") {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Fragment, { children: seg.text ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: seg.text }) : null }, i);
+    }
+    if (seg.type === "session") {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        SessionModeMessageEmbed,
+        {
+          disabled: sessionModeToggleDisabled,
+          onSessionModeToggle,
+          sessionMode
+        },
+        i
+      );
+    }
+    if (webSearch) {
+      return null;
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      WebSearchMessageEmbed,
+      {
+        disabled: webSearchDisabled,
+        onWebSearchChange,
+        webSearch
+      },
+      i
+    );
+  }) });
+}
+function getCopyableMessageText(content2) {
+  return content2.replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, "").replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, "").trim();
+}
+function formatTokensShort(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+function formatTokensExact(n) {
+  return Math.max(0, Math.round(n)).toLocaleString();
+}
+function ChatContextMeter({ used, limit }) {
+  const safeLimit = Math.max(limit, 1);
+  const usedRounded = Math.max(0, Math.round(used));
+  const available = Math.max(0, safeLimit - usedRounded);
+  const pct = Math.min(100, Math.max(0, usedRounded / safeLimit * 100));
+  const r = 9;
+  const c = 2 * Math.PI * r;
+  const dashOffset = c * (1 - pct / 100);
+  const ariaSummary = `${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
+  const warn = pct >= 88;
+  const tooltipId = reactExports.useId();
+  const triggerRef = reactExports.useRef(null);
+  const [open, setOpen] = reactExports.useState(false);
+  const closeTimerRef = reactExports.useRef(null);
+  const [anchor, setAnchor] = reactExports.useState({ top: 0, left: 0 });
+  const clearCloseTimer = reactExports.useCallback(() => {
+    if (closeTimerRef.current != null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+  const updateAnchor = reactExports.useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+  const handleOpen = reactExports.useCallback(() => {
+    clearCloseTimer();
+    updateAnchor();
+    setOpen(true);
+  }, [clearCloseTimer, updateAnchor]);
+  const handleScheduleClose = reactExports.useCallback(() => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => setOpen(false), 180);
+  }, [clearCloseTimer]);
+  reactExports.useLayoutEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onReposition = () => updateAnchor();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [open, updateAnchor]);
+  reactExports.useEffect(() => {
+    return () => clearCloseTimer();
+  }, [clearCloseTimer]);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [open]);
+  const popover = open && typeof document !== "undefined" && reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "chat-context-meter__popup",
+        id: tooltipId,
+        onMouseEnter: handleOpen,
+        onMouseLeave: handleScheduleClose,
+        role: "tooltip",
+        style: {
+          left: anchor.left,
+          top: anchor.top - 8,
+          transform: "translate(-50%, -100%)"
+        },
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__popup-inner", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__label", children: "Used" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__value", children: formatTokensExact(usedRounded) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__label", children: "Available" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__value", children: formatTokensExact(available) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__meta", children: [
+            pct.toFixed(1),
+            "% · ",
+            formatTokensShort(safeLimit),
+            " context window"
+          ] })
+        ] })
+      }
+    ),
+    document.body
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        ref: triggerRef,
+        "aria-describedby": open ? tooltipId : void 0,
+        "aria-expanded": open,
+        "aria-label": ariaSummary,
+        className: `chat-context-meter${warn ? " chat-context-meter--warn" : ""}`,
+        onBlur: handleScheduleClose,
+        onFocus: handleOpen,
+        onMouseEnter: handleOpen,
+        onMouseLeave: handleScheduleClose,
+        type: "button",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { "aria-hidden": true, height: "22", viewBox: "0 0 22 22", width: "22", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { className: "chat-context-meter__track", cx: "11", cy: "11", fill: "none", r, strokeWidth: "2" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "circle",
+            {
+              className: "chat-context-meter__fill",
+              cx: "11",
+              cy: "11",
+              fill: "none",
+              r,
+              strokeDasharray: c,
+              strokeDashoffset: dashOffset,
+              strokeLinecap: "round",
+              strokeWidth: "2",
+              transform: "rotate(-90 11 11)"
+            }
+          )
+        ] })
+      }
+    ),
+    popover
+  ] });
+}
+function CopyMessageIcon({ copied }) {
+  if (copied) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "path",
+      {
+        d: "M20 6L9 17l-5-5",
+        stroke: "currentColor",
+        strokeWidth: "2",
+        strokeLinecap: "round",
+        strokeLinejoin: "round"
+      }
+    ) });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", stroke: "currentColor", strokeWidth: "2" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "path",
+      {
+        d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
+        stroke: "currentColor",
+        strokeWidth: "2",
+        strokeLinecap: "round",
+        strokeLinejoin: "round"
+      }
+    )
+  ] });
+}
 const activityLabelMap = {
   info: "Status",
   reasoning: "Thinking",
@@ -33076,7 +33525,7 @@ function buildRenderChunks(timeline) {
   return out;
 }
 const activityDetailsStartOpen = (kind) => kind === "error" || kind === "stopped" || kind === "warning";
-function CollapsibleActivityBlock({ activity }) {
+function CollapsibleActivityBlock({ activity, onDetailsToggle }) {
   const [open, setOpen] = reactExports.useState(() => activityDetailsStartOpen(activity.kind));
   const label = activityLabelMap[activity.kind];
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -33090,7 +33539,10 @@ function CollapsibleActivityBlock({ activity }) {
         "details",
         {
           className: `chat-activity chat-activity--collapsible chat-activity--${activity.kind}`,
-          onToggle: (e) => setOpen(e.currentTarget.open),
+          onToggle: (e) => {
+            setOpen(e.currentTarget.open);
+            onDetailsToggle?.();
+          },
           open,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "chat-activity__summary", children: label }),
@@ -33101,7 +33553,7 @@ function CollapsibleActivityBlock({ activity }) {
     }
   );
 }
-function ToolActivityGroup({ items }) {
+function ToolActivityGroup({ items, onDetailsToggle }) {
   const [open, setOpen] = reactExports.useState(false);
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     motion.div,
@@ -33114,7 +33566,10 @@ function ToolActivityGroup({ items }) {
         "details",
         {
           className: "chat-activity chat-activity--collapsible chat-activity--grouped-tools",
-          onToggle: (e) => setOpen(e.currentTarget.open),
+          onToggle: (e) => {
+            setOpen(e.currentTarget.open);
+            onDetailsToggle?.();
+          },
           open,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("summary", { className: "chat-activity__summary", children: [
@@ -33139,6 +33594,37 @@ function ToolActivityGroup({ items }) {
     }
   );
 }
+function ThinkingBlock({ reasoning }) {
+  const [open, setOpen] = reactExports.useState(false);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thinking ${open ? "is-open" : ""}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: "chat-thinking__summary",
+        onClick: () => {
+          setOpen((v2) => !v2);
+        },
+        type: "button",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__chevron", "aria-hidden": true, children: "▶" }),
+          "Thinking"
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        initial: { height: 0, opacity: 0 },
+        animate: { height: "auto", opacity: 1 },
+        exit: { height: 0, opacity: 0 },
+        transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+        style: { overflow: "hidden" },
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "chat-thinking__body", children: reasoning })
+      },
+      "thinking-body"
+    ) })
+  ] });
+}
 function ChatPanel({
   timeline,
   input,
@@ -33147,6 +33633,7 @@ function ChatPanel({
   selectedProviderLabel,
   selectedModel,
   sessionMode,
+  modelCatalogSettled,
   providerConnected,
   isStreaming,
   webSearch,
@@ -33156,15 +33643,116 @@ function ChatPanel({
   onAttachImages,
   onRemoveAttachment,
   onSend,
-  onStop
+  onStop,
+  chatMessages,
+  contextLimit,
+  lastTokenUsage,
+  onSessionModeToggle,
+  sessionModeToggleDisabled = false
 }) {
   const scrollRef = reactExports.useRef(null);
+  const innerRef = reactExports.useRef(null);
   const textareaRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
+  const copyToastTimerRef = reactExports.useRef(null);
+  const [copiedMessageId, setCopiedMessageId] = reactExports.useState(null);
+  const contextUsedEstimate = reactExports.useMemo(() => {
+    const threadRough = roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS;
+    const draftRough = roughTokensForDraft(input, attachments);
+    const rough = threadRough + draftRough;
+    if (lastTokenUsage == null) return rough;
+    return Math.max(rough, lastTokenUsage.totalTokens);
+  }, [attachments, chatMessages, input, lastTokenUsage]);
+  const userNearBottomRef = reactExports.useRef(true);
+  const clampAndMaybeStickToBottom = reactExports.useCallback(() => {
     const node2 = scrollRef.current;
     if (!node2) return;
-    node2.scrollTop = node2.scrollHeight;
-  }, [timeline]);
+    const max = Math.max(0, node2.scrollHeight - node2.clientHeight);
+    if (node2.scrollTop > max) {
+      node2.scrollTop = max;
+    }
+    if (userNearBottomRef.current) {
+      node2.scrollTop = node2.scrollHeight;
+    }
+  }, []);
+  const afterCollapsibleLayout = reactExports.useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        clampAndMaybeStickToBottom();
+      });
+    });
+  }, [clampAndMaybeStickToBottom]);
+  const handleScroll = reactExports.useCallback(() => {
+    const n = scrollRef.current;
+    if (!n) return;
+    const nearBottom = n.scrollHeight - n.clientHeight - n.scrollTop < 120;
+    userNearBottomRef.current = nearBottom;
+  }, []);
+  const handleCopyMessage = reactExports.useCallback(async (messageId, rawContent) => {
+    const text2 = getCopyableMessageText(rawContent);
+    if (!text2) return;
+    try {
+      await navigator.clipboard.writeText(text2);
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+      setCopiedMessageId(messageId);
+      copyToastTimerRef.current = setTimeout(() => {
+        setCopiedMessageId((cur) => cur === messageId ? null : cur);
+        copyToastTimerRef.current = null;
+      }, 2e3);
+    } catch {
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    };
+  }, []);
+  reactExports.useLayoutEffect(() => {
+    const node2 = scrollRef.current;
+    if (!node2) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const n = scrollRef.current;
+        if (!n) return;
+        n.scrollTop = n.scrollHeight;
+        userNearBottomRef.current = true;
+      });
+    });
+  }, [timeline, isStreaming]);
+  reactExports.useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+    let raf = 0;
+    let debounce;
+    const scheduleClamp = () => {
+      if (isStreaming) {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          clampAndMaybeStickToBottom();
+        });
+        return;
+      }
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(
+        () => {
+          debounce = void 0;
+          requestAnimationFrame(() => {
+            clampAndMaybeStickToBottom();
+          });
+        },
+        100
+      );
+    };
+    const ro = new ResizeObserver(() => {
+      scheduleClamp();
+    });
+    ro.observe(inner);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      if (debounce) clearTimeout(debounce);
+    };
+  }, [clampAndMaybeStickToBottom, isStreaming, timeline.length]);
   const autoResize = reactExports.useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -33175,12 +33763,48 @@ function ChatPanel({
     autoResize();
   }, [input, autoResize]);
   const isTalk = sessionMode === "talk";
+  const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
+  const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "chat-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-left", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-titles", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "chat-panel__title", children: isTalk ? "Chat" : "Agent" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle ${sessionModeToggleDisabled ? "is-disabled" : ""}`, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `chat-panel__mode-option ${isTalk ? "is-active" : ""}`,
+                disabled: sessionModeToggleDisabled,
+                onClick: () => {
+                  if (!isTalk) onSessionModeToggle();
+                },
+                title: "Chat mode (no tools)",
+                type: "button",
+                children: "Chat"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `chat-panel__mode-option ${!isTalk ? "is-active" : ""}`,
+                disabled: sessionModeToggleDisabled,
+                onClick: () => {
+                  if (isTalk) onSessionModeToggle();
+                },
+                title: "Agent mode (tools & workspace)",
+                type: "button",
+                children: "Agent"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "span",
+              {
+                className: "chat-panel__mode-slider",
+                style: { transform: isTalk ? "translateX(0)" : "translateX(100%)" }
+              }
+            )
+          ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__model", children: selectedModel || "No model selected" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__session", title: sessionSubheading, children: sessionSubheading })
@@ -33190,7 +33814,7 @@ function ChatPanel({
           "label",
           {
             className: `chat-panel__web-toggle ${webSearchDisabled ? "is-disabled" : ""} ${webSearch ? "is-on" : ""}`,
-            title: "Allow the model to call web_search (DuckDuckGo) in Talk or Agent",
+            title: "Allow the model to call web_search in Chat or Agent",
             children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "input",
@@ -33206,27 +33830,40 @@ function ChatPanel({
             ]
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__status ${isStreaming || providerConnected ? "is-live" : ""}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__status-dot" }),
-          isStreaming ? "Working" : providerConnected ? "Connected" : "Waiting"
-        ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: ["chat-panel__status", statusModifierClass].filter(Boolean).join(" "),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__status-dot" }),
+              statusLabel
+            ]
+          }
+        )
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll", ref: scrollRef, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll", onScroll: handleScroll, ref: scrollRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner", ref: innerRef, children: [
       timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
         ] }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isTalk ? "Start a conversation" : "Ready to build" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Talk mode. Ask anything or switch to Agent for tools and file access." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect a provider in Settings, then click Test + Refresh to get started." })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
       ] }) : null,
       renderChunks.map((chunk) => {
         if (chunk.type === "activity-group") {
-          return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items }, chunk.id);
+          return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
         }
         if (chunk.type === "activity-solo") {
-          return /* @__PURE__ */ jsxRuntimeExports.jsx(CollapsibleActivityBlock, { activity: chunk.entry.activity }, chunk.entry.id);
+          return /* @__PURE__ */ jsxRuntimeExports.jsx(
+            CollapsibleActivityBlock,
+            {
+              activity: chunk.entry.activity,
+              onDetailsToggle: afterCollapsibleLayout
+            },
+            chunk.entry.id
+          );
         }
         const { entry } = chunk;
         const { message } = entry;
@@ -33241,22 +33878,48 @@ function ChatPanel({
             initial: { opacity: 0, y: 8 },
             transition: { duration: 0.22, ease: "easeOut" },
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("header", { children: message.role === "user" ? "You" : "Assistant" }),
-              message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "chat-thinking", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { children: "Thinking" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "chat-thinking__body", children: message.reasoning.trim() })
-              ] }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : "Assistant" }),
+                getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
+                    "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
+                    title: copiedMessageId === entry.id ? "Copied" : "Copy",
+                    type: "button",
+                    onClick: () => void handleCopyMessage(entry.id, message.content),
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
+                  }
+                ) : null
+              ] }),
+              message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
               message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("figure", { className: "chat-attachment", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("figcaption", { children: att.name })
               ] }, att.id)) }) : null,
-              message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: message.content }) }) : null
+              message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                AssistantMessageContent,
+                {
+                  onSessionModeToggle,
+                  onWebSearchChange,
+                  sessionMode,
+                  sessionModeToggleDisabled,
+                  text: message.content,
+                  webSearch,
+                  webSearchDisabled
+                }
+              ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+                ChatMarkdown,
+                {
+                  text: message.content.replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, "").replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, "")
+                }
+              ) }) : null
             ]
           },
           entry.id
         );
       })
-    ] }),
+    ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose", children: [
       attachments.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "composer-attachments", children: attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "composer-attachment", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
@@ -33291,7 +33954,9 @@ function ChatPanel({
             onKeyDown: (e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                onSend();
+                if (!isStreaming) {
+                  onSend();
+                }
               }
             },
             placeholder: "Type a message...",
@@ -33299,6 +33964,7 @@ function ChatPanel({
             value: input
           }
         ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ChatContextMeter, { limit: contextLimit, used: contextUsedEstimate }),
         isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
@@ -33324,6 +33990,11 @@ function CommandDeck({
   onKill
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "command-deck", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "command-deck__lede", children: [
+      "Terminal for your ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "open workspace folder" }),
+      " (build, git, scripts)—not browser DevTools. Output streams below."
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-deck__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-kicker", children: "Command Deck" }),
@@ -33355,6 +34026,235 @@ function CommandDeck({
       )
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "command-log", children: logs || "No commands executed yet.\n" })
+  ] });
+}
+const MODEL_HOVER_TOOLTIP_MS = 500;
+const DROPDOWN_EXIT_MS = 150;
+function sortModelsByFavorites(models, favoriteIds) {
+  const fav = new Set(favoriteIds);
+  return [...models].sort((a, b) => {
+    const aF = fav.has(a.id) ? 0 : 1;
+    const bF = fav.has(b.id) ? 0 : 1;
+    if (aF !== bF) return aF - bF;
+    return a.id.localeCompare(b.id);
+  });
+}
+function ModelSearch({
+  models,
+  value,
+  favoriteIds = [],
+  onChange,
+  onToggleFavorite,
+  portalDropdown = false
+}) {
+  const [query, setQuery] = reactExports.useState("");
+  const [open, setOpen] = reactExports.useState(false);
+  const [mounted, setMounted] = reactExports.useState(false);
+  const [animState, setAnimState] = reactExports.useState("closed");
+  const [hoverTooltip, setHoverTooltip] = reactExports.useState(null);
+  const [dropdownPos, setDropdownPos] = reactExports.useState(null);
+  const ref = reactExports.useRef(null);
+  const inputRef = reactExports.useRef(null);
+  const dropdownRef = reactExports.useRef(null);
+  const tipTimerRef = reactExports.useRef(null);
+  const exitTimerRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (open) {
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setMounted(true);
+      setAnimState("entering");
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setAnimState("open"));
+      });
+    } else if (mounted) {
+      setAnimState("exiting");
+      exitTimerRef.current = setTimeout(() => {
+        exitTimerRef.current = null;
+        setMounted(false);
+        setAnimState("closed");
+      }, DROPDOWN_EXIT_MS);
+    }
+    return () => {
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [open]);
+  const clearTipTimer = reactExports.useCallback(() => {
+    if (tipTimerRef.current) {
+      clearTimeout(tipTimerRef.current);
+      tipTimerRef.current = null;
+    }
+  }, []);
+  const hideHoverTooltip = reactExports.useCallback(() => {
+    clearTipTimer();
+    setHoverTooltip(null);
+  }, [clearTipTimer]);
+  const scheduleHoverTooltip = reactExports.useCallback(
+    (el, fullId) => {
+      clearTipTimer();
+      tipTimerRef.current = setTimeout(() => {
+        tipTimerRef.current = null;
+        const r = el.getBoundingClientRect();
+        const margin = 8;
+        const estW = 360;
+        let left = r.right + margin;
+        let top = r.top;
+        if (left + estW > window.innerWidth - margin) {
+          left = Math.max(margin, r.left);
+          top = r.bottom + margin;
+        }
+        setHoverTooltip({ fullId, left, top });
+      }, MODEL_HOVER_TOOLTIP_MS);
+    },
+    [clearTipTimer]
+  );
+  reactExports.useEffect(() => {
+    return () => clearTipTimer();
+  }, [clearTipTimer]);
+  reactExports.useEffect(() => {
+    if (!open) hideHoverTooltip();
+  }, [open, hideHoverTooltip]);
+  reactExports.useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        if (portalDropdown && dropdownRef.current?.contains(e.target)) return;
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [portalDropdown]);
+  reactExports.useLayoutEffect(() => {
+    if (!mounted || !portalDropdown || !inputRef.current) {
+      setDropdownPos(null);
+      return;
+    }
+    const rect = inputRef.current.getBoundingClientRect();
+    setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+  }, [mounted, portalDropdown]);
+  const baseList = sortModelsByFavorites(
+    query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models,
+    favoriteIds
+  );
+  const filtered = baseList;
+  const displayValue = value || "";
+  const isPortalAnimated = portalDropdown && (animState === "entering" || animState === "open" || animState === "exiting");
+  const portalAnimClass = animState === "open" ? "is-open" : animState === "exiting" ? "is-exiting" : "";
+  const showDropdown = portalDropdown ? mounted : open;
+  const dropdownContent = showDropdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: dropdownRef,
+      className: `model-search__dropdown ${portalDropdown ? `model-search__dropdown--portal ${portalAnimClass}` : ""}`,
+      style: isPortalAnimated && dropdownPos ? { position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width } : portalDropdown ? { position: "fixed", visibility: "hidden" } : void 0,
+      onScroll: hideHoverTooltip,
+      children: [
+        filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__empty", children: [
+          "No models match “",
+          query,
+          "”"
+        ] }) : filtered.slice(0, 50).map((m) => {
+          const isFav = favoriteIds.includes(m.id);
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              className: `model-search__row ${m.id === value ? "is-active" : ""}`,
+              children: [
+                onToggleFavorite && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "model-search__star",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onToggleFavorite(m.id);
+                    },
+                    type: "button",
+                    "aria-pressed": isFav,
+                    title: isFav ? "Remove from favorites" : "Favorite this model",
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M12 2.5l2.4 5.3 5.8.5-4.3 3.7 1.3 5.6L12 16.1 6.8 17.5l1.3-5.6-4.3-3.7 5.8-.5L12 2.5z",
+                        stroke: "currentColor",
+                        strokeLinejoin: "round",
+                        fill: isFav ? "currentColor" : "none",
+                        strokeWidth: "1.4"
+                      }
+                    ) })
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "button",
+                  {
+                    className: "model-search__option",
+                    onClick: () => {
+                      hideHoverTooltip();
+                      onChange(m.id);
+                      setOpen(false);
+                      setQuery("");
+                    },
+                    onMouseEnter: (e) => scheduleHoverTooltip(e.currentTarget, m.id),
+                    onMouseLeave: hideHoverTooltip,
+                    type: "button",
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model-search__option-id", children: m.id }),
+                      m.contextLength ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "model-search__option-ctx", children: [
+                        Math.round(m.contextLength / 1024),
+                        "k ctx"
+                      ] }) : null
+                    ]
+                  }
+                )
+              ]
+            },
+            m.id
+          );
+        }),
+        filtered.length > 50 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__more", children: [
+          "+ ",
+          filtered.length - 50,
+          " more results. Refine your search."
+        ] })
+      ]
+    }
+  ) : null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search", ref, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        ref: inputRef,
+        className: "model-search__input",
+        placeholder: "Search models...",
+        value: open ? query : displayValue,
+        onFocus: () => {
+          setOpen(true);
+          setQuery("");
+        },
+        onChange: (e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }
+      }
+    ),
+    portalDropdown ? reactDomExports.createPortal(dropdownContent, document.body) : dropdownContent,
+    hoverTooltip && reactDomExports.createPortal(
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: "model-search__name-tooltip",
+          role: "tooltip",
+          style: { left: hoverTooltip.left, top: hoverTooltip.top },
+          children: hoverTooltip.fullId
+        }
+      ),
+      document.body
+    )
   ] });
 }
 function _arrayLikeToArray(r, a) {
@@ -34034,24 +34934,6 @@ function FileTree({ nodes, depth = 0, activePath, onOpen }) {
     node2.type === "directory" && node2.children && node2.children.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(FileTree, { nodes: node2.children, depth: depth + 1, activePath, onOpen }) : null
   ] }, node2.path)) });
 }
-var reactDomExports = requireReactDom();
-const themes = [
-  {
-    id: "neon-grid",
-    name: "Neon Grid",
-    preview: "Cyan / Lime / Deep Navy"
-  },
-  {
-    id: "sunset-terminal",
-    name: "Sunset Terminal",
-    preview: "Coral / Amber / Plum"
-  },
-  {
-    id: "ice-station",
-    name: "Ice Station",
-    preview: "Blue / Mint / Graphite"
-  }
-];
 const promptPresets = [
   {
     id: "general-coding",
@@ -34117,6 +34999,92 @@ Optimize for correctness, clarity, and momentum.`
   }
 ];
 const getPromptPreset = (id2) => promptPresets.find((preset) => preset.id === id2) ?? promptPresets[0];
+const defaultSettings = {
+  providers: {
+    lmstudio: {
+      systemPrompt: getPromptPreset("general-coding").prompt
+    },
+    openrouter: {
+      systemPrompt: getPromptPreset("general-coding").prompt
+    }
+  },
+  ui: {
+    favoriteModels: { lmstudio: [], openrouter: [] }
+  }
+};
+const themeCatalog = [
+  { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
+  { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
+  { id: "ice-station", name: "Ice Station", preview: "Blue / Mint / Graphite" },
+  { id: "kiwi", name: "Kiwi", preview: "Green / Teal / Graphite (light)" }
+];
+themeCatalog.map((t) => t.id);
+function getThemeName(themeId) {
+  if (themeId === "custom") return "Custom";
+  const entry = themeCatalog.find((t) => t.id === themeId);
+  return entry?.name ?? themeId;
+}
+const CUSTOMIZABLE_THEME_TOKEN_KEYS = [
+  "--bg-0",
+  "--bg-1",
+  "--bg-2",
+  "--bg-surface",
+  "--bg-elevated",
+  "--panel",
+  "--panel-strong",
+  "--line",
+  "--line-strong",
+  "--text-0",
+  "--text-1",
+  "--text-2",
+  "--accent",
+  "--accent-light",
+  "--accent-subtle",
+  "--accent-2",
+  "--accent-2-subtle",
+  "--accent-rgb",
+  "--danger",
+  "--danger-subtle",
+  "--warning",
+  "--app-bg",
+  "--titlebar-bg",
+  "--sidebar-bg",
+  "--chat-panel-bg",
+  "--chat-thread-bg",
+  "--chat-assistant-bg",
+  "--chat-user-bg",
+  "--thinking-bg",
+  "--composer-bg",
+  "--composer-input-bg",
+  "--inspector-bg",
+  "--settings-bg",
+  "--editor-bg"
+];
+function isAllowedCustomThemeTokenKey(key) {
+  return CUSTOMIZABLE_THEME_TOKEN_KEYS.includes(key);
+}
+function isLikelyLightCssBackground(value) {
+  if (value == null) return false;
+  const s = value.trim().toLowerCase();
+  if (s === "white" || s === "#fff" || s === "#ffffff" || s === "snow") return true;
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(s);
+  if (hex6) {
+    const r = parseInt(hex6[1].slice(0, 2), 16);
+    const g = parseInt(hex6[1].slice(2, 4), 16);
+    const b = parseInt(hex6[1].slice(4, 6), 16);
+    return (r + g + b) / 3 > 210 || r > 238 && g > 238;
+  }
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(s);
+  if (hex3) {
+    const ch = hex3[1];
+    const r = parseInt(ch[0] + ch[0], 16);
+    const g = parseInt(ch[1] + ch[1], 16);
+    const bch = parseInt(ch[2] + ch[2], 16);
+    return (r + g + bch) / 3 > 210;
+  }
+  return /^#f[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}/i.test(s);
+}
+const themes = themeCatalog;
 const uid$1 = () => Math.random().toString(36).slice(2, 11);
 function nextCustomName(list2) {
   return `My preset ${list2.length + 1}`;
@@ -34545,137 +35513,15 @@ function PromptPresetMenu({ provider, onPatch }) {
     ] })
   ] });
 }
-const providerOptions = [
+const providerOptions$1 = [
   { value: "lmstudio", label: "LM Studio" },
   { value: "openrouter", label: "OpenRouter" }
 ];
-const MODEL_HOVER_TOOLTIP_MS = 500;
-function ModelSearch({
-  models,
-  value,
-  onChange
-}) {
-  const [query, setQuery] = reactExports.useState("");
-  const [open, setOpen] = reactExports.useState(false);
-  const [hoverTooltip, setHoverTooltip] = reactExports.useState(null);
-  const ref = reactExports.useRef(null);
-  const tipTimerRef = reactExports.useRef(null);
-  const clearTipTimer = reactExports.useCallback(() => {
-    if (tipTimerRef.current) {
-      clearTimeout(tipTimerRef.current);
-      tipTimerRef.current = null;
-    }
-  }, []);
-  const hideHoverTooltip = reactExports.useCallback(() => {
-    clearTipTimer();
-    setHoverTooltip(null);
-  }, [clearTipTimer]);
-  const scheduleHoverTooltip = reactExports.useCallback(
-    (el, fullId) => {
-      clearTipTimer();
-      tipTimerRef.current = setTimeout(() => {
-        tipTimerRef.current = null;
-        const r = el.getBoundingClientRect();
-        const margin = 8;
-        const estW = 360;
-        let left = r.right + margin;
-        let top = r.top;
-        if (left + estW > window.innerWidth - margin) {
-          left = Math.max(margin, r.left);
-          top = r.bottom + margin;
-        }
-        setHoverTooltip({ fullId, left, top });
-      }, MODEL_HOVER_TOOLTIP_MS);
-    },
-    [clearTipTimer]
-  );
-  reactExports.useEffect(() => {
-    return () => clearTipTimer();
-  }, [clearTipTimer]);
-  reactExports.useEffect(() => {
-    if (!open) hideHoverTooltip();
-  }, [open, hideHoverTooltip]);
-  reactExports.useEffect(() => {
-    const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-  const filtered = query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models;
-  const displayValue = value || "";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search", ref, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        className: "model-search__input",
-        placeholder: "Search models...",
-        value: open ? query : displayValue,
-        onFocus: () => {
-          setOpen(true);
-          setQuery("");
-        },
-        onChange: (e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }
-      }
-    ),
-    open && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "div",
-      {
-        className: "model-search__dropdown",
-        onScroll: hideHoverTooltip,
-        children: [
-          filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__empty", children: [
-            'No models match "',
-            query,
-            '"'
-          ] }) : filtered.slice(0, 50).map((m) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "button",
-            {
-              className: `model-search__option ${m.id === value ? "is-active" : ""}`,
-              onClick: () => {
-                hideHoverTooltip();
-                onChange(m.id);
-                setOpen(false);
-                setQuery("");
-              },
-              onMouseEnter: (e) => scheduleHoverTooltip(e.currentTarget, m.id),
-              onMouseLeave: hideHoverTooltip,
-              type: "button",
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model-search__option-id", children: m.id }),
-                m.contextLength ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "model-search__option-ctx", children: [
-                  Math.round(m.contextLength / 1024),
-                  "k ctx"
-                ] }) : null
-              ]
-            },
-            m.id
-          )),
-          filtered.length > 50 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__more", children: [
-            "+ ",
-            filtered.length - 50,
-            " more results. Refine your search."
-          ] })
-        ]
-      }
-    ),
-    hoverTooltip && reactDomExports.createPortal(
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "div",
-        {
-          className: "model-search__name-tooltip",
-          role: "tooltip",
-          style: { left: hoverTooltip.left, top: hoverTooltip.top },
-          children: hoverTooltip.fullId
-        }
-      ),
-      document.body
-    )
-  ] });
-}
+const searchProviderOptions = [
+  { value: "duckduckgo", label: "DuckDuckGo fallback" },
+  { value: "tavily", label: "Tavily" },
+  { value: "brave", label: "Brave Search" }
+];
 const HEADER_SAVE_ACK_MS = 1500;
 function SettingsPanel({
   settings,
@@ -34684,19 +35530,35 @@ function SettingsPanel({
   onChange,
   onSave,
   onPresetPersist,
-  onRefreshModels
+  onRefreshModels,
+  onOpenWebSearchInfo,
+  focusSearchSettingsKey = 0
 }) {
   const [headerSaveAck, setHeaderSaveAck] = reactExports.useState(false);
+  const [themeSectionExpanded, setThemeSectionExpanded] = reactExports.useState(false);
   const saveAckTimerRef = reactExports.useRef(null);
+  const searchSectionRef = reactExports.useRef(null);
   reactExports.useEffect(
     () => () => {
       if (saveAckTimerRef.current) clearTimeout(saveAckTimerRef.current);
     },
     []
   );
+  reactExports.useEffect(() => {
+    if (focusSearchSettingsKey <= 0) return;
+    searchSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    searchSectionRef.current?.classList.add("settings-section--focus-pulse");
+    const timer = setTimeout(() => {
+      searchSectionRef.current?.classList.remove("settings-section--focus-pulse");
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [focusSearchSettingsKey]);
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === "lmstudio";
   const isOpenRouter = settings.selectedProvider === "openrouter";
+  const activeSearchProvider = settings.search.provider;
+  const activeSearchHasKey = activeSearchProvider === "tavily" ? Boolean(settings.search.tavilyApiKey.trim()) : activeSearchProvider === "brave" ? Boolean(settings.search.braveApiKey.trim()) : false;
+  const activeThemeLabel = getThemeName(settings.ui.themeId);
   const updateProvider = (patch2, opts) => {
     const next = {
       ...settings,
@@ -34707,6 +35569,17 @@ function SettingsPanel({
     };
     onChange(next);
     if (opts?.persist) void onPresetPersist(next);
+  };
+  const updateSearch = (patch2, persist = false) => {
+    const next = {
+      ...settings,
+      search: {
+        ...settings.search,
+        ...patch2
+      }
+    };
+    onChange(next);
+    if (persist) void onPresetPersist(next);
   };
   const onHeaderSave = async () => {
     if (saveAckTimerRef.current) {
@@ -34724,7 +35597,6 @@ function SettingsPanel({
       setHeaderSaveAck(false);
     }
   };
-  const activeCustom = provider.activeCustomPresetId ? provider.customPromptPresets.find((c) => c.id === provider.activeCustomPresetId) : void 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel settings-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
@@ -34751,18 +35623,18 @@ function SettingsPanel({
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Provider" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "select",
+            AppSelect,
             {
+              options: providerOptions$1,
               value: settings.selectedProvider,
-              onChange: (e) => onChange({ ...settings, selectedProvider: e.target.value }),
-              children: providerOptions.map((o) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: o.value, children: o.label }, o.value))
+              onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
             }
           )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+        isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Base URL" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => updateProvider({ baseUrl: e.target.value }), value: provider.baseUrl })
-        ] }),
+        ] }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isOpenRouter ? "API Key" : "Server Key" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34778,19 +35650,36 @@ function SettingsPanel({
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field-row", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Model" }),
-            isOpenRouter && modelOptions.length > 10 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            modelOptions.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
               ModelSearch,
               {
+                favoriteIds: settings.ui.favoriteModels?.[settings.selectedProvider] ?? [],
                 models: modelOptions,
-                value: provider.model,
-                onChange: (id2) => updateProvider({ model: id2 })
+                onChange: (id2) => updateProvider({ model: id2 }),
+                onToggleFavorite: (id2) => {
+                  const k2 = settings.selectedProvider;
+                  const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                  const nextSet = new Set(baseFav[k2] ?? []);
+                  if (nextSet.has(id2)) nextSet.delete(id2);
+                  else nextSet.add(id2);
+                  const next = {
+                    ...settings,
+                    ui: {
+                      ...settings.ui,
+                      favoriteModels: {
+                        ...baseFav,
+                        [k2]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                      }
+                    }
+                  };
+                  onChange(next);
+                  void onPresetPersist(next);
+                },
+                value: provider.model
               }
-            ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { onChange: (e) => updateProvider({ model: e.target.value }), value: provider.model, children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Select model" }),
-              modelOptions.map((m) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: m.id, children: m.id }, m.id))
-            ] })
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsx("select", { onChange: (e) => updateProvider({ model: e.target.value }), value: provider.model, children: /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Select model" }) })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" })
+          isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
         ] }),
         isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." })
       ] }),
@@ -34800,7 +35689,7 @@ function SettingsPanel({
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Preset" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(PromptPresetMenu, { onPatch: updateProvider, provider })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: provider.promptPresetId === "custom" ? activeCustom ? `Editing “${activeCustom.name}.” The prompt text syncs to this preset. Preset → Custom → Save, New, rename, and delete are written to disk right away. Use the header Save for connection, tools, theme, and the rest.` : "Custom prompt. Open Preset → Custom for New, Save, load, rename, or delete. Preset list changes are saved to disk when you use those actions. Use the header Save for connection, tools, and theme." : getPromptPreset(provider.promptPresetId).description }),
+        provider.promptPresetId !== "custom" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: getPromptPreset(provider.promptPresetId).description }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Prompt" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34827,52 +35716,180 @@ function SettingsPanel({
           )
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Theme" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "theme-grid", children: themes.map((theme) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", ref: searchSectionRef, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Web Search" }),
+          onOpenWebSearchInfo ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "settings-info-button",
+              type: "button",
+              "aria-label": "About Web Search providers (Tavily and Brave)",
+              title: "About Tavily and Brave Search",
+              onClick: onOpenWebSearchInfo,
+              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 16v-4.5M12 8h.01", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" })
+              ] })
+            }
+          ) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Search Provider" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            AppSelect,
+            {
+              options: searchProviderOptions,
+              onChange: (providerKind) => updateSearch({ provider: providerKind }, true),
+              value: activeSearchProvider
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "DuckDuckGo works without a key, but it only returns instant answers and is often thin. Tavily is recommended for AI-ready search. Brave Search is a strong general web-search option." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Tavily API Key" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              autoComplete: "off",
+              onChange: (e) => updateSearch({ tavilyApiKey: e.target.value }),
+              placeholder: "tvly-...",
+              type: "password",
+              value: settings.search.tavilyApiKey
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Brave Search API Key" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              autoComplete: "off",
+              onChange: (e) => updateSearch({ braveApiKey: e.target.value }),
+              placeholder: "BSA...",
+              type: "password",
+              value: settings.search.braveApiKey
+            }
+          )
+        ] }),
+        activeSearchProvider !== "duckduckgo" && !activeSearchHasKey ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint inline-hint--warning", children: [
+          "Add and save an API key for ",
+          activeSearchProvider === "tavily" ? "Tavily" : "Brave Search",
+          ", or OpenKiwi will fall back to DuckDuckGo instant answers."
+        ] }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? "is-expanded" : ""}`, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: `theme-tile ${settings.ui.themeId === theme.id ? "is-active" : ""}`,
-            onClick: () => onChange({ ...settings, ui: { ...settings.ui, themeId: theme.id } }),
+            className: "chat-thread-options__header",
+            onClick: () => setThemeSectionExpanded((v2) => !v2),
             type: "button",
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: theme.name }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: theme.preview })
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "svg",
+                  {
+                    className: "chat-thread-options__chevron",
+                    width: "12",
+                    height: "12",
+                    viewBox: "0 0 12 12",
+                    fill: "none",
+                    "aria-hidden": true,
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M4 2.5L7.5 6 4 9.5",
+                        stroke: "currentColor",
+                        strokeWidth: "1.4",
+                        strokeLinecap: "round",
+                        strokeLinejoin: "round"
+                      }
+                    )
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Theme" })
+              ] }),
+              !themeSectionExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__badge", children: activeThemeLabel }) : null
             ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: themeSectionExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          motion.div,
+          {
+            initial: { height: 0, opacity: 0 },
+            animate: { height: "auto", opacity: 1 },
+            exit: { height: 0, opacity: 0 },
+            transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+            style: { overflow: "hidden" },
+            children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__body", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "theme-grid", children: [
+                settings.ui.themeId === "custom" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "div",
+                  {
+                    className: "theme-tile is-active",
+                    role: "status",
+                    "aria-label": "Theme: Custom, selected",
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: getThemeName("custom") }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Adjusted by Agent (preset clears this)" })
+                    ]
+                  }
+                ) : null,
+                themes.map((theme) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "button",
+                  {
+                    className: `theme-tile ${settings.ui.themeId === theme.id ? "is-active" : ""}`,
+                    onClick: () => onChange({
+                      ...settings,
+                      ui: { ...settings.ui, themeId: theme.id, customThemeTokens: void 0 }
+                    }),
+                    type: "button",
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: theme.name }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: theme.preview })
+                    ]
+                  },
+                  theme.id
+                ))
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field field--after-theme-grid", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Session mode" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "session-mode-toggle", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      className: `session-mode-toggle__option ${settings.ui.sessionMode === "talk" ? "is-active" : ""}`,
+                      onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "talk" } }),
+                      type: "button",
+                      children: "Chat"
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      className: `session-mode-toggle__option ${settings.ui.sessionMode === "agent" ? "is-active" : ""}`,
+                      onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "agent" } }),
+                      type: "button",
+                      children: "Agent"
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "span",
+                    {
+                      className: "session-mode-toggle__slider",
+                      style: {
+                        transform: settings.ui.sessionMode === "agent" ? "translateX(100%)" : "translateX(0)"
+                      }
+                    }
+                  )
+                ] })
+              ] })
+            ] })
           },
-          theme.id
-        )) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field field--after-theme-grid", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Session mode" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "session-mode-toggle", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `session-mode-toggle__option ${settings.ui.sessionMode === "talk" ? "is-active" : ""}`,
-                onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "talk" } }),
-                type: "button",
-                children: "Talk"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `session-mode-toggle__option ${settings.ui.sessionMode === "agent" ? "is-active" : ""}`,
-                onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "agent" } }),
-                type: "button",
-                children: "Agent"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "span",
-              {
-                className: "session-mode-toggle__slider",
-                style: { transform: settings.ui.sessionMode === "agent" ? "translateX(100%)" : "translateX(0)" }
-              }
-            )
-          ] })
-        ] })
-      ] }),
+          "theme-body"
+        ) : null })
+      ] }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Tool Access" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-list", children: [
@@ -34951,6 +35968,19 @@ const pickDefaultModel = (modelList, currentModel) => {
   const preferred = modelList.find((m) => !isEmbeddingModel(m.id));
   return preferred?.id ?? modelList[0]?.id ?? "";
 };
+const providerOptions = [
+  { value: "lmstudio", label: "LM Studio" },
+  { value: "openrouter", label: "OpenRouter" }
+];
+const needsSearchApiKeyNotice = (settings) => {
+  if (settings.search.provider === "tavily") {
+    return settings.search.tavilyApiKey.trim().length === 0;
+  }
+  if (settings.search.provider === "brave") {
+    return settings.search.braveApiKey.trim().length === 0;
+  }
+  return true;
+};
 const chatTitle = (messages) => {
   const first = messages.find((m) => m.role === "user");
   if (!first) return "New Chat";
@@ -34982,6 +36012,8 @@ function App() {
   const [buffers, setBuffers] = reactExports.useState({});
   const [activeFilePath, setActiveFilePath] = reactExports.useState();
   const [models, setModels] = reactExports.useState([]);
+  const [lastTokenUsage, setLastTokenUsage] = reactExports.useState(null);
+  const [modelCatalogSettled, setModelCatalogSettled] = reactExports.useState(false);
   const settingsRef = reactExports.useRef(null);
   const workspaceRootRef = reactExports.useRef(void 0);
   const activeFilePathRef = reactExports.useRef(void 0);
@@ -34997,21 +36029,69 @@ function App() {
   const [chatAttachments, setChatAttachments] = reactExports.useState([]);
   const [chatStreaming, setChatStreaming] = reactExports.useState(false);
   const [activeRequestId, setActiveRequestId] = reactExports.useState();
+  const chatStreamingRef = reactExports.useRef(false);
   const [activeChatId, setActiveChatId] = reactExports.useState();
+  const activeChatIdRef = reactExports.useRef(void 0);
+  const inFlightChatsRef = reactExports.useRef(/* @__PURE__ */ new Map());
   const [chatList, setChatList] = reactExports.useState([]);
+  const [overrideModelProvider, setOverrideModelProvider] = reactExports.useState("lmstudio");
+  const [overrideModels, setOverrideModels] = reactExports.useState([]);
+  const [chatModelExpanded, setChatModelExpanded] = reactExports.useState(false);
+  const [newChatModelOverride, setNewChatModelOverride] = reactExports.useState(null);
+  const newChatModelOverrideRef = reactExports.useRef(null);
+  newChatModelOverrideRef.current = newChatModelOverride;
+  chatStreamingRef.current = chatStreaming;
   const [commandInput, setCommandInput] = reactExports.useState("git status");
   const [commandLogs, setCommandLogs] = reactExports.useState("");
   const [activeJobId, setActiveJobId] = reactExports.useState();
   const [lastCommandResult, setLastCommandResult] = reactExports.useState();
   const [inspectorTab, setInspectorTab] = reactExports.useState("settings");
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
+  const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
+  const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
   const saveTimerRef = reactExports.useRef(null);
   const lastContentFingerprintRef = reactExports.useRef(null);
   const skipNextRenameCommitRef = reactExports.useRef(false);
+  activeChatIdRef.current = activeChatId;
+  const findInFlightByChatId = (chatId) => {
+    if (!chatId) return void 0;
+    for (const item of inFlightChatsRef.current.values()) {
+      if (item.chatId === chatId) return item;
+    }
+    return void 0;
+  };
+  const showInFlightIfActive = (snapshot) => {
+    if (activeChatIdRef.current !== snapshot.chatId) return;
+    setChatMessages(snapshot.messages);
+    setChatTimeline(snapshot.timeline);
+    setChatStreaming(true);
+    setActiveRequestId(snapshot.requestId);
+  };
+  const updateInFlightMessage = (requestId, recipe) => {
+    const snapshot = inFlightChatsRef.current.get(requestId);
+    if (!snapshot) {
+      setChatMessages((current) => current.map((m) => m.id === requestId ? recipe(m) : m));
+      updateTimelineMessage(requestId, recipe);
+      return void 0;
+    }
+    snapshot.messages = snapshot.messages.map((m) => m.id === requestId ? recipe(m) : m);
+    snapshot.timeline = snapshot.timeline.map(
+      (entry) => entry.type === "message" && entry.message.id === requestId ? { ...entry, message: recipe(entry.message) } : entry
+    );
+    showInFlightIfActive(snapshot);
+    return snapshot;
+  };
   const appendActivity = (activity) => {
-    setChatTimeline((current) => [...current, { id: `activity-${activity.id}`, type: "activity", activity }]);
+    const entry = { id: `activity-${activity.id}`, type: "activity", activity };
+    const snapshot = inFlightChatsRef.current.get(activity.requestId);
+    if (snapshot) {
+      snapshot.timeline = [...snapshot.timeline, entry];
+      showInFlightIfActive(snapshot);
+      return;
+    }
+    setChatTimeline((current) => [...current, entry]);
   };
   const updateTimelineMessage = (messageId, recipe) => {
     setChatTimeline(
@@ -35024,14 +36104,48 @@ function App() {
     const list2 = await window.electronAPI.listChats();
     setChatList(list2);
   }, []);
+  const saveChatSnapshot = reactExports.useCallback(
+    async (chatId, msgs, tl) => {
+      const disk = await window.electronAPI.loadChat(chatId);
+      if (!disk) return;
+      await window.electronAPI.saveChat({
+        ...disk,
+        title: resolveChatTitle(msgs, disk.titleOverride),
+        messages: msgs,
+        timeline: tl,
+        updatedAt: Date.now()
+      });
+      await refreshChatList();
+    },
+    [refreshChatList]
+  );
+  const activeChatMeta = reactExports.useMemo(
+    () => activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0,
+    [activeChatId, chatList]
+  );
+  const effectiveModelOverride = reactExports.useMemo(() => {
+    if (activeChatId) return activeChatMeta?.modelOverride ?? null;
+    return newChatModelOverride;
+  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
   const chatSessionSubheading = reactExports.useMemo(() => {
-    if (chatMessages.length === 0) return "New conversation";
+    if (chatMessages.length === 0) {
+      if (newChatModelOverride?.model) {
+        return `New conversation · ${formatOverrideLabel(newChatModelOverride, pathLabel)}`;
+      }
+      return "New conversation";
+    }
     if (activeChatId) {
       const meta = chatList.find((c) => c.id === activeChatId);
-      if (meta?.title) return meta.title;
+      if (meta?.title) {
+        const base = meta.title;
+        if (meta.modelOverride?.model) {
+          return `${base} · ${formatOverrideLabel(meta.modelOverride, pathLabel)}`;
+        }
+        return base;
+      }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, chatList, chatMessages]);
+  }, [activeChatId, chatList, chatMessages, newChatModelOverride, pathLabel]);
   const persistCurrentChat = reactExports.useCallback(
     async (msgs, tl, chatId) => {
       if (msgs.length === 0) return;
@@ -35053,7 +36167,9 @@ function App() {
         messages: msgs,
         timeline: tl,
         createdAt,
-        updatedAt: now2
+        updatedAt: now2,
+        pinned: disk?.pinned ?? existing?.pinned ?? false,
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : newChatModelOverrideRef.current ?? null)
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -35072,23 +36188,68 @@ function App() {
     },
     [persistCurrentChat]
   );
+  const appliedCustomTokensRef = reactExports.useRef(/* @__PURE__ */ new Set());
   reactExports.useEffect(() => {
     const boot = async () => {
       const loaded = await window.electronAPI.loadSettings();
       setSettings(loaded);
-      document.documentElement.dataset.theme = loaded.ui.themeId;
       await refreshChatList();
     };
     void boot();
   }, []);
   reactExports.useEffect(() => {
     if (!settings) return;
-    document.documentElement.dataset.theme = settings.ui.themeId;
+    const root2 = document.documentElement;
+    appliedCustomTokensRef.current.forEach((k2) => root2.style.removeProperty(k2));
+    appliedCustomTokensRef.current.clear();
+    root2.dataset.theme = settings.ui.themeId;
+    if (settings.ui.themeId === "custom" && settings.ui.customThemeTokens) {
+      for (const [key, val] of Object.entries(settings.ui.customThemeTokens)) {
+        if (!isAllowedCustomThemeTokenKey(key)) continue;
+        root2.style.setProperty(key, val);
+        appliedCustomTokensRef.current.add(key);
+      }
+    }
+    if (settings.ui.themeId === "custom") {
+      const bgToken = settings.ui.customThemeTokens?.["--bg-0"];
+      const customLight = bgToken == null || String(bgToken).trim() === "" ? true : isLikelyLightCssBackground(String(bgToken));
+      if (customLight) {
+        root2.dataset.customLight = "true";
+      } else {
+        delete root2.dataset.customLight;
+      }
+      root2.style.colorScheme = customLight ? "light" : "dark";
+    } else {
+      delete root2.dataset.customLight;
+      root2.style.removeProperty("color-scheme");
+    }
   }, [settings]);
+  const openRouterKeyForEffect = settings?.selectedProvider === "openrouter" ? settings.providers.openrouter.apiKey : null;
   reactExports.useEffect(() => {
     if (!settings) return;
     void refreshModels(settings);
-  }, [settings?.selectedProvider]);
+  }, [settings?.selectedProvider, openRouterKeyForEffect]);
+  reactExports.useEffect(() => {
+    if (!settings) return;
+    if (activeChatId) {
+      setOverrideModelProvider(activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider);
+    } else {
+      setOverrideModelProvider(newChatModelOverride?.provider ?? settings.selectedProvider);
+    }
+  }, [activeChatId, activeChatMeta?.modelOverride?.provider, newChatModelOverride?.provider, settings]);
+  reactExports.useEffect(() => {
+    if (!settings) {
+      setOverrideModels([]);
+      return;
+    }
+    let cancelled = false;
+    void window.electronAPI.listModels(settings, overrideModelProvider).then((list2) => {
+      if (!cancelled) setOverrideModels(list2);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings, overrideModelProvider]);
   reactExports.useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
       setCommandLogs((c) => c + payload.chunk);
@@ -35101,59 +36262,71 @@ function App() {
 `);
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
-      setChatMessages(
-        (current) => current.map((m) => {
-          if (m.id !== requestId) return m;
-          return {
-            ...m,
-            content: delta ? `${m.content}${delta}` : m.content,
-            reasoning: reasoningDelta ? `${m.reasoning ?? ""}${reasoningDelta}` : m.reasoning,
-            status: "streaming"
-          };
-        })
-      );
-      updateTimelineMessage(requestId, (m) => ({
+      updateInFlightMessage(requestId, (m) => ({
         ...m,
         content: delta ? `${m.content}${delta}` : m.content,
         reasoning: reasoningDelta ? `${m.reasoning ?? ""}${reasoningDelta}` : m.reasoning,
         status: "streaming"
       }));
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning }) => {
-      setChatStreaming(false);
-      setActiveRequestId(void 0);
-      setChatMessages(
-        (current) => current.map((m) => {
-          if (m.id !== requestId) return m;
-          const next = { ...m, content: content2, status: "done" };
-          if (reasoning !== void 0) next.reasoning = reasoning;
-          else if (m.reasoning !== void 0) next.reasoning = m.reasoning;
-          return next;
-        })
-      );
-      updateTimelineMessage(requestId, (m) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, usage }) => {
+      const snapshot = updateInFlightMessage(requestId, (m) => {
         const next = { ...m, content: content2, status: "done" };
         if (reasoning !== void 0) next.reasoning = reasoning;
         else if (m.reasoning !== void 0) next.reasoning = m.reasoning;
         return next;
       });
-    });
-    const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      if (snapshot) {
+        if (usage && activeChatIdRef.current === snapshot.chatId) {
+          setLastTokenUsage(usage);
+        }
+        if (activeChatIdRef.current === snapshot.chatId) {
+          setChatStreaming(false);
+          setActiveRequestId(void 0);
+        }
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
+          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+            inFlightChatsRef.current.delete(requestId);
+          }
+        });
+        return;
+      }
       setChatStreaming(false);
       setActiveRequestId(void 0);
-      setChatMessages(
-        (current) => current.map((m) => m.id === requestId ? { ...m, content: error, status: "error", role: "assistant" } : m)
-      );
-      updateTimelineMessage(requestId, (m) => ({ ...m, content: error, status: "error", role: "assistant" }));
+    });
+    const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      const snapshot = updateInFlightMessage(requestId, (m) => ({
+        ...m,
+        content: error,
+        status: "error",
+        role: "assistant"
+      }));
       appendActivity({
         id: uid(),
         requestId,
         kind: error === "Request stopped." ? "stopped" : "error",
         message: error === "Request stopped." ? "Model stopped." : `Model error: ${error}`
       });
+      if (snapshot) {
+        if (activeChatIdRef.current === snapshot.chatId) {
+          setChatStreaming(false);
+          setActiveRequestId(void 0);
+        }
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
+          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+            inFlightChatsRef.current.delete(requestId);
+          }
+        });
+        return;
+      }
+      setChatStreaming(false);
+      setActiveRequestId(void 0);
     });
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
+    });
+    const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
+      setSettings(next);
     });
     const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
       async ({ root: root2, fileWritten, fileDeleted }) => {
@@ -35190,6 +36363,7 @@ function App() {
       offDoneChat();
       offError();
       offActivity();
+      offSettingsUpdated();
       offWorkspaceChanged();
     };
   }, []);
@@ -35236,6 +36410,16 @@ function App() {
   const refreshModels = async (settingsOverride) => {
     const activeSettings = settingsOverride ?? settings;
     if (!activeSettings) return;
+    setModelCatalogSettled(false);
+    if (activeSettings.selectedProvider === "openrouter") {
+      const key = activeSettings.providers.openrouter.apiKey?.trim() ?? "";
+      if (!key) {
+        setModels([]);
+        setSettingsStatus("OpenRouter: add an API key in Settings; the catalog loads after the key is set.");
+        setModelCatalogSettled(true);
+        return;
+      }
+    }
     try {
       setSettingsStatus("Loading model catalog...");
       const modelList = await window.electronAPI.listModels(activeSettings, activeSettings.selectedProvider);
@@ -35281,8 +36465,11 @@ function App() {
         );
       }
     } catch (error) {
+      setModels([]);
       const message = error instanceof Error ? error.message : "Failed to load models.";
       setSettingsStatus(`Connection failed: ${message}`);
+    } finally {
+      setModelCatalogSettled(true);
     }
   };
   const persistSettingsToDisk = async (next) => {
@@ -35293,12 +36480,37 @@ function App() {
     const s = settingsRef.current;
     if (!s) return;
     const updated = { ...s, ui: { ...s.ui, webSearch: next } };
+    settingsRef.current = updated;
+    setSettings(updated);
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+      if (next && needsSearchApiKeyNotice(saved)) {
+        setShowWebSearchNotice(true);
+      }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Save failed";
+      setSettingsStatus(`Web search setting not saved: ${m}`);
+    }
+  }, []);
+  const jumpToSearchSettings = reactExports.useCallback(() => {
+    setShowWebSearchNotice(false);
+    setInspectorTab("settings");
+    setSearchSettingsFocusKey((key) => key + 1);
+  }, []);
+  const handleSessionModeToggle = reactExports.useCallback(async () => {
+    const s = settingsRef.current;
+    if (!s) return;
+    const nextMode = s.ui.sessionMode === "talk" ? "agent" : "talk";
+    const updated = { ...s, ui: { ...s.ui, sessionMode: nextMode } };
+    settingsRef.current = updated;
+    setSettings(updated);
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Save failed";
-      setSettingsStatus(`Web search setting not saved: ${m}`);
+      setSettingsStatus(`Session mode not saved: ${m}`);
     }
   }, []);
   const persistAfterPresetAction = async (next) => {
@@ -35306,7 +36518,7 @@ function App() {
       await persistSettingsToDisk(next);
     } catch (e) {
       const m = e instanceof Error ? e.message : "Save failed";
-      setSettingsStatus(`Custom presets could not be saved: ${m}`);
+      setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
   const saveSettings = async () => {
@@ -35344,9 +36556,12 @@ function App() {
     setChatTimeline([]);
     setChatInput("");
     setChatAttachments([]);
+    setLastTokenUsage(null);
     setChatStreaming(false);
     setActiveRequestId(void 0);
     setActiveChatId(void 0);
+    activeChatIdRef.current = void 0;
+    setNewChatModelOverride(null);
     const nextSid = uid();
     setChatSessionId(nextSid);
     chatSessionIdRef.current = nextSid;
@@ -35358,18 +36573,29 @@ function App() {
     }
     const chat = await window.electronAPI.loadChat(id2);
     if (!chat) return;
-    lastContentFingerprintRef.current = chatFingerprint(chat.messages, chat.timeline);
-    setChatMessages(chat.messages);
-    setChatTimeline(chat.timeline);
+    const inFlight = findInFlightByChatId(id2);
+    const messages = inFlight?.messages ?? chat.messages;
+    const timeline = inFlight?.timeline ?? chat.timeline;
+    lastContentFingerprintRef.current = chatFingerprint(messages, timeline);
+    setChatMessages(messages);
+    setChatTimeline(timeline);
     setActiveChatId(chat.id);
+    activeChatIdRef.current = chat.id;
     setChatSessionId(chat.id);
     chatSessionIdRef.current = chat.id;
+    setNewChatModelOverride(null);
     setChatInput("");
     setChatAttachments([]);
-    setChatStreaming(false);
-    setActiveRequestId(void 0);
+    setLastTokenUsage(null);
+    setChatStreaming(Boolean(inFlight));
+    setActiveRequestId(inFlight?.requestId);
   };
   const deleteChat = async (id2) => {
+    const inFlight = findInFlightByChatId(id2);
+    if (inFlight) {
+      await window.electronAPI.stopChat(inFlight.requestId);
+      inFlightChatsRef.current.delete(inFlight.requestId);
+    }
     await window.electronAPI.deleteChat(id2);
     if (activeChatId === id2) startNewChat();
     if (editingTitleId === id2) {
@@ -35388,6 +36614,29 @@ function App() {
     setEditingTitleId(null);
     setEditingTitleDraft("");
   };
+  const saveChatModelOverride = reactExports.useCallback(
+    async (override) => {
+      if (!activeChatId) {
+        setNewChatModelOverride(override);
+        return;
+      }
+      const full = await window.electronAPI.loadChat(activeChatId);
+      if (!full) return;
+      await window.electronAPI.saveChat({ ...full, modelOverride: override, updatedAt: full.updatedAt });
+      await refreshChatList();
+    },
+    [activeChatId, refreshChatList]
+  );
+  const togglePinChat = reactExports.useCallback(
+    async (e, id2) => {
+      e.stopPropagation();
+      const full = await window.electronAPI.loadChat(id2);
+      if (!full) return;
+      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, updatedAt: Date.now() });
+      await refreshChatList();
+    },
+    [refreshChatList]
+  );
   const commitRenameChat = async (id2, draft) => {
     if (skipNextRenameCommitRef.current) {
       skipNextRenameCommitRef.current = false;
@@ -35410,7 +36659,8 @@ function App() {
   };
   const sendChat = async () => {
     const sendSettings = settingsRef.current;
-    if (!sendSettings || chatInput.trim().length === 0 && chatAttachments.length === 0) return;
+    if (chatStreamingRef.current || !sendSettings || chatInput.trim().length === 0 && chatAttachments.length === 0) return;
+    chatStreamingRef.current = true;
     const userMessage = {
       id: uid(),
       role: "user",
@@ -35427,34 +36677,56 @@ function App() {
       reasoning: sendSettings.ui.sessionMode === "talk" ? "" : void 0
     };
     const nextHistory = [...chatMessages, userMessage];
-    setChatMessages([...nextHistory, assistantMessage]);
-    setChatTimeline((current) => [
-      ...current,
+    const nextTimeline = [
+      ...chatTimeline,
       { id: `message-${userMessage.id}`, type: "message", message: userMessage },
       { id: `message-${assistantMessage.id}`, type: "message", message: assistantMessage }
-    ]);
+    ];
+    setChatMessages([...nextHistory, assistantMessage]);
+    setChatTimeline(nextTimeline);
     setChatInput("");
     setChatAttachments([]);
     setChatStreaming(true);
     setActiveRequestId(requestId);
-    if (!activeChatId) {
+    const priorChatId = activeChatId;
+    let chatIdForStream = priorChatId;
+    let overrideForStream = null;
+    if (!priorChatId) {
       const newId = uid();
+      chatIdForStream = newId;
+      const mo = newChatModelOverrideRef.current;
+      overrideForStream = mo;
       setActiveChatId(newId);
+      activeChatIdRef.current = newId;
       setChatSessionId(newId);
       chatSessionIdRef.current = newId;
+      setNewChatModelOverride(null);
       const chat = {
         id: newId,
         title: chatTitle([...nextHistory, assistantMessage]),
         titleOverride: null,
         messages: [...nextHistory, assistantMessage],
-        timeline: [],
+        timeline: nextTimeline,
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        pinned: false,
+        modelOverride: mo
       };
       await window.electronAPI.saveChat(chat);
       await refreshChatList();
+    } else {
+      const loaded = await window.electronAPI.loadChat(priorChatId);
+      overrideForStream = loaded?.modelOverride ?? null;
     }
-    await window.electronAPI.streamChat(requestId, sendSettings, nextHistory, {
+    if (!chatIdForStream) return;
+    inFlightChatsRef.current.set(requestId, {
+      chatId: chatIdForStream,
+      requestId,
+      messages: [...nextHistory, assistantMessage],
+      timeline: nextTimeline
+    });
+    const streamSettings = applyChatModelOverride(sendSettings, overrideForStream);
+    await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
       workspaceRoot: workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current
@@ -35480,12 +36752,53 @@ function App() {
   };
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : void 0;
   const selectedProvider = settings?.providers[settings.selectedProvider];
-  const providerConnected = models.length > 0 && Boolean(selectedProvider?.model);
+  const effectiveHeaderModelId = effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
+  const openRouterReady = settings && settings.selectedProvider === "openrouter" ? Boolean(settings.providers.openrouter.apiKey?.trim()) : true;
+  const providerConnected = Boolean(
+    settings && openRouterReady && models.length > 0 && selectedProvider?.model
+  );
+  const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
+  const resolvedContextLimit = (() => {
+    const id2 = effectiveHeaderModelId.trim();
+    if (!id2) return 131072;
+    return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
+  })();
   const selectedProviderLabel = settings?.selectedProvider === "openrouter" ? "OpenRouter" : "LM Studio";
   const sessionMode = settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showWebSearchNotice ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            "aria-modal": "true",
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "app-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Web Search" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Search works better with an API key" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "OpenKiwi can search without a key, but the built-in DuckDuckGo fallback only returns short instant answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web search option." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setShowWebSearchNotice(false), type: "button", children: "Not now" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: jumpToSearchSettings, type: "button", children: "Add API key" })
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
     isDarwin ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "app-titlebar" }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "layout layout--atomic", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -35571,7 +36884,7 @@ function App() {
                 }
               )
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-content", children: /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { mode: "wait", children: sidebarTab === "chats" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-content", children: /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { mode: "wait", children: sidebarTab === "chats" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
               motion.div,
               {
                 className: "sidebar-panel",
@@ -35579,82 +36892,246 @@ function App() {
                 animate: { opacity: 1 },
                 exit: { opacity: 0 },
                 transition: { duration: 0.15 },
-                children: chatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: chatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "div",
-                  {
-                    className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""}`,
-                    onClick: () => loadChat(chat.id),
-                    children: [
-                      editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "input",
-                        {
-                          autoFocus: true,
-                          className: "chat-list__title-input",
-                          onBlur: (e) => {
-                            void commitRenameChat(chat.id, e.target.value);
-                          },
-                          onChange: (e) => setEditingTitleDraft(e.target.value),
-                          onKeyDown: (e) => {
-                            e.stopPropagation();
-                            if (e.key === "Enter") {
-                              e.currentTarget.blur();
-                            } else if (e.key === "Escape") {
-                              e.preventDefault();
-                              skipNextRenameCommitRef.current = true;
-                              cancelRenameChat();
+                children: [
+                  settings ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options ${chatModelExpanded ? "is-expanded" : ""}`, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "button",
+                      {
+                        className: "chat-thread-options__header",
+                        onClick: () => setChatModelExpanded((v2) => !v2),
+                        type: "button",
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "svg",
+                              {
+                                className: "chat-thread-options__chevron",
+                                width: "12",
+                                height: "12",
+                                viewBox: "0 0 12 12",
+                                fill: "none",
+                                "aria-hidden": true,
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 2.5L7.5 6 4 9.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                              }
+                            ),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Model override" })
+                          ] }),
+                          effectiveModelOverride && !chatModelExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__badge", children: pathLabel(effectiveModelOverride.model) }) : null
+                        ]
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: chatModelExpanded && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      motion.div,
+                      {
+                        initial: { height: 0, opacity: 0 },
+                        animate: { height: "auto", opacity: 1 },
+                        exit: { height: 0, opacity: 0 },
+                        transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                        style: { overflow: "hidden" },
+                        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__body", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                            "label",
+                            {
+                              className: `chat-panel__web-toggle chat-thread-options__web-toggle ${effectiveModelOverride ? "is-on" : ""}`,
+                              children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "input",
+                                  {
+                                    checked: Boolean(effectiveModelOverride),
+                                    onChange: async (e) => {
+                                      if (!settings) return;
+                                      if (e.target.checked) {
+                                        const list2 = await window.electronAPI.listModels(settings, overrideModelProvider);
+                                        const model = pickDefaultModel(list2, list2[0]?.id);
+                                        if (model) {
+                                          await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                        }
+                                      } else {
+                                        await saveChatModelOverride(null);
+                                      }
+                                    },
+                                    type: "checkbox"
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__model-toggle-text", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Use a specific model" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "only for this chat" })
+                                ] }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
+                              ]
                             }
-                          },
-                          value: editingTitleDraft
-                        }
-                      ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title }),
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
-                      ] }),
-                      editingTitleId === chat.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          "button",
-                          {
-                            className: "chat-list__rename",
-                            onClick: (e) => beginRenameChat(e, chat.id, chat.title),
-                            type: "button",
-                            title: "Rename",
-                            children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "path",
-                              {
-                                d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z",
-                                fill: "currentColor"
-                              }
-                            ) })
-                          }
-                        ),
-                        /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          "button",
-                          {
-                            className: "chat-list__delete",
-                            onClick: (e) => {
-                              e.stopPropagation();
-                              deleteChat(chat.id);
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: effectiveModelOverride ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            motion.div,
+                            {
+                              initial: { height: 0, opacity: 0 },
+                              animate: { height: "auto", opacity: 1 },
+                              exit: { height: 0, opacity: 0 },
+                              transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                              style: { overflow: "hidden" },
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__fields", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "chat-thread-options__field", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__field-label", children: "Provider" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    AppSelect,
+                                    {
+                                      className: "app-select--compact",
+                                      options: providerOptions,
+                                      portalDropdown: true,
+                                      onChange: async (p) => {
+                                        setOverrideModelProvider(p);
+                                        if (!settings) return;
+                                        const list2 = await window.electronAPI.listModels(settings, p);
+                                        const model = pickDefaultModel(list2, void 0);
+                                        if (model) {
+                                          await saveChatModelOverride({ provider: p, model });
+                                        }
+                                      },
+                                      value: overrideModelProvider
+                                    }
+                                  )
+                                ] }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__field", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__field-label", children: "Model" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    ModelSearch,
+                                    {
+                                      models: overrideModels,
+                                      value: effectiveModelOverride.model,
+                                      favoriteIds: settings.ui.favoriteModels?.[overrideModelProvider] ?? [],
+                                      portalDropdown: true,
+                                      onChange: async (model) => {
+                                        if (model) {
+                                          await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                        }
+                                      },
+                                      onToggleFavorite: (id2) => {
+                                        if (!settings) return;
+                                        const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                                        const nextSet = new Set(baseFav[overrideModelProvider] ?? []);
+                                        if (nextSet.has(id2)) nextSet.delete(id2);
+                                        else nextSet.add(id2);
+                                        const next = {
+                                          ...settings,
+                                          ui: {
+                                            ...settings.ui,
+                                            favoriteModels: {
+                                              ...baseFav,
+                                              [overrideModelProvider]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                                            }
+                                          }
+                                        };
+                                        setSettings(next);
+                                        void persistSettingsToDisk(next);
+                                      }
+                                    }
+                                  )
+                                ] })
+                              ] })
                             },
-                            onMouseDown: (e) => e.preventDefault(),
-                            type: "button",
-                            title: "Delete chat",
-                            children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "path",
-                              {
-                                d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
-                                stroke: "currentColor",
-                                strokeWidth: "1.2",
-                                strokeLinecap: "round",
-                                strokeLinejoin: "round"
+                            "override-fields"
+                          ) : null })
+                        ] })
+                      },
+                      "override-body"
+                    ) })
+                  ] }) : null,
+                  chatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: chatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "div",
+                    {
+                      className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
+                      onClick: () => loadChat(chat.id),
+                      children: [
+                        editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                          "input",
+                          {
+                            autoFocus: true,
+                            className: "chat-list__title-input",
+                            onBlur: (e) => {
+                              void commitRenameChat(chat.id, e.target.value);
+                            },
+                            onChange: (e) => setEditingTitleDraft(e.target.value),
+                            onKeyDown: (e) => {
+                              e.stopPropagation();
+                              if (e.key === "Enter") {
+                                e.currentTarget.blur();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                skipNextRenameCommitRef.current = true;
+                                cancelRenameChat();
                               }
-                            ) })
+                            },
+                            value: editingTitleDraft
                           }
-                        )
-                      ] })
-                    ]
-                  },
-                  chat.id
-                )) })
+                        ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
+                        ] }),
+                        editingTitleId === chat.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "button",
+                            {
+                              className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
+                              onClick: (e) => void togglePinChat(e, chat.id),
+                              type: "button",
+                              title: chat.pinned ? "Unpin" : "Pin to top",
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "path",
+                                {
+                                  d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z",
+                                  fill: chat.pinned ? "currentColor" : "none",
+                                  stroke: "currentColor",
+                                  strokeLinejoin: "round",
+                                  strokeWidth: "1.1"
+                                }
+                              ) })
+                            }
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "button",
+                            {
+                              className: "chat-list__rename",
+                              onClick: (e) => beginRenameChat(e, chat.id, chat.title),
+                              type: "button",
+                              title: "Rename",
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "path",
+                                {
+                                  d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z",
+                                  fill: "currentColor"
+                                }
+                              ) })
+                            }
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "button",
+                            {
+                              className: "chat-list__delete",
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                deleteChat(chat.id);
+                              },
+                              onMouseDown: (e) => e.preventDefault(),
+                              type: "button",
+                              title: "Delete chat",
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "path",
+                                {
+                                  d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
+                                  stroke: "currentColor",
+                                  strokeWidth: "1.2",
+                                  strokeLinecap: "round",
+                                  strokeLinejoin: "round"
+                                }
+                              ) })
+                            }
+                          )
+                        ] })
+                      ]
+                    },
+                    chat.id
+                  )) })
+                ]
               },
               "chats"
             ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -35677,8 +37154,13 @@ function App() {
             ) }) }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-footer", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-footer__meta", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: selectedProviderLabel }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `sidebar-footer__dot ${providerConnected ? "is-live" : ""}` }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: selectedProvider?.model ? pathLabel(selectedProvider.model) : "No model" })
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "span",
+                {
+                  className: `sidebar-footer__dot ${providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : ""}`
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: effectiveHeaderModelId ? pathLabel(effectiveHeaderModelId) : "No model" })
             ] }) })
           ] })
         }
@@ -35694,8 +37176,11 @@ function App() {
             ChatPanel,
             {
               attachments: chatAttachments,
+              chatMessages,
+              contextLimit: resolvedContextLimit,
               input: chatInput,
               isStreaming: chatStreaming,
+              lastTokenUsage,
               sessionSubheading: chatSessionSubheading,
               timeline: chatTimeline,
               onAttachImages: addChatAttachments,
@@ -35703,12 +37188,15 @@ function App() {
               onRemoveAttachment: (id2) => setChatAttachments((c) => c.filter((a) => a.id !== id2)),
               onSend: sendChat,
               onStop: stopChat,
+              modelCatalogSettled: Boolean(settings) && modelCatalogSettled,
               providerConnected,
               webSearch: settings?.ui.webSearch ?? false,
               webSearchDisabled: !settings,
               onWebSearchChange: handleWebSearchChange,
+              onSessionModeToggle: handleSessionModeToggle,
+              sessionModeToggleDisabled: !settings,
               sessionMode,
-              selectedModel: selectedProvider?.model ?? "",
+              selectedModel: effectiveHeaderModelId,
               selectedProviderLabel
             }
           )
@@ -35790,8 +37278,10 @@ function App() {
                   inspectorTab === "settings" && settings ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                     SettingsPanel,
                     {
+                      focusSearchSettingsKey: searchSettingsFocusKey,
                       modelOptions: models,
                       onChange: setSettings,
+                      onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
                       onPresetPersist: persistAfterPresetAction,
                       onRefreshModels: refreshModels,
                       onSave: saveSettings,
