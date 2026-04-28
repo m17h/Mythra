@@ -4,6 +4,7 @@ const electronAPI = {
   loadSettings: () => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
+  openLastWorkspace: () => ipcRenderer.invoke("workspace:open-last"),
   getWorkspaceTree: (root) => ipcRenderer.invoke("workspace:tree", root),
   detachWorkspace: () => ipcRenderer.invoke("workspace:detach"),
   openFile: (root, target) => ipcRenderer.invoke("workspace:open-file", root, target),

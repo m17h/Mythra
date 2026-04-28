@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { join as join$1, relative, dirname, extname, resolve, basename, sep } from "node:path";
+import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
 import { existsSync, watch } from "node:fs";
-import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
@@ -2591,13 +2591,15 @@ const defaultSettings = {
     sessionMode: "agent",
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] }
-  }
+  },
+  lastWorkspaceRoot: null
 };
 const SETTINGS_FILE = "openkiwi-settings.json";
 const LEGACY_SETTINGS_FILE = "pixel-forge-settings.json";
 const mergeSettings = (saved) => ({
   ...defaultSettings,
   ...saved,
+  lastWorkspaceRoot: typeof saved?.lastWorkspaceRoot === "string" && saved.lastWorkspaceRoot.trim().length > 0 ? saved.lastWorkspaceRoot.trim() : null,
   providers: {
     lmstudio: {
       ...defaultSettings.providers.lmstudio,
@@ -3280,10 +3282,41 @@ ipcMain.handle("workspace:choose", async () => {
   }
   activeWorkspaceRoot = root;
   workspaceWatch.setRoot(root);
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    lastWorkspaceRoot: root
+  });
+  mainWindow?.webContents.send("settings:updated", currentSettings);
   return {
     root,
     label: basename(root),
     tree: await workspaceService.getTree(root)
+  };
+});
+ipcMain.handle("workspace:open-last", async () => {
+  const candidate = currentSettings.lastWorkspaceRoot?.trim();
+  if (!candidate) {
+    return null;
+  }
+  try {
+    const st = await stat(candidate);
+    if (!st.isDirectory()) {
+      throw new Error("Not a directory");
+    }
+  } catch {
+    currentSettings = await settingsStore.save({
+      ...currentSettings,
+      lastWorkspaceRoot: null
+    });
+    mainWindow?.webContents.send("settings:updated", currentSettings);
+    return null;
+  }
+  activeWorkspaceRoot = candidate;
+  workspaceWatch.setRoot(candidate);
+  return {
+    root: candidate,
+    label: basename(candidate),
+    tree: await workspaceService.getTree(candidate)
   };
 });
 ipcMain.handle("workspace:tree", async (_event, root) => {

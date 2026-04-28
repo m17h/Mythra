@@ -233,6 +233,14 @@ interface ChatPanelProps {
   onSessionModeToggle: () => void;
   /** True while settings are not loaded (toggle no-ops). */
   sessionModeToggleDisabled?: boolean;
+  /** Whether a workspace folder is currently open. */
+  hasWorkspace: boolean;
+  /** Terminal log output. */
+  terminalLogs: string;
+  /** Currently running terminal job id, if any. */
+  terminalJobId?: string;
+  onTerminalRun: (command: string) => void;
+  onTerminalKill: () => void;
 }
 
 const activityLabelMap = {
@@ -418,7 +426,12 @@ export function ChatPanel({
   contextLimit,
   lastTokenUsage,
   onSessionModeToggle,
-  sessionModeToggleDisabled = false
+  sessionModeToggleDisabled = false,
+  hasWorkspace,
+  terminalLogs,
+  terminalJobId,
+  onTerminalRun,
+  onTerminalKill
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -547,6 +560,66 @@ export function ChatPanel({
   useEffect(() => {
     autoResize();
   }, [input, autoResize]);
+
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalInput, setTerminalInput] = useState('');
+  const terminalLogRef = useRef<HTMLPreElement>(null);
+  const [workspaceGateNotice, setWorkspaceGateNotice] = useState<string | null>(null);
+  const workspaceGateNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismissWorkspaceGateNotice = useCallback(() => {
+    if (workspaceGateNoticeTimerRef.current) {
+      clearTimeout(workspaceGateNoticeTimerRef.current);
+      workspaceGateNoticeTimerRef.current = null;
+    }
+    setWorkspaceGateNotice(null);
+  }, []);
+
+  const showWorkspaceGateNotice = useCallback(
+    (message: string) => {
+      if (workspaceGateNoticeTimerRef.current) {
+        clearTimeout(workspaceGateNoticeTimerRef.current);
+        workspaceGateNoticeTimerRef.current = null;
+      }
+      setWorkspaceGateNotice(message);
+      workspaceGateNoticeTimerRef.current = setTimeout(() => {
+        setWorkspaceGateNotice(null);
+        workspaceGateNoticeTimerRef.current = null;
+      }, 10_000);
+    },
+    []
+  );
+
+  useEffect(
+    () => () => {
+      if (workspaceGateNoticeTimerRef.current) {
+        clearTimeout(workspaceGateNoticeTimerRef.current);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (hasWorkspace && workspaceGateNotice) {
+      dismissWorkspaceGateNotice();
+    }
+  }, [hasWorkspace, workspaceGateNotice, dismissWorkspaceGateNotice]);
+
+  useEffect(() => {
+    if (terminalLogRef.current) {
+      terminalLogRef.current.scrollTop = terminalLogRef.current.scrollHeight;
+    }
+  }, [terminalLogs]);
+
+  const handleTerminalToggle = useCallback(() => {
+    if (!hasWorkspace) {
+      showWorkspaceGateNotice(
+        'Open a workspace from the sidebar first. The terminal runs commands in your project folder.'
+      );
+      return;
+    }
+    setTerminalOpen((v) => !v);
+  }, [hasWorkspace, showWorkspaceGateNotice]);
 
   const isTalk = sessionMode === 'talk';
 
@@ -733,7 +806,80 @@ export function ChatPanel({
         </div>
       </div>
 
+      <AnimatePresence initial={false}>
+        {terminalOpen && (
+          <motion.div
+            key="inline-terminal"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="chat-terminal">
+              <div className="chat-terminal__header">
+                <span className="chat-terminal__title">Terminal</span>
+                <div className="chat-terminal__actions">
+                  {terminalJobId && (
+                    <button
+                      className="chat-terminal__kill"
+                      onClick={onTerminalKill}
+                      type="button"
+                      title="Stop"
+                    >
+                      Stop
+                    </button>
+                  )}
+                  <button
+                    className="chat-terminal__close"
+                    onClick={() => setTerminalOpen(false)}
+                    type="button"
+                    title="Close terminal"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <pre ref={terminalLogRef} className="chat-terminal__log">
+                {terminalLogs || 'No output yet.\n'}
+              </pre>
+              <div className="chat-terminal__input-bar">
+                <span className="chat-terminal__prompt">&gt;_</span>
+                <input
+                  className="chat-terminal__input"
+                  value={terminalInput}
+                  onChange={(e) => setTerminalInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && terminalInput.trim()) {
+                      onTerminalRun(terminalInput);
+                      setTerminalInput('');
+                    }
+                  }}
+                  placeholder="Enter command..."
+                />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="chat-compose">
+        {workspaceGateNotice ? (
+          <div className="chat-compose__notice" role="alert">
+            <p className="chat-compose__notice-text">{workspaceGateNotice}</p>
+            <button
+              type="button"
+              className="chat-compose__notice-dismiss"
+              aria-label="Dismiss"
+              title="Dismiss"
+              onClick={dismissWorkspaceGateNotice}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
         {attachments.length ? (
           <div className="composer-attachments">
             {attachments.map((att) => (
@@ -774,6 +920,17 @@ export function ChatPanel({
             value={input}
           />
           <ChatContextMeter limit={contextLimit} used={contextUsedEstimate} />
+          <button
+            className={`chat-compose__terminal-toggle ${terminalOpen ? 'is-active' : ''}`}
+            onClick={handleTerminalToggle}
+            type="button"
+            title={terminalOpen ? 'Close terminal' : 'Open terminal'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M9 12h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
           {isStreaming ? (
             <button className="chat-compose__stop" onClick={onStop} type="button" title="Stop">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/></svg>

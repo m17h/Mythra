@@ -25,6 +25,7 @@ declare global {
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
+      openLastWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       getWorkspaceTree: (root: string) => Promise<WorkspaceNode[]>;
       detachWorkspace: () => Promise<void>;
       openFile: (root: string, target: string) => Promise<OpenFile>;

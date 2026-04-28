@@ -5,10 +5,9 @@ import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply
 import { AppSelect } from './components/AppSelect';
 import { ChatPanel } from './components/ChatPanel';
 import { ChangesPanel } from './components/ChangesPanel';
-import { CommandDeck } from './components/CommandDeck';
-import { ModelSearch } from './components/ModelSearch';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
+import { ModelSearch } from './components/ModelSearch';
 import { OpenKiwiMark } from './components/OpenKiwiMark';
 import { SettingsPanel } from './components/SettingsPanel';
 import {
@@ -20,7 +19,6 @@ import {
   type ChatModelOverride,
   type ChatCompletionTokenUsage,
   type ChatTimelineEntry,
-  type CommandResult,
   type ModelInfo,
   type OpenFile,
   type ProviderKind,
@@ -91,7 +89,7 @@ interface FileBuffer extends OpenFile {
   dirty: boolean;
 }
 
-type InspectorTab = 'editor' | 'changes' | 'console' | 'settings';
+type InspectorTab = 'editor' | 'changes' | 'settings';
 type SidebarTab = 'chats' | 'files';
 
 interface InFlightChat {
@@ -151,10 +149,9 @@ export function App() {
   newChatModelOverrideRef.current = newChatModelOverride;
   chatStreamingRef.current = chatStreaming;
 
-  const [commandInput, setCommandInput] = useState('git status');
-  const [commandLogs, setCommandLogs] = useState('');
-  const [activeJobId, setActiveJobId] = useState<string>();
-  const [lastCommandResult, setLastCommandResult] = useState<CommandResult>();
+  const [inlineTerminalLogs, setInlineTerminalLogs] = useState('');
+  const [inlineTerminalJobId, setInlineTerminalJobId] = useState<string>();
+  const inlineTerminalJobIdRef = useRef<string | undefined>(undefined);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -411,12 +408,16 @@ export function App() {
 
   useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
-      setCommandLogs((c) => c + payload.chunk);
+      if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
+        setInlineTerminalLogs((c) => c + payload.chunk);
+      }
     });
     const offDone = window.electronAPI.onCommandDone((payload) => {
-      setActiveJobId(undefined);
-      setLastCommandResult(payload);
-      setCommandLogs((c) => c + `\n[process exited ${payload.code ?? 'signal'}]\n`);
+      if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
+        setInlineTerminalJobId(undefined);
+        inlineTerminalJobIdRef.current = undefined;
+        setInlineTerminalLogs((c) => c + `\n[process exited ${payload.code ?? 'signal'}]\n`);
+      }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
       updateInFlightMessage(requestId, (m) => ({
@@ -556,8 +557,21 @@ export function App() {
     if (!result) return;
     setWorkspaceRoot(result.root);
     setWorkspaceTree(result.tree);
-    setCommandLogs((c) => c + `\n[workspace attached: ${result.root}]\n`);
+    setInlineTerminalLogs((c) => c + `\n[workspace attached: ${result.root}]\n`);
     void refreshWorkspaceChanges(result.root);
+  };
+
+  const openLastWorkspace = async () => {
+    const result = await window.electronAPI.openLastWorkspace();
+    if (!result) {
+      setSettingsStatus('Last workspace folder is missing or was moved. Use Open workspace to pick a folder.');
+      return;
+    }
+    setWorkspaceRoot(result.root);
+    setWorkspaceTree(result.tree);
+    setInlineTerminalLogs((c) => c + `\n[workspace attached: ${result.root}]\n`);
+    void refreshWorkspaceChanges(result.root);
+    setSettingsStatus('');
   };
 
   const clearWorkspace = () => {
@@ -568,7 +582,7 @@ export function App() {
       setWorkspaceChanges(null);
       setBuffers({});
       setActiveFilePath(undefined);
-      setCommandLogs((c) => c + '\n[workspace cleared]\n');
+      setInlineTerminalLogs((c) => c + '\n[workspace cleared]\n');
     });
   };
 
@@ -955,19 +969,21 @@ export function App() {
     setActiveRequestId(undefined);
   };
 
-  const runCommand = async () => {
-    if (!commandInput.trim()) return;
-    const result = await window.electronAPI.runCommand(commandInput, workspaceRoot);
-    setActiveJobId(result.jobId);
-    setLastCommandResult(undefined);
-  };
+  const runInlineTerminal = useCallback(async (command: string) => {
+    if (!command.trim() || !workspaceRoot) return;
+    setInlineTerminalLogs((c) => c + `> ${command}\n`);
+    const result = await window.electronAPI.runCommand(command, workspaceRoot);
+    setInlineTerminalJobId(result.jobId);
+    inlineTerminalJobIdRef.current = result.jobId;
+  }, [workspaceRoot]);
 
-  const killCommand = async () => {
-    if (!activeJobId) return;
-    await window.electronAPI.killCommand(activeJobId);
-    setActiveJobId(undefined);
-    setCommandLogs((c) => c + '\n[termination requested]\n');
-  };
+  const killInlineTerminal = useCallback(async () => {
+    if (!inlineTerminalJobId) return;
+    await window.electronAPI.killCommand(inlineTerminalJobId);
+    setInlineTerminalJobId(undefined);
+    inlineTerminalJobIdRef.current = undefined;
+    setInlineTerminalLogs((c) => c + '\n[termination requested]\n');
+  }, [inlineTerminalJobId]);
 
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
@@ -1184,24 +1200,66 @@ export function App() {
                 </svg>
                 {workspaceRoot ? 'Switch workspace' : 'Open workspace'}
               </button>
-              <button
-                className="sidebar-quick__btn"
-                disabled={!workspaceRoot}
-                onClick={clearWorkspace}
-                type="button"
-                title={workspaceRoot ? 'Unmount the current folder' : 'No workspace open'}
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                  <path
-                    d="M2.5 5h2.2L5.3 4h3.4l.6 1h2.2a1 1 0 011 1v5.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V6a1 1 0 011-1zM5.5 8.5h3"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Clear workspace
-              </button>
+              {workspaceRoot ? (
+                <button
+                  className="sidebar-quick__btn"
+                  onClick={clearWorkspace}
+                  type="button"
+                  title="Unmount the current folder"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M4 4l6 6M10 4l-6 6"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Clear workspace
+                </button>
+              ) : settings?.lastWorkspaceRoot ? (
+                <button
+                  className="sidebar-quick__btn"
+                  onClick={() => void openLastWorkspace()}
+                  type="button"
+                  title={`Reopen ${settings.lastWorkspaceRoot}`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M8.25 11V7.25A2.75 2.75 0 005.5 4.5H3.25"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M5.5 2.25L3.25 4.5 5.5 6.75"
+                      stroke="currentColor"
+                      strokeWidth="1.25"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Open last workspace
+                </button>
+              ) : (
+                <button
+                  className="sidebar-quick__btn"
+                  disabled
+                  type="button"
+                  title="No workspace open"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M4 4l6 6M10 4l-6 6"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Clear workspace
+                </button>
+              )}
             </div>
 
             <div className="sidebar-tabs" role="tablist">
@@ -1543,6 +1601,11 @@ export function App() {
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}
+            hasWorkspace={Boolean(workspaceRoot)}
+            terminalLogs={inlineTerminalLogs}
+            terminalJobId={inlineTerminalJobId}
+            onTerminalRun={runInlineTerminal}
+            onTerminalKill={killInlineTerminal}
           />
         </motion.section>
 
@@ -1570,13 +1633,6 @@ export function App() {
                 type="button"
               >
                 Changes
-              </button>
-              <button
-                className={`inspector-tab ${inspectorTab === 'console' ? 'is-active' : ''}`}
-                onClick={() => setInspectorTab('console')}
-                type="button"
-              >
-                Console
               </button>
               <button
                 className={`inspector-tab ${inspectorTab === 'settings' ? 'is-active' : ''}`}
@@ -1611,17 +1667,6 @@ export function App() {
                       }));
                     }}
                     onSave={saveActiveFile}
-                  />
-                ) : null}
-                {inspectorTab === 'console' ? (
-                  <CommandDeck
-                    activeJobId={activeJobId}
-                    commandInput={commandInput}
-                    lastResult={lastCommandResult}
-                    logs={commandLogs}
-                    onCommandInputChange={setCommandInput}
-                    onKill={killCommand}
-                    onRun={runCommand}
                   />
                 ) : null}
                 {inspectorTab === 'changes' ? (

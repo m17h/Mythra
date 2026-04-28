@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { basename, resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron';
 import appIconPath from './openkiwi_icon.png?asset';
 import { ChatStore } from './chat-store';
@@ -354,10 +355,45 @@ ipcMain.handle('workspace:choose', async () => {
   activeWorkspaceRoot = root;
   workspaceWatch.setRoot(root);
 
+  currentSettings = await settingsStore.save({
+    ...currentSettings,
+    lastWorkspaceRoot: root
+  });
+  mainWindow?.webContents.send('settings:updated', currentSettings);
+
   return {
     root,
     label: basename(root),
     tree: await workspaceService.getTree(root)
+  };
+});
+
+ipcMain.handle('workspace:open-last', async () => {
+  const candidate = currentSettings.lastWorkspaceRoot?.trim();
+  if (!candidate) {
+    return null;
+  }
+  try {
+    const st = await stat(candidate);
+    if (!st.isDirectory()) {
+      throw new Error('Not a directory');
+    }
+  } catch {
+    currentSettings = await settingsStore.save({
+      ...currentSettings,
+      lastWorkspaceRoot: null
+    });
+    mainWindow?.webContents.send('settings:updated', currentSettings);
+    return null;
+  }
+
+  activeWorkspaceRoot = candidate;
+  workspaceWatch.setRoot(candidate);
+
+  return {
+    root: candidate,
+    label: basename(candidate),
+    tree: await workspaceService.getTree(candidate)
   };
 });
 

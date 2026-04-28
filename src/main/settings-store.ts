@@ -10,6 +10,10 @@ const LEGACY_SETTINGS_FILE = 'pixel-forge-settings.json';
 const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => ({
   ...defaultSettings,
   ...saved,
+  lastWorkspaceRoot:
+    typeof saved?.lastWorkspaceRoot === 'string' && saved.lastWorkspaceRoot.trim().length > 0
+      ? saved.lastWorkspaceRoot.trim()
+      : null,
   providers: {
     lmstudio: {
       ...defaultSettings.providers.lmstudio,

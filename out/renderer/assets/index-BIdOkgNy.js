@@ -33654,7 +33654,12 @@ function ChatPanel({
   contextLimit,
   lastTokenUsage,
   onSessionModeToggle,
-  sessionModeToggleDisabled = false
+  sessionModeToggleDisabled = false,
+  hasWorkspace,
+  terminalLogs,
+  terminalJobId,
+  onTerminalRun,
+  onTerminalKill
 }) {
   const scrollRef = reactExports.useRef(null);
   const innerRef = reactExports.useRef(null);
@@ -33768,6 +33773,59 @@ function ChatPanel({
   reactExports.useEffect(() => {
     autoResize();
   }, [input, autoResize]);
+  const [terminalOpen, setTerminalOpen] = reactExports.useState(false);
+  const [terminalInput, setTerminalInput] = reactExports.useState("");
+  const terminalLogRef = reactExports.useRef(null);
+  const [workspaceGateNotice, setWorkspaceGateNotice] = reactExports.useState(null);
+  const workspaceGateNoticeTimerRef = reactExports.useRef(null);
+  const dismissWorkspaceGateNotice = reactExports.useCallback(() => {
+    if (workspaceGateNoticeTimerRef.current) {
+      clearTimeout(workspaceGateNoticeTimerRef.current);
+      workspaceGateNoticeTimerRef.current = null;
+    }
+    setWorkspaceGateNotice(null);
+  }, []);
+  const showWorkspaceGateNotice = reactExports.useCallback(
+    (message) => {
+      if (workspaceGateNoticeTimerRef.current) {
+        clearTimeout(workspaceGateNoticeTimerRef.current);
+        workspaceGateNoticeTimerRef.current = null;
+      }
+      setWorkspaceGateNotice(message);
+      workspaceGateNoticeTimerRef.current = setTimeout(() => {
+        setWorkspaceGateNotice(null);
+        workspaceGateNoticeTimerRef.current = null;
+      }, 1e4);
+    },
+    []
+  );
+  reactExports.useEffect(
+    () => () => {
+      if (workspaceGateNoticeTimerRef.current) {
+        clearTimeout(workspaceGateNoticeTimerRef.current);
+      }
+    },
+    []
+  );
+  reactExports.useEffect(() => {
+    if (hasWorkspace && workspaceGateNotice) {
+      dismissWorkspaceGateNotice();
+    }
+  }, [hasWorkspace, workspaceGateNotice, dismissWorkspaceGateNotice]);
+  reactExports.useEffect(() => {
+    if (terminalLogRef.current) {
+      terminalLogRef.current.scrollTop = terminalLogRef.current.scrollHeight;
+    }
+  }, [terminalLogs]);
+  const handleTerminalToggle = reactExports.useCallback(() => {
+    if (!hasWorkspace) {
+      showWorkspaceGateNotice(
+        "Open a workspace from the sidebar first. The terminal runs commands in your project folder."
+      );
+      return;
+    }
+    setTerminalOpen((v2) => !v2);
+  }, [hasWorkspace, showWorkspaceGateNotice]);
   const isTalk = sessionMode === "talk";
   const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
@@ -33926,7 +33984,78 @@ function ChatPanel({
         );
       })
     ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        initial: { height: 0, opacity: 0 },
+        animate: { height: "auto", opacity: 1 },
+        exit: { height: 0, opacity: 0 },
+        transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] },
+        style: { overflow: "hidden" },
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal__header", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-terminal__title", children: "Terminal" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal__actions", children: [
+              terminalJobId && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "chat-terminal__kill",
+                  onClick: onTerminalKill,
+                  type: "button",
+                  title: "Stop",
+                  children: "Stop"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "chat-terminal__close",
+                  onClick: () => setTerminalOpen(false),
+                  type: "button",
+                  title: "Close terminal",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 1l8 8M9 1l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) })
+                }
+              )
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { ref: terminalLogRef, className: "chat-terminal__log", children: terminalLogs || "No output yet.\n" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal__input-bar", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-terminal__prompt", children: ">_" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "chat-terminal__input",
+                value: terminalInput,
+                onChange: (e) => setTerminalInput(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" && terminalInput.trim()) {
+                    onTerminalRun(terminalInput);
+                    setTerminalInput("");
+                  }
+                },
+                placeholder: "Enter command..."
+              }
+            )
+          ] })
+        ] })
+      },
+      "inline-terminal"
+    ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose", children: [
+      workspaceGateNotice ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__notice", role: "alert", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-compose__notice-text", children: workspaceGateNotice }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            className: "chat-compose__notice-dismiss",
+            "aria-label": "Dismiss",
+            title: "Dismiss",
+            onClick: dismissWorkspaceGateNotice,
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 2l8 8M10 2l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) })
+          }
+        )
+      ] }) : null,
       attachments.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "composer-attachments", children: attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "composer-attachment", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: att.name }),
@@ -33971,6 +34100,19 @@ function ChatPanel({
           }
         ),
         /* @__PURE__ */ jsxRuntimeExports.jsx(ChatContextMeter, { limit: contextLimit, used: contextUsedEstimate }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: `chat-compose__terminal-toggle ${terminalOpen ? "is-active" : ""}`,
+            onClick: handleTerminalToggle,
+            type: "button",
+            title: terminalOpen ? "Close terminal" : "Open terminal",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 4l4 4-4 4", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 12h5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+            ] })
+          }
+        ),
         isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
@@ -34021,283 +34163,6 @@ function ChangesPanel({ changes, loading, workspaceRoot, onRefresh }) {
         /* @__PURE__ */ jsxRuntimeExports.jsx(DiffView, { diff: changes?.diff ?? "" })
       ] })
     ] })
-  ] });
-}
-function CommandDeck({
-  commandInput,
-  logs,
-  activeJobId,
-  lastResult,
-  onCommandInputChange,
-  onRun,
-  onKill
-}) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "command-deck", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "command-deck__lede", children: [
-      "Terminal for your ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "open workspace folder" }),
-      " (build, git, scripts)—not browser DevTools. Output streams below."
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-deck__header", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-kicker", children: "Command Deck" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-deck__status", children: [
-          activeJobId ? `Live job ${activeJobId.slice(0, 8)}` : "Idle",
-          lastResult ? ` · exit ${lastResult.code ?? "signal"}` : ""
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-deck__actions", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-button", onClick: onRun, type: "button", children: "Run" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-button action-button--ghost", onClick: onKill, disabled: !activeJobId, type: "button", children: "Stop" })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-bar", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "command-bar__prompt", children: "›" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "input",
-        {
-          className: "command-bar__input",
-          onChange: (event) => onCommandInputChange(event.target.value),
-          onKeyDown: (event) => {
-            if (event.key === "Enter") {
-              onRun();
-            }
-          },
-          placeholder: "git status",
-          value: commandInput
-        }
-      )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "command-log", children: logs || "No commands executed yet.\n" })
-  ] });
-}
-const MODEL_HOVER_TOOLTIP_MS = 500;
-const DROPDOWN_EXIT_MS = 150;
-function sortModelsByFavorites(models, favoriteIds) {
-  const fav = new Set(favoriteIds);
-  return [...models].sort((a, b) => {
-    const aF = fav.has(a.id) ? 0 : 1;
-    const bF = fav.has(b.id) ? 0 : 1;
-    if (aF !== bF) return aF - bF;
-    return a.id.localeCompare(b.id);
-  });
-}
-function ModelSearch({
-  models,
-  value,
-  favoriteIds = [],
-  onChange,
-  onToggleFavorite,
-  portalDropdown = false
-}) {
-  const [query, setQuery] = reactExports.useState("");
-  const [open, setOpen] = reactExports.useState(false);
-  const [mounted, setMounted] = reactExports.useState(false);
-  const [animState, setAnimState] = reactExports.useState("closed");
-  const [hoverTooltip, setHoverTooltip] = reactExports.useState(null);
-  const [dropdownPos, setDropdownPos] = reactExports.useState(null);
-  const ref = reactExports.useRef(null);
-  const inputRef = reactExports.useRef(null);
-  const dropdownRef = reactExports.useRef(null);
-  const tipTimerRef = reactExports.useRef(null);
-  const exitTimerRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (open) {
-      if (exitTimerRef.current) {
-        clearTimeout(exitTimerRef.current);
-        exitTimerRef.current = null;
-      }
-      setMounted(true);
-      setAnimState("entering");
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setAnimState("open"));
-      });
-    } else if (mounted) {
-      setAnimState("exiting");
-      exitTimerRef.current = setTimeout(() => {
-        exitTimerRef.current = null;
-        setMounted(false);
-        setAnimState("closed");
-      }, DROPDOWN_EXIT_MS);
-    }
-    return () => {
-      if (exitTimerRef.current) {
-        clearTimeout(exitTimerRef.current);
-        exitTimerRef.current = null;
-      }
-    };
-  }, [open]);
-  const clearTipTimer = reactExports.useCallback(() => {
-    if (tipTimerRef.current) {
-      clearTimeout(tipTimerRef.current);
-      tipTimerRef.current = null;
-    }
-  }, []);
-  const hideHoverTooltip = reactExports.useCallback(() => {
-    clearTipTimer();
-    setHoverTooltip(null);
-  }, [clearTipTimer]);
-  const scheduleHoverTooltip = reactExports.useCallback(
-    (el, fullId) => {
-      clearTipTimer();
-      tipTimerRef.current = setTimeout(() => {
-        tipTimerRef.current = null;
-        const r = el.getBoundingClientRect();
-        const margin = 8;
-        const estW = 360;
-        let left = r.right + margin;
-        let top = r.top;
-        if (left + estW > window.innerWidth - margin) {
-          left = Math.max(margin, r.left);
-          top = r.bottom + margin;
-        }
-        setHoverTooltip({ fullId, left, top });
-      }, MODEL_HOVER_TOOLTIP_MS);
-    },
-    [clearTipTimer]
-  );
-  reactExports.useEffect(() => {
-    return () => clearTipTimer();
-  }, [clearTipTimer]);
-  reactExports.useEffect(() => {
-    if (!open) hideHoverTooltip();
-  }, [open, hideHoverTooltip]);
-  reactExports.useEffect(() => {
-    const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) {
-        if (portalDropdown && dropdownRef.current?.contains(e.target)) return;
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [portalDropdown]);
-  reactExports.useLayoutEffect(() => {
-    if (!mounted || !portalDropdown || !inputRef.current) {
-      setDropdownPos(null);
-      return;
-    }
-    const rect = inputRef.current.getBoundingClientRect();
-    setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-  }, [mounted, portalDropdown]);
-  const baseList = sortModelsByFavorites(
-    query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models,
-    favoriteIds
-  );
-  const filtered = baseList;
-  const displayValue = value || "";
-  const isPortalAnimated = portalDropdown && (animState === "entering" || animState === "open" || animState === "exiting");
-  const portalAnimClass = animState === "open" ? "is-open" : animState === "exiting" ? "is-exiting" : "";
-  const showDropdown = portalDropdown ? mounted : open;
-  const dropdownContent = showDropdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "div",
-    {
-      ref: dropdownRef,
-      className: `model-search__dropdown ${portalDropdown ? `model-search__dropdown--portal ${portalAnimClass}` : ""}`,
-      style: isPortalAnimated && dropdownPos ? { position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width } : portalDropdown ? { position: "fixed", visibility: "hidden" } : void 0,
-      onScroll: hideHoverTooltip,
-      children: [
-        filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__empty", children: [
-          "No models match “",
-          query,
-          "”"
-        ] }) : filtered.slice(0, 50).map((m) => {
-          const isFav = favoriteIds.includes(m.id);
-          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "div",
-            {
-              className: `model-search__row ${m.id === value ? "is-active" : ""}`,
-              children: [
-                onToggleFavorite && /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "button",
-                  {
-                    className: "model-search__star",
-                    onClick: (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onToggleFavorite(m.id);
-                    },
-                    type: "button",
-                    "aria-pressed": isFav,
-                    title: isFav ? "Remove from favorites" : "Favorite this model",
-                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "path",
-                      {
-                        d: "M12 2.5l2.4 5.3 5.8.5-4.3 3.7 1.3 5.6L12 16.1 6.8 17.5l1.3-5.6-4.3-3.7 5.8-.5L12 2.5z",
-                        stroke: "currentColor",
-                        strokeLinejoin: "round",
-                        fill: isFav ? "currentColor" : "none",
-                        strokeWidth: "1.4"
-                      }
-                    ) })
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "button",
-                  {
-                    className: "model-search__option",
-                    onClick: () => {
-                      hideHoverTooltip();
-                      onChange(m.id);
-                      setOpen(false);
-                      setQuery("");
-                    },
-                    onMouseEnter: (e) => scheduleHoverTooltip(e.currentTarget, m.id),
-                    onMouseLeave: hideHoverTooltip,
-                    type: "button",
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model-search__option-id", children: m.id }),
-                      m.contextLength ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "model-search__option-ctx", children: [
-                        Math.round(m.contextLength / 1024),
-                        "k ctx"
-                      ] }) : null
-                    ]
-                  }
-                )
-              ]
-            },
-            m.id
-          );
-        }),
-        filtered.length > 50 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__more", children: [
-          "+ ",
-          filtered.length - 50,
-          " more results. Refine your search."
-        ] })
-      ]
-    }
-  ) : null;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search", ref, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        ref: inputRef,
-        className: "model-search__input",
-        placeholder: "Search models...",
-        value: open ? query : displayValue,
-        onFocus: () => {
-          setOpen(true);
-          setQuery("");
-        },
-        onChange: (e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }
-      }
-    ),
-    portalDropdown ? reactDomExports.createPortal(dropdownContent, document.body) : dropdownContent,
-    hoverTooltip && reactDomExports.createPortal(
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "div",
-        {
-          className: "model-search__name-tooltip",
-          role: "tooltip",
-          style: { left: hoverTooltip.left, top: hoverTooltip.top },
-          children: hoverTooltip.fullId
-        }
-      ),
-      document.body
-    )
   ] });
 }
 function _arrayLikeToArray(r, a) {
@@ -34993,6 +34858,235 @@ function FileTree({ nodes, depth = 0, activePath, onOpen }) {
     ),
     node2.type === "directory" && node2.children && node2.children.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(FileTree, { nodes: node2.children, depth: depth + 1, activePath, onOpen }) : null
   ] }, node2.path)) });
+}
+const MODEL_HOVER_TOOLTIP_MS = 500;
+const DROPDOWN_EXIT_MS = 150;
+function sortModelsByFavorites(models, favoriteIds) {
+  const fav = new Set(favoriteIds);
+  return [...models].sort((a, b) => {
+    const aF = fav.has(a.id) ? 0 : 1;
+    const bF = fav.has(b.id) ? 0 : 1;
+    if (aF !== bF) return aF - bF;
+    return a.id.localeCompare(b.id);
+  });
+}
+function ModelSearch({
+  models,
+  value,
+  favoriteIds = [],
+  onChange,
+  onToggleFavorite,
+  portalDropdown = false
+}) {
+  const [query, setQuery] = reactExports.useState("");
+  const [open, setOpen] = reactExports.useState(false);
+  const [mounted, setMounted] = reactExports.useState(false);
+  const [animState, setAnimState] = reactExports.useState("closed");
+  const [hoverTooltip, setHoverTooltip] = reactExports.useState(null);
+  const [dropdownPos, setDropdownPos] = reactExports.useState(null);
+  const ref = reactExports.useRef(null);
+  const inputRef = reactExports.useRef(null);
+  const dropdownRef = reactExports.useRef(null);
+  const tipTimerRef = reactExports.useRef(null);
+  const exitTimerRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (open) {
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setMounted(true);
+      setAnimState("entering");
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setAnimState("open"));
+      });
+    } else if (mounted) {
+      setAnimState("exiting");
+      exitTimerRef.current = setTimeout(() => {
+        exitTimerRef.current = null;
+        setMounted(false);
+        setAnimState("closed");
+      }, DROPDOWN_EXIT_MS);
+    }
+    return () => {
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+  }, [open]);
+  const clearTipTimer = reactExports.useCallback(() => {
+    if (tipTimerRef.current) {
+      clearTimeout(tipTimerRef.current);
+      tipTimerRef.current = null;
+    }
+  }, []);
+  const hideHoverTooltip = reactExports.useCallback(() => {
+    clearTipTimer();
+    setHoverTooltip(null);
+  }, [clearTipTimer]);
+  const scheduleHoverTooltip = reactExports.useCallback(
+    (el, fullId) => {
+      clearTipTimer();
+      tipTimerRef.current = setTimeout(() => {
+        tipTimerRef.current = null;
+        const r = el.getBoundingClientRect();
+        const margin = 8;
+        const estW = 360;
+        let left = r.right + margin;
+        let top = r.top;
+        if (left + estW > window.innerWidth - margin) {
+          left = Math.max(margin, r.left);
+          top = r.bottom + margin;
+        }
+        setHoverTooltip({ fullId, left, top });
+      }, MODEL_HOVER_TOOLTIP_MS);
+    },
+    [clearTipTimer]
+  );
+  reactExports.useEffect(() => {
+    return () => clearTipTimer();
+  }, [clearTipTimer]);
+  reactExports.useEffect(() => {
+    if (!open) hideHoverTooltip();
+  }, [open, hideHoverTooltip]);
+  reactExports.useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        if (portalDropdown && dropdownRef.current?.contains(e.target)) return;
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [portalDropdown]);
+  reactExports.useLayoutEffect(() => {
+    if (!mounted || !portalDropdown || !inputRef.current) {
+      setDropdownPos(null);
+      return;
+    }
+    const rect = inputRef.current.getBoundingClientRect();
+    setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+  }, [mounted, portalDropdown]);
+  const baseList = sortModelsByFavorites(
+    query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models,
+    favoriteIds
+  );
+  const filtered = baseList;
+  const displayValue = value || "";
+  const isPortalAnimated = portalDropdown && (animState === "entering" || animState === "open" || animState === "exiting");
+  const portalAnimClass = animState === "open" ? "is-open" : animState === "exiting" ? "is-exiting" : "";
+  const showDropdown = portalDropdown ? mounted : open;
+  const dropdownContent = showDropdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: dropdownRef,
+      className: `model-search__dropdown ${portalDropdown ? `model-search__dropdown--portal ${portalAnimClass}` : ""}`,
+      style: isPortalAnimated && dropdownPos ? { position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width } : portalDropdown ? { position: "fixed", visibility: "hidden" } : void 0,
+      onScroll: hideHoverTooltip,
+      children: [
+        filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__empty", children: [
+          "No models match “",
+          query,
+          "”"
+        ] }) : filtered.slice(0, 50).map((m) => {
+          const isFav = favoriteIds.includes(m.id);
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              className: `model-search__row ${m.id === value ? "is-active" : ""}`,
+              children: [
+                onToggleFavorite && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "model-search__star",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onToggleFavorite(m.id);
+                    },
+                    type: "button",
+                    "aria-pressed": isFav,
+                    title: isFav ? "Remove from favorites" : "Favorite this model",
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M12 2.5l2.4 5.3 5.8.5-4.3 3.7 1.3 5.6L12 16.1 6.8 17.5l1.3-5.6-4.3-3.7 5.8-.5L12 2.5z",
+                        stroke: "currentColor",
+                        strokeLinejoin: "round",
+                        fill: isFav ? "currentColor" : "none",
+                        strokeWidth: "1.4"
+                      }
+                    ) })
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "button",
+                  {
+                    className: "model-search__option",
+                    onClick: () => {
+                      hideHoverTooltip();
+                      onChange(m.id);
+                      setOpen(false);
+                      setQuery("");
+                    },
+                    onMouseEnter: (e) => scheduleHoverTooltip(e.currentTarget, m.id),
+                    onMouseLeave: hideHoverTooltip,
+                    type: "button",
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model-search__option-id", children: m.id }),
+                      m.contextLength ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "model-search__option-ctx", children: [
+                        Math.round(m.contextLength / 1024),
+                        "k ctx"
+                      ] }) : null
+                    ]
+                  }
+                )
+              ]
+            },
+            m.id
+          );
+        }),
+        filtered.length > 50 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search__more", children: [
+          "+ ",
+          filtered.length - 50,
+          " more results. Refine your search."
+        ] })
+      ]
+    }
+  ) : null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-search", ref, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        ref: inputRef,
+        className: "model-search__input",
+        placeholder: "Search models...",
+        value: open ? query : displayValue,
+        onFocus: () => {
+          setOpen(true);
+          setQuery("");
+        },
+        onChange: (e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }
+      }
+    ),
+    portalDropdown ? reactDomExports.createPortal(dropdownContent, document.body) : dropdownContent,
+    hoverTooltip && reactDomExports.createPortal(
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: "model-search__name-tooltip",
+          role: "tooltip",
+          style: { left: hoverTooltip.left, top: hoverTooltip.top },
+          children: hoverTooltip.fullId
+        }
+      ),
+      document.body
+    )
+  ] });
 }
 const promptPresets = [
   {
@@ -36139,10 +36233,9 @@ function App() {
   const newChatModelOverrideRef = reactExports.useRef(null);
   newChatModelOverrideRef.current = newChatModelOverride;
   chatStreamingRef.current = chatStreaming;
-  const [commandInput, setCommandInput] = reactExports.useState("git status");
-  const [commandLogs, setCommandLogs] = reactExports.useState("");
-  const [activeJobId, setActiveJobId] = reactExports.useState();
-  const [lastCommandResult, setLastCommandResult] = reactExports.useState();
+  const [inlineTerminalLogs, setInlineTerminalLogs] = reactExports.useState("");
+  const [inlineTerminalJobId, setInlineTerminalJobId] = reactExports.useState();
+  const inlineTerminalJobIdRef = reactExports.useRef(void 0);
   const [inspectorTab, setInspectorTab] = reactExports.useState("settings");
   const [workspaceChanges, setWorkspaceChanges] = reactExports.useState(null);
   const [changesLoading, setChangesLoading] = reactExports.useState(false);
@@ -36366,14 +36459,18 @@ function App() {
   }, [settings, overrideModelProvider]);
   reactExports.useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
-      setCommandLogs((c) => c + payload.chunk);
+      if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
+        setInlineTerminalLogs((c) => c + payload.chunk);
+      }
     });
     const offDone = window.electronAPI.onCommandDone((payload) => {
-      setActiveJobId(void 0);
-      setLastCommandResult(payload);
-      setCommandLogs((c) => c + `
+      if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
+        setInlineTerminalJobId(void 0);
+        inlineTerminalJobIdRef.current = void 0;
+        setInlineTerminalLogs((c) => c + `
 [process exited ${payload.code ?? "signal"}]
 `);
+      }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
       updateInFlightMessage(requestId, (m) => ({
@@ -36506,10 +36603,24 @@ function App() {
     if (!result) return;
     setWorkspaceRoot(result.root);
     setWorkspaceTree(result.tree);
-    setCommandLogs((c) => c + `
+    setInlineTerminalLogs((c) => c + `
 [workspace attached: ${result.root}]
 `);
     void refreshWorkspaceChanges(result.root);
+  };
+  const openLastWorkspace = async () => {
+    const result = await window.electronAPI.openLastWorkspace();
+    if (!result) {
+      setSettingsStatus("Last workspace folder is missing or was moved. Use Open workspace to pick a folder.");
+      return;
+    }
+    setWorkspaceRoot(result.root);
+    setWorkspaceTree(result.tree);
+    setInlineTerminalLogs((c) => c + `
+[workspace attached: ${result.root}]
+`);
+    void refreshWorkspaceChanges(result.root);
+    setSettingsStatus("");
   };
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
@@ -36519,7 +36630,7 @@ function App() {
       setWorkspaceChanges(null);
       setBuffers({});
       setActiveFilePath(void 0);
-      setCommandLogs((c) => c + "\n[workspace cleared]\n");
+      setInlineTerminalLogs((c) => c + "\n[workspace cleared]\n");
     });
   };
   const openFile = async (target) => {
@@ -36872,18 +36983,21 @@ function App() {
     setChatStreaming(false);
     setActiveRequestId(void 0);
   };
-  const runCommand = async () => {
-    if (!commandInput.trim()) return;
-    const result = await window.electronAPI.runCommand(commandInput, workspaceRoot);
-    setActiveJobId(result.jobId);
-    setLastCommandResult(void 0);
-  };
-  const killCommand = async () => {
-    if (!activeJobId) return;
-    await window.electronAPI.killCommand(activeJobId);
-    setActiveJobId(void 0);
-    setCommandLogs((c) => c + "\n[termination requested]\n");
-  };
+  const runInlineTerminal = reactExports.useCallback(async (command) => {
+    if (!command.trim() || !workspaceRoot) return;
+    setInlineTerminalLogs((c) => c + `> ${command}
+`);
+    const result = await window.electronAPI.runCommand(command, workspaceRoot);
+    setInlineTerminalJobId(result.jobId);
+    inlineTerminalJobIdRef.current = result.jobId;
+  }, [workspaceRoot]);
+  const killInlineTerminal = reactExports.useCallback(async () => {
+    if (!inlineTerminalJobId) return;
+    await window.electronAPI.killCommand(inlineTerminalJobId);
+    setInlineTerminalJobId(void 0);
+    inlineTerminalJobIdRef.current = void 0;
+    setInlineTerminalLogs((c) => c + "\n[termination requested]\n");
+  }, [inlineTerminalJobId]);
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : void 0;
   const selectedProvider = settings?.providers[settings.selectedProvider];
   const effectiveHeaderModelId = effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
@@ -37095,23 +37209,74 @@ function App() {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 4.5l5-3 5 3v6l-5 3-5-3v-6z", stroke: "currentColor", strokeWidth: "1.4", strokeLinejoin: "round" }) }),
                 workspaceRoot ? "Switch workspace" : "Open workspace"
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
                   className: "sidebar-quick__btn",
-                  disabled: !workspaceRoot,
                   onClick: clearWorkspace,
                   type: "button",
-                  title: workspaceRoot ? "Unmount the current folder" : "No workspace open",
+                  title: "Unmount the current folder",
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
                       "path",
                       {
-                        d: "M2.5 5h2.2L5.3 4h3.4l.6 1h2.2a1 1 0 011 1v5.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V6a1 1 0 011-1zM5.5 8.5h3",
+                        d: "M4 4l6 6M10 4l-6 6",
                         stroke: "currentColor",
-                        strokeWidth: "1.2",
-                        strokeLinecap: "round",
-                        strokeLinejoin: "round"
+                        strokeWidth: "1.4",
+                        strokeLinecap: "round"
+                      }
+                    ) }),
+                    "Clear workspace"
+                  ]
+                }
+              ) : settings?.lastWorkspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "sidebar-quick__btn",
+                  onClick: () => void openLastWorkspace(),
+                  type: "button",
+                  title: `Reopen ${settings.lastWorkspaceRoot}`,
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "path",
+                        {
+                          d: "M8.25 11V7.25A2.75 2.75 0 005.5 4.5H3.25",
+                          stroke: "currentColor",
+                          strokeWidth: "1.25",
+                          strokeLinecap: "round",
+                          strokeLinejoin: "round"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "path",
+                        {
+                          d: "M5.5 2.25L3.25 4.5 5.5 6.75",
+                          stroke: "currentColor",
+                          strokeWidth: "1.25",
+                          strokeLinecap: "round",
+                          strokeLinejoin: "round"
+                        }
+                      )
+                    ] }),
+                    "Open last workspace"
+                  ]
+                }
+              ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "sidebar-quick__btn",
+                  disabled: true,
+                  type: "button",
+                  title: "No workspace open",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M4 4l6 6M10 4l-6 6",
+                        stroke: "currentColor",
+                        strokeWidth: "1.4",
+                        strokeLinecap: "round"
                       }
                     ) }),
                     "Clear workspace"
@@ -37454,7 +37619,12 @@ function App() {
               sessionModeToggleDisabled: !settings,
               sessionMode,
               selectedModel: effectiveHeaderModelId,
-              selectedProviderLabel
+              selectedProviderLabel,
+              hasWorkspace: Boolean(workspaceRoot),
+              terminalLogs: inlineTerminalLogs,
+              terminalJobId: inlineTerminalJobId,
+              onTerminalRun: runInlineTerminal,
+              onTerminalKill: killInlineTerminal
             }
           )
         }
@@ -37492,15 +37662,6 @@ function App() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
-                  className: `inspector-tab ${inspectorTab === "console" ? "is-active" : ""}`,
-                  onClick: () => setInspectorTab("console"),
-                  type: "button",
-                  children: "Console"
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "button",
-                {
                   className: `inspector-tab ${inspectorTab === "settings" ? "is-active" : ""}`,
                   onClick: () => setInspectorTab("settings"),
                   type: "button",
@@ -37533,18 +37694,6 @@ function App() {
                         }));
                       },
                       onSave: saveActiveFile
-                    }
-                  ) : null,
-                  inspectorTab === "console" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    CommandDeck,
-                    {
-                      activeJobId,
-                      commandInput,
-                      lastResult: lastCommandResult,
-                      logs: commandLogs,
-                      onCommandInputChange: setCommandInput,
-                      onKill: killCommand,
-                      onRun: runCommand
                     }
                   ) : null,
                   inspectorTab === "changes" ? /* @__PURE__ */ jsxRuntimeExports.jsx(

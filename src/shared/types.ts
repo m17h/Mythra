@@ -82,6 +82,11 @@ export interface AppSettings {
   tools: ToolPermissions;
   agent: AgentSettings;
   ui: UiSettings;
+  /**
+   * Most recently opened workspace folder (persists after Clear workspace).
+   * Used for “Open last workspace” when nothing is mounted.
+   */
+  lastWorkspaceRoot: string | null;
 }
 
 export interface ModelInfo {
@@ -278,5 +283,6 @@ export const defaultSettings: AppSettings = {
     sessionMode: 'agent',
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] }
-  }
+  },
+  lastWorkspaceRoot: null
 };

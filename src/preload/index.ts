@@ -23,6 +23,8 @@ const electronAPI = {
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings) as Promise<AppSettings>,
   chooseWorkspace: () =>
     ipcRenderer.invoke('workspace:choose') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
+  openLastWorkspace: () =>
+    ipcRenderer.invoke('workspace:open-last') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
   getWorkspaceTree: (root: string) => ipcRenderer.invoke('workspace:tree', root) as Promise<WorkspaceNode[]>,
   detachWorkspace: () => ipcRenderer.invoke('workspace:detach') as Promise<void>,
   openFile: (root: string, target: string) =>
