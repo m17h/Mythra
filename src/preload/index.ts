@@ -16,6 +16,7 @@ import type {
   WorkspaceChanges,
   WorkspaceNode,
   WizardPromptApprovalRequest,
+  WizardProfile,
   WizardSetupRequest,
   WizardSetupResult
 } from '@shared/types';
@@ -28,6 +29,8 @@ const electronAPI = {
     ipcRenderer.invoke('workspace:choose') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
   openLastWorkspace: () =>
     ipcRenderer.invoke('workspace:open-last') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
+  getLastValidWorkspaceRoot: () =>
+    ipcRenderer.invoke('workspace:last-valid-root') as Promise<string | null>,
   activateWorkspace: (root: string) =>
     ipcRenderer.invoke('workspace:activate', root) as Promise<{ root: string; label: string; tree: WorkspaceNode[] }>,
   getWorkspaceTree: (root: string) => ipcRenderer.invoke('workspace:tree', root) as Promise<WorkspaceNode[]>,
@@ -40,9 +43,14 @@ const electronAPI = {
     ipcRenderer.invoke('workspace:changes', root) as Promise<WorkspaceChanges>,
   getRecommendedWizardWorkspace: (name: string) =>
     ipcRenderer.invoke('wizard:recommended-workspace', name) as Promise<string>,
-  chooseWizardWorkspace: (name: string) => ipcRenderer.invoke('wizard:choose-workspace', name) as Promise<string | null>,
+  chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) =>
+    ipcRenderer.invoke('wizard:choose-workspace', name, preferredDefaultPath) as Promise<string | null>,
+  chooseWizardProjectsFolder: (preferredDefaultPath?: string) =>
+    ipcRenderer.invoke('wizard:choose-projects-folder', preferredDefaultPath) as Promise<string | null>,
   setupWizard: (request: WizardSetupRequest) =>
     ipcRenderer.invoke('wizard:setup', request) as Promise<WizardSetupResult>,
+  syncWizardWorkspaceFolder: (profile: WizardProfile) =>
+    ipcRenderer.invoke('wizard:sync-workspace-folder', profile) as Promise<WizardProfile>,
   deleteWizardWorkspace: (root: string) =>
     ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
   respondWizardPromptApproval: (id: string, approved: boolean) =>
@@ -111,6 +119,11 @@ const electronAPI = {
     const listener = (_event: unknown, settings: AppSettings) => callback(settings);
     ipcRenderer.on('settings:updated', listener);
     return () => ipcRenderer.removeListener('settings:updated', listener);
+  },
+  onChatsUpdated: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('chats:updated', listener);
+    return () => ipcRenderer.removeListener('chats:updated', listener);
   },
   listChats: () => ipcRenderer.invoke('chats:list') as Promise<SavedChatMeta[]>,
   loadChat: (id: string) => ipcRenderer.invoke('chats:load', id) as Promise<SavedChat | null>,

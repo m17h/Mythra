@@ -437,6 +437,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -452,6 +453,14 @@ export function ChatPanel({
   /** User is within this many px of the bottom, or we just forced scroll (e.g. new content). */
   const userNearBottomRef = useRef(true);
 
+  const scrollToBottom = useCallback(() => {
+    const node = scrollRef.current;
+    const bottom = bottomRef.current;
+    if (!node || !bottom) return;
+    bottom.scrollIntoView({ block: 'end' });
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
   const clampAndMaybeStickToBottom = useCallback(() => {
     const node = scrollRef.current;
     if (!node) return;
@@ -460,18 +469,22 @@ export function ChatPanel({
       node.scrollTop = max;
     }
     if (userNearBottomRef.current) {
-      node.scrollTop = node.scrollHeight;
+      scrollToBottom();
     }
-  }, []);
+  }, [scrollToBottom]);
 
-  /** Collapsible <details> toggles (Thinking, tool blocks) do not change React state; the scroll range can go stale. */
-  const afterCollapsibleLayout = useCallback(() => {
+  const afterScrollLayout = useCallback(() => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         clampAndMaybeStickToBottom();
       });
     });
   }, [clampAndMaybeStickToBottom]);
+
+  /** Collapsible <details> toggles (Thinking, tool blocks) do not change React state; the scroll range can go stale. */
+  const afterCollapsibleLayout = useCallback(() => {
+    afterScrollLayout();
+  }, [afterScrollLayout]);
 
   const handleScroll = useCallback(() => {
     const n = scrollRef.current;
@@ -507,17 +520,16 @@ export function ChatPanel({
     if (!node) return;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const n = scrollRef.current;
-        if (!n) return;
-        n.scrollTop = n.scrollHeight;
+        scrollToBottom();
         userNearBottomRef.current = true;
       });
     });
-  }, [timeline, isStreaming]);
+  }, [scrollToBottom, timeline, isStreaming]);
 
   useEffect(() => {
     const inner = innerRef.current;
-    if (!inner) return;
+    const scroll = scrollRef.current;
+    if (!inner || !scroll) return;
     /** Batched scroll fix: avoid pinning “to bottom” on every sub-frame of a height animation (e.g. Thinking collapse) — that fight causes the bubble to shudder. */
     let raf = 0;
     let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -545,6 +557,7 @@ export function ChatPanel({
       scheduleClamp();
     });
     ro.observe(inner);
+    ro.observe(scroll);
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
@@ -813,6 +826,7 @@ export function ChatPanel({
             </motion.article>
           );
         })}
+        <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
         </div>
       </div>
 

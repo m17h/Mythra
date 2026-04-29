@@ -34,8 +34,7 @@ export function SystemPromptModal({ open, value, onChange, onClose }: SystemProm
             <div className="app-dialog__kicker">Settings</div>
             <h3 id="system-prompt-modal-title">System prompt</h3>
             <p className="system-prompt-modal__hint" id="system-prompt-modal-hint">
-              Changes apply in memory to the active provider. Use <strong>Save</strong> in Settings to write your profile
-              to disk.
+              Changes apply to the active provider and are saved automatically after you edit.
             </p>
             <textarea
               autoFocus

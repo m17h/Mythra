@@ -18,7 +18,8 @@ import type {
   WorkspaceNode,
   WizardPromptApprovalRequest,
   WizardSetupRequest,
-  WizardSetupResult
+  WizardSetupResult,
+  WizardProfile
 } from '@shared/types';
 
 declare global {
@@ -29,6 +30,7 @@ declare global {
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       openLastWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
+      getLastValidWorkspaceRoot: () => Promise<string | null>;
       activateWorkspace: (root: string) => Promise<{ root: string; label: string; tree: WorkspaceNode[] }>;
       getWorkspaceTree: (root: string) => Promise<WorkspaceNode[]>;
       detachWorkspace: () => Promise<void>;
@@ -36,8 +38,10 @@ declare global {
       saveFile: (root: string, target: string, content: string) => Promise<OpenFile>;
       getWorkspaceChanges: (root: string) => Promise<WorkspaceChanges>;
       getRecommendedWizardWorkspace: (name: string) => Promise<string>;
-      chooseWizardWorkspace: (name: string) => Promise<string | null>;
+      chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) => Promise<string | null>;
+      chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
       setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
+      syncWizardWorkspaceFolder: (profile: WizardProfile) => Promise<WizardProfile>;
       deleteWizardWorkspace: (root: string) => Promise<{ path: string }>;
       respondWizardPromptApproval: (id: string, approved: boolean) => Promise<void>;
       onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => () => void;
@@ -67,6 +71,7 @@ declare global {
       onChatActivity: (callback: (payload: ChatActivity) => void) => () => void;
       onWorkspaceChanged: (callback: (payload: WorkspaceChanged) => void) => () => void;
       onSettingsUpdated: (callback: (settings: AppSettings) => void) => () => void;
+      onChatsUpdated: (callback: () => void) => () => void;
       listChats: () => Promise<SavedChatMeta[]>;
       loadChat: (id: string) => Promise<SavedChat | null>;
       saveChat: (chat: SavedChat) => Promise<void>;

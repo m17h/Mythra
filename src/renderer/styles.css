@@ -649,6 +649,7 @@ html[data-platform='darwin'] .app-shell {
 .sidebar-content {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 8px 12px;
 }
@@ -880,12 +881,15 @@ html[data-platform='darwin'] .app-shell {
   display: flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
 }
 
 .wizard-title-row span {
+  flex: 1 1 0%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wizard-title-row__chevron {
@@ -930,11 +934,13 @@ html[data-platform='darwin'] .app-shell {
 .wizard-group {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .wizard-session-list {
   display: grid;
   gap: 4px;
+  min-width: 0;
   margin: -2px 4px 8px 20px;
   padding-left: 10px;
   border-left: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
@@ -946,10 +952,13 @@ html[data-platform='darwin'] .app-shell {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
   color: var(--text-1);
   text-align: left;
+  overflow: hidden;
   transition: background var(--transition-fast), color var(--transition-fast);
   cursor: pointer;
 }
@@ -961,6 +970,7 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .wizard-session-row span {
+  flex: 1 1 0%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1450,6 +1460,11 @@ html[data-platform='darwin'] .app-shell {
   box-sizing: border-box;
   /* Scroll range past the last bubble (composer sits below this area). */
   padding-bottom: 40px;
+}
+
+.chat-scroll__bottom {
+  flex: 0 0 1px;
+  width: 100%;
 }
 
 /* Chat empty state */
@@ -2853,6 +2868,10 @@ details.chat-activity--collapsible {
   width: min(720px, calc(100vw - 48px));
 }
 
+.wizard-setup .btn:disabled {
+  cursor: default;
+}
+
 .wizard-setup__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2937,18 +2956,33 @@ details.chat-activity--collapsible {
 .wizard-prompt-approval {
   width: min(1060px, calc(100vw - 64px));
   max-height: min(760px, calc(100vh - 72px));
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.wizard-prompt-approval > p {
+.wizard-prompt-approval__intro {
+  flex-shrink: 0;
+}
+
+.wizard-prompt-approval__intro > p {
   max-width: 72ch;
+}
+
+.wizard-prompt-approval .app-dialog__actions {
+  flex-shrink: 0;
+  margin-top: 14px;
 }
 
 .wizard-prompt-approval__compare {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 14px;
-  margin-top: 16px;
-  min-height: 360px;
+  margin-top: 14px;
+  flex: 1;
+  min-height: 0;
 }
 
 .wizard-prompt-approval__compare section {
@@ -2977,7 +3011,7 @@ details.chat-activity--collapsible {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 12px;
+  padding: 8px 0;
   overflow: auto;
   color: var(--text-1);
   font-family: var(--font-mono);
@@ -2985,6 +3019,32 @@ details.chat-activity--collapsible {
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.wizard-prompt-approval__line {
+  display: block;
+  padding: 0 12px;
+  min-height: 1.55em;
+}
+
+.wizard-prompt-approval__line--remove {
+  color: #991b1b;
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.wizard-prompt-approval__line--add {
+  color: #166534;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+:root:not([data-custom-light='true']):not([data-theme='ice-station']):not([data-theme='kiwi']) .wizard-prompt-approval__line--remove {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.16);
+}
+
+:root:not([data-custom-light='true']):not([data-theme='ice-station']):not([data-theme='kiwi']) .wizard-prompt-approval__line--add {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.14);
 }
 
 .wizard-prompt-approval__arrow {

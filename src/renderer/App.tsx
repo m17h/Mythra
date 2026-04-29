@@ -40,6 +40,27 @@ import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@share
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+
+/** Loose match for comparing filesystem roots across slash variants. */
+const pathsEqual = (a: string, b: string) =>
+  a.replace(/\\/g, '/').replace(/\/+$/, '') === b.replace(/\\/g, '/').replace(/\/+$/, '');
+
+/** Remap absolute paths that lived under oldRoot to newRoot (same relative suffix). */
+function workspaceAbsolutePathPrefixRemap(oldRoot: string, newRoot: string) {
+  const norm = (s: string) => s.replace(/\\/g, '/');
+  const oldBase = norm(oldRoot).replace(/\/+$/, '');
+  const newBase = norm(newRoot).replace(/\/+$/, '');
+  const oldLen = oldBase.length;
+  return (p: string) => {
+    const pn = norm(p);
+    const prefix = `${oldBase}/`;
+    if (pn === oldBase || pn.startsWith(prefix)) {
+      const suffix = pn === oldBase ? '' : pn.slice(oldLen);
+      return `${newBase}${suffix}`;
+    }
+    return p;
+  };
+}
 const isEmbeddingModel = (modelId: string) => /embed|embedding/i.test(modelId);
 const normalizeProviderBaseUrl = (kind: AppSettings['selectedProvider'], baseUrl: string) => {
   const trimmed = baseUrl.trim().replace(/\/$/, '');
@@ -94,28 +115,72 @@ OpenKiwi Wizard runtime:
 - When asked about your identity, memory, tools, or corrections, read the matching Markdown file before answering.
 - Do not use app theme tools unless the user explicitly asks to change OpenKiwi's visual theme.`;
 
-const buildWizardDocsContext = async (wizard: WizardProfile): Promise<ChatMessage | null> => {
+interface WizardDocsContextResult {
+  message: ChatMessage | null;
+  loaded: Array<{ name: string; ok: boolean }>;
+}
+
+const buildWizardDocsContext = async (wizard: WizardProfile): Promise<WizardDocsContextResult> => {
   const coreDocs = wizard.documents.filter((doc) => doc.core);
-  if (coreDocs.length === 0) return null;
+  if (coreDocs.length === 0) return { message: null, loaded: [] };
+  const loaded: Array<{ name: string; ok: boolean }> = [];
   const parts = await Promise.all(
     coreDocs.map(async (doc) => {
+      const name = doc.path.split(/[\\/]/).pop() ?? doc.label;
       try {
         const file = await window.electronAPI.openFile(wizard.workspaceRoot, doc.path);
-        return `## ${doc.path.split(/[\\/]/).pop() ?? doc.label}\n${file.content}`;
+        loaded.push({ name, ok: true });
+        return `## ${name}\n${file.content}`;
       } catch {
-        return `## ${doc.path.split(/[\\/]/).pop() ?? doc.label}\n[Could not read this document.]`;
+        loaded.push({ name, ok: false });
+        return `## ${name}\n[Could not read this document.]`;
       }
     })
   );
   return {
-    id: `wizard-docs-${Date.now()}`,
-    role: 'system',
-    content: [
-      'Wizard core workspace documents are injected below. Treat these as current private context for this Wizard session.',
-      ...parts
-    ].join('\n\n'),
-    status: 'done'
+    loaded,
+    message: {
+      id: `wizard-docs-${Date.now()}`,
+      role: 'system',
+      content: [
+        'Wizard core workspace documents are injected below. Treat these as current private context for this Wizard session.',
+        ...parts
+      ].join('\n\n'),
+      status: 'done'
+    }
   };
+};
+
+type DiffLineKind = 'same' | 'add' | 'remove';
+
+const diffPromptLines = (before: string, after: string) => {
+  const a = (before || '[empty]').split('\n');
+  const b = (after || '[empty]').split('\n');
+  const dp = Array.from({ length: a.length + 1 }, () => Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  const left: Array<{ text: string; kind: DiffLineKind }> = [];
+  const right: Array<{ text: string; kind: DiffLineKind }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      left.push({ text: a[i]!, kind: 'same' });
+      right.push({ text: b[j]!, kind: 'same' });
+      i += 1;
+      j += 1;
+    } else if (j < b.length && (i >= a.length || dp[i]![j + 1]! >= dp[i + 1]![j]!)) {
+      right.push({ text: b[j]!, kind: 'add' });
+      j += 1;
+    } else if (i < a.length) {
+      left.push({ text: a[i]!, kind: 'remove' });
+      i += 1;
+    }
+  }
+  return { left, right };
 };
 
 const chatFingerprint = (messages: ChatMessage[], timeline: ChatTimelineEntry[]) =>
@@ -201,6 +266,7 @@ export function App() {
   const [inlineTerminalJobId, setInlineTerminalJobId] = useState<string>();
   const inlineTerminalJobIdRef = useRef<string | undefined>(undefined);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
+  const lastInspectorTabRef = useRef<InspectorTab>(inspectorTab);
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
@@ -214,11 +280,15 @@ export function App() {
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
   const [wizardDraft, setWizardDraft] = useState<WizardProfile | null>(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{ wizardName: string; workspaceRoot: string } | null>(null);
   const [wizardPromptApproval, setWizardPromptApproval] = useState<WizardPromptApprovalRequest | null>(null);
   const [expandedWizardIds, setExpandedWizardIds] = useState<Set<string>>(new Set());
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wizardAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wizardDraftRef = useRef<WizardProfile | null>(null);
   const lastContentFingerprintRef = useRef<string | null>(null);
   const skipNextRenameCommitRef = useRef(false);
   activeChatIdRef.current = activeChatId;
@@ -340,6 +410,17 @@ export function App() {
   useEffect(() => {
     setWizardDraft(activeWizard);
   }, [activeChatId, activeWizard]);
+
+  useEffect(() => {
+    wizardDraftRef.current = wizardDraft;
+  }, [wizardDraft]);
+
+  useEffect(() => {
+    if (wizardAutosaveTimerRef.current) {
+      clearTimeout(wizardAutosaveTimerRef.current);
+      wizardAutosaveTimerRef.current = null;
+    }
+  }, [activeWizardMeta?.id]);
 
   const effectiveModelOverride = useMemo((): ChatModelOverride | null => {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
@@ -577,6 +658,9 @@ export function App() {
     const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
       setSettings(next);
     });
+    const offChatsUpdated = window.electronAPI.onChatsUpdated(() => {
+      void refreshChatList();
+    });
     const offWizardPromptApproval = window.electronAPI.onWizardPromptApprovalRequest((payload) => {
       setWizardPromptApproval(payload);
     });
@@ -636,10 +720,11 @@ export function App() {
       offError();
       offActivity();
       offSettingsUpdated();
+      offChatsUpdated();
       offWizardPromptApproval();
       offWorkspaceChanged();
     };
-  }, [refreshWorkspaceChanges]);
+  }, [refreshChatList, refreshWorkspaceChanges]);
 
   useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
@@ -797,7 +882,47 @@ export function App() {
     setSettings(saved);
   };
 
+  const SETTINGS_AUTOSAVE_MS = 450;
+  const WIZARD_AUTOSAVE_MS = 450;
+
+  const flushSettingsAutosaveTimer = () => {
+    if (settingsAutosaveTimerRef.current) {
+      clearTimeout(settingsAutosaveTimerRef.current);
+      settingsAutosaveTimerRef.current = null;
+    }
+  };
+
+  const flushWizardAutosaveTimer = () => {
+    if (wizardAutosaveTimerRef.current) {
+      clearTimeout(wizardAutosaveTimerRef.current);
+      wizardAutosaveTimerRef.current = null;
+    }
+  };
+
+  const handleSettingsPanelChange = useCallback((next: AppSettings) => {
+    settingsRef.current = next;
+    setSettings(next);
+    flushSettingsAutosaveTimer();
+    settingsAutosaveTimerRef.current = setTimeout(() => {
+      settingsAutosaveTimerRef.current = null;
+      void (async () => {
+        try {
+          const latest = settingsRef.current;
+          if (!latest) return;
+          const saved = await window.electronAPI.saveSettings(latest);
+          setSettings(saved);
+          settingsRef.current = saved;
+          setSettingsStatus('Saved.');
+        } catch (e) {
+          const m = e instanceof Error ? e.message : 'Save failed';
+          setSettingsStatus(`Could not save settings: ${m}`);
+        }
+      })();
+    }, SETTINGS_AUTOSAVE_MS);
+  }, []);
+
   const handleWebSearchChange = useCallback(async (next: boolean) => {
+    flushSettingsAutosaveTimer();
     const s = settingsRef.current;
     if (!s) return;
     const updated: AppSettings = { ...s, ui: { ...s.ui, webSearch: next } };
@@ -806,12 +931,34 @@ export function App() {
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
+      settingsRef.current = saved;
       if (next && needsSearchApiKeyNotice(saved)) {
         setShowWebSearchNotice(true);
       }
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Web search setting not saved: ${m}`);
+    }
+  }, []);
+
+  const persistWizardProjectsParentFolder = useCallback(async (folder: string) => {
+    flushSettingsAutosaveTimer();
+    const s = settingsRef.current;
+    if (!s) return;
+    const updated: AppSettings = {
+      ...s,
+      ui: { ...s.ui, wizardProjectsParentFolder: folder }
+    };
+    settingsRef.current = updated;
+    setSettings(updated);
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+      settingsRef.current = saved;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Could not save Wizards folder: ${m}`);
+      throw e;
     }
   }, []);
 
@@ -822,6 +969,7 @@ export function App() {
   }, []);
 
   const handleSessionModeToggle = useCallback(async () => {
+    flushSettingsAutosaveTimer();
     const s = settingsRef.current;
     if (!s) return;
     const nextMode: SessionMode = s.ui.sessionMode === 'talk' ? 'agent' : 'talk';
@@ -831,6 +979,7 @@ export function App() {
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
+      settingsRef.current = saved;
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Session mode not saved: ${m}`);
@@ -838,23 +987,13 @@ export function App() {
   }, []);
 
   const persistAfterPresetAction = async (next: AppSettings) => {
+    flushSettingsAutosaveTimer();
     try {
       await persistSettingsToDisk(next);
+      setSettingsStatus('Saved.');
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Could not save settings to disk: ${m}`);
-    }
-  };
-
-  const saveSettings = async () => {
-    if (!settings) return;
-    try {
-      await persistSettingsToDisk(settings);
-      setSettingsStatus('Profile saved.');
-    } catch (e) {
-      const m = e instanceof Error ? e.message : 'Save failed';
-      setSettingsStatus(`Profile save failed: ${m}`);
-      throw e;
     }
   };
 
@@ -961,7 +1100,7 @@ export function App() {
       return;
     }
     if (chat.kind === 'wizard-session') {
-      void deleteWizardSession(chat);
+      setWizardSessionDeleteTarget(chat);
       return;
     }
     void deleteChat(chat.id);
@@ -1020,11 +1159,37 @@ export function App() {
     if (!target) return;
     const workspaceRoot = target.wizard?.workspaceRoot;
     const wizardName = target.wizard?.name || target.title;
-    setWizardDeleteTarget(null);
     const sessions = wizardSessionsByWizardId.get(target.id) ?? [];
+    const priorActiveId = activeChatId;
+    const idsRemoved = new Set<string>([target.id, ...sessions.map((s) => s.id)]);
+
+    setWizardDeleteTarget(null);
+
+    for (const cid of idsRemoved) {
+      const inf = findInFlightByChatId(cid);
+      if (inf) {
+        await window.electronAPI.stopChat(inf.requestId);
+        inFlightChatsRef.current.delete(inf.requestId);
+      }
+    }
+
     await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
     await deleteChat(target.id);
+
+    if (priorActiveId && idsRemoved.has(priorActiveId)) {
+      startNewChat();
+    }
+    if (editingTitleId && idsRemoved.has(editingTitleId)) {
+      setEditingTitleId(null);
+      setEditingTitleDraft('');
+    }
+
     setSidebarTab('wizards');
+    setExpandedWizardIds((current) => {
+      const next = new Set(current);
+      next.delete(target.id);
+      return next;
+    });
     if (workspaceRoot) {
       setWorkspaceDeleteTarget({ wizardName, workspaceRoot });
     }
@@ -1118,19 +1283,85 @@ export function App() {
       const wizardId = activeWizardMeta?.id;
       if (!wizardId) return;
       const full = await window.electronAPI.loadChat(wizardId);
-      if (!full || full.kind !== 'wizard') return;
+      if (!full || full.kind !== 'wizard' || !full.wizard) return;
+      const previousDiskRoot = full.wizard.workspaceRoot;
+      const profileInput: WizardProfile = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
+      let profile: WizardProfile;
+      try {
+        profile = await window.electronAPI.syncWizardWorkspaceFolder(profileInput);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSettingsStatus(msg);
+        return;
+      }
+      if (
+        workspaceRootRef.current &&
+        pathsEqual(workspaceRootRef.current, previousDiskRoot) &&
+        profile.workspaceRoot !== previousDiskRoot
+      ) {
+        const mapPath = workspaceAbsolutePathPrefixRemap(previousDiskRoot, profile.workspaceRoot);
+        setWorkspaceRoot(profile.workspaceRoot);
+        setBuffers((current) => {
+          const next: Record<string, FileBuffer> = {};
+          for (const [key, buf] of Object.entries(current)) {
+            const mappedKey = mapPath(key);
+            next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+          }
+          return next;
+        });
+        setActiveFilePath((active) => (active ? mapPath(active) : active));
+        try {
+          setWorkspaceTree(await window.electronAPI.getWorkspaceTree(profile.workspaceRoot));
+        } catch {
+          setWorkspaceTree([]);
+        }
+        void refreshWorkspaceChanges(profile.workspaceRoot);
+      }
       await window.electronAPI.saveChat({
         ...full,
-        title: wizard.name,
-        titleOverride: wizard.name,
+        title: profile.name,
+        titleOverride: profile.name,
         updatedAt: Date.now(),
-        modelOverride: { provider: wizard.provider, model: wizard.model },
-        wizard
+        modelOverride: { provider: profile.provider, model: profile.model },
+        wizard: profile
       });
       await refreshChatList();
+      setWizardDraft(profile);
     },
-    [activeWizardMeta?.id, refreshChatList]
+    [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]
   );
+
+  const handleWizardDraftChange = useCallback(
+    (next: WizardProfile) => {
+      setWizardDraft(next);
+      wizardDraftRef.current = next;
+      flushWizardAutosaveTimer();
+      wizardAutosaveTimerRef.current = setTimeout(() => {
+        wizardAutosaveTimerRef.current = null;
+        const draft = wizardDraftRef.current;
+        if (draft) void saveActiveWizard(draft);
+      }, WIZARD_AUTOSAVE_MS);
+    },
+    [saveActiveWizard]
+  );
+
+  useEffect(() => {
+    const prev = lastInspectorTabRef.current;
+    lastInspectorTabRef.current = inspectorTab;
+    if (prev !== 'settings' || inspectorTab === 'settings') return;
+    flushSettingsAutosaveTimer();
+    void (async () => {
+      try {
+        const s = settingsRef.current;
+        if (s) await persistSettingsToDisk(s);
+      } catch {
+        /* best-effort flush when leaving Settings inspector */
+      }
+    })();
+    flushWizardAutosaveTimer();
+    const w = wizardDraftRef.current;
+    if (w && activeWizardMeta?.id) void saveActiveWizard(w);
+  }, [inspectorTab, activeWizardMeta?.id, saveActiveWizard]);
 
   const refreshWizardModels = useCallback(async (provider: ProviderKind) => listModelsForWizardSetup(provider), [listModelsForWizardSetup]);
 
@@ -1199,12 +1430,54 @@ export function App() {
     if (!full) return;
     const trimmed = draft.trim();
     const nextOverride = trimmed.length > 0 ? trimmed : null;
+
+    let wizardPatch = full.kind === 'wizard' && full.wizard ? { ...full.wizard, name: nextOverride ?? full.wizard.name } : full.wizard;
+    const prevWizardRoot = full.kind === 'wizard' ? full.wizard?.workspaceRoot : undefined;
+    if (full.kind === 'wizard' && wizardPatch) {
+      try {
+        wizardPatch = await window.electronAPI.syncWizardWorkspaceFolder({
+          ...wizardPatch,
+          workspaceRoot: full.wizard!.workspaceRoot
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSettingsStatus(msg);
+        return;
+      }
+    }
+
+    if (
+      prevWizardRoot &&
+      wizardPatch &&
+      workspaceRootRef.current &&
+      pathsEqual(workspaceRootRef.current, prevWizardRoot) &&
+      wizardPatch.workspaceRoot !== prevWizardRoot
+    ) {
+      const mapPath = workspaceAbsolutePathPrefixRemap(prevWizardRoot, wizardPatch.workspaceRoot);
+      setWorkspaceRoot(wizardPatch.workspaceRoot);
+      setBuffers((current) => {
+        const next: Record<string, FileBuffer> = {};
+        for (const [key, buf] of Object.entries(current)) {
+          const mappedKey = mapPath(key);
+          next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+        }
+        return next;
+      });
+      setActiveFilePath((active) => (active ? mapPath(active) : active));
+      try {
+        setWorkspaceTree(await window.electronAPI.getWorkspaceTree(wizardPatch.workspaceRoot));
+      } catch {
+        setWorkspaceTree([]);
+      }
+      void refreshWorkspaceChanges(wizardPatch.workspaceRoot);
+    }
+
     await window.electronAPI.saveChat({
       ...full,
       title: nextOverride != null ? nextOverride : full.kind === 'wizard-session' ? sessionTitle(full.messages) : chatTitle(full.messages),
       titleOverride: nextOverride,
-      wizard: full.kind === 'wizard' && full.wizard ? { ...full.wizard, name: nextOverride ?? full.wizard.name } : full.wizard,
-      updatedAt: full.updatedAt
+      wizard: full.kind === 'wizard' ? wizardPatch : full.wizard,
+      updatedAt: Date.now()
     });
     await refreshChatList();
   };
@@ -1323,8 +1596,30 @@ export function App() {
         }
       : applyChatModelOverride(sendSettings, overrideForStream);
 
-    const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : null;
-    const streamHistory = wizardDocsContext ? [wizardDocsContext, ...nextHistory] : nextHistory;
+    const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
+    if (wizardForStream) {
+      const loaded = wizardDocsContext.loaded;
+      const okCount = loaded.filter((doc) => doc.ok).length;
+      const checklist = [
+        `Workspace active: ${wizardForStream.workspaceRoot}`,
+        ...loaded.map((doc) => `${doc.ok ? 'Loaded' : 'Missing'} ${doc.name}`),
+        `Injected ${okCount}/${loaded.length} core docs into this request.`
+      ].join('\n');
+      const activity: ChatActivity = {
+        id: uid(),
+        requestId,
+        kind: okCount === loaded.length ? 'success' : 'warning',
+        message: checklist
+      };
+      const activityEntry: ChatTimelineEntry = { id: `activity-${activity.id}`, type: 'activity', activity };
+      const timelineWithChecklist = [...nextTimeline, activityEntry];
+      setChatTimeline(timelineWithChecklist);
+      const snapshot = inFlightChatsRef.current.get(requestId);
+      if (snapshot) {
+        snapshot.timeline = timelineWithChecklist;
+      }
+    }
+    const streamHistory = wizardDocsContext.message ? [wizardDocsContext.message, ...nextHistory] : nextHistory;
 
     await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
       workspaceRoot: wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
@@ -1382,6 +1677,9 @@ export function App() {
   const selectedProviderLabel = (activeWizard?.provider ?? settings?.selectedProvider) === 'openrouter' ? 'OpenRouter' : 'LM Studio';
   const sessionMode = activeWizard ? 'agent' : (settings?.ui.sessionMode ?? 'agent');
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
+  const wizardPromptDiff = wizardPromptApproval
+    ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after)
+    : { left: [], right: [] };
 
   return (
     <div className="app-shell">
@@ -1455,7 +1753,9 @@ export function App() {
         open={showSystemPromptModal && Boolean(settings)}
         value={settings?.providers[settings.selectedProvider].systemPrompt ?? ''}
         onChange={(v) => {
-          setSettings((s) => (s ? patchSystemPromptInSettings(s, v) : s));
+          const s = settingsRef.current;
+          if (!s) return;
+          handleSettingsPanelChange(patchSystemPromptInSettings(s, v));
         }}
         onClose={() => setShowSystemPromptModal(false)}
       />
@@ -1463,6 +1763,7 @@ export function App() {
         onClose={() => setShowWizardSetup(false)}
         onCreate={createWizard}
         onListModels={listModelsForWizardSetup}
+        onPersistWizardProjectsParentFolder={persistWizardProjectsParentFolder}
         open={showWizardSetup}
         settings={settings}
       />
@@ -1513,6 +1814,26 @@ export function App() {
         open={Boolean(workspaceDeleteTarget)}
         title="Delete its workspace too?"
       />
+      <AppConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Delete session"
+        confirmVariant="danger"
+        description={
+          <>
+            Delete <strong>{wizardSessionDeleteTarget?.title ?? 'this session'}</strong>? This only removes this
+            conversation history. The Wizard, workspace, and core documents will stay.
+          </>
+        }
+        kicker="Delete Session"
+        onCancel={() => setWizardSessionDeleteTarget(null)}
+        onConfirm={() => {
+          const target = wizardSessionDeleteTarget;
+          setWizardSessionDeleteTarget(null);
+          if (target) void deleteWizardSession(target);
+        }}
+        open={Boolean(wizardSessionDeleteTarget)}
+        title="Delete this Wizard session?"
+      />
       <AnimatePresence>
         {wizardPromptApproval ? (
           <motion.div
@@ -1531,23 +1852,37 @@ export function App() {
               role="dialog"
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
-              <div className="app-dialog__kicker">Wizard System Prompt</div>
-              <h3>{wizardPromptApproval.title}</h3>
-              <p>
-                {wizardPromptApproval.wizardName} wants to replace its private system prompt. Review the change before
-                allowing it.
-              </p>
+              <div className="wizard-prompt-approval__intro">
+                <div className="app-dialog__kicker">Wizard System Prompt</div>
+                <h3>{wizardPromptApproval.title}</h3>
+                <p>
+                  {wizardPromptApproval.wizardName} wants to replace its private system prompt. Review the change before
+                  allowing it.
+                </p>
+              </div>
               <div className="wizard-prompt-approval__compare">
                 <section>
                   <h4>Original</h4>
-                  <pre>{wizardPromptApproval.before || '[empty]'}</pre>
+                  <pre>
+                    {wizardPromptDiff.left.map((line, index) => (
+                      <span className={`wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`} key={`${index}-${line.kind}`}>
+                        {line.text || ' '}
+                      </span>
+                    ))}
+                  </pre>
                 </section>
                 <div className="wizard-prompt-approval__arrow" aria-hidden>
                   --&gt;
                 </div>
                 <section>
                   <h4>New</h4>
-                  <pre>{wizardPromptApproval.after}</pre>
+                  <pre>
+                    {wizardPromptDiff.right.map((line, index) => (
+                      <span className={`wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`} key={`${index}-${line.kind}`}>
+                        {line.text || ' '}
+                      </span>
+                    ))}
+                  </pre>
                 </section>
               </div>
               <div className="app-dialog__actions">
@@ -2157,7 +2492,7 @@ export function App() {
                                     >
                                       <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                                     </svg>
-                                    <span>{chat.title}</span>
+                                    <span title={chat.title}>{chat.title}</span>
                                   </div>
                                   <div className="chat-list__date">
                                     Wizard · {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
@@ -2211,7 +2546,7 @@ export function App() {
                                       }
                                     }}
                                   >
-                                    <span>{session.title}</span>
+                                    <span title={session.title}>{session.title}</span>
                                     <div className="wizard-session-row__meta">
                                       <small>{formatRelativeDate(session.updatedAt)}</small>
                                       <button
@@ -2392,10 +2727,9 @@ export function App() {
                 {inspectorTab === 'settings' && settings && wizardDraft ? (
                   <WizardSettingsPanel
                     modelOptions={overrideModels}
-                    onChange={setWizardDraft}
+                    onChange={handleWizardDraftChange}
                     onOpenDocument={(path) => void openFile(path)}
                     onRefreshModels={refreshWizardModels}
-                    onSave={() => saveActiveWizard(wizardDraft)}
                     settings={settings}
                     statusMessage={settingsStatus}
                     wizard={wizardDraft}
@@ -2405,13 +2739,12 @@ export function App() {
                   <SettingsPanel
                     focusSearchSettingsKey={searchSettingsFocusKey}
                     modelOptions={models}
-                    onChange={setSettings}
+                    onChange={handleSettingsPanelChange}
                     onOpenConnectionHelp={() => setShowConnectionHelp(true)}
                     onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
                     onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                     onPresetPersist={persistAfterPresetAction}
                     onRefreshModels={refreshModels}
-                    onSave={saveSettings}
                     settings={settings}
                     statusMessage={settingsStatus}
                   />

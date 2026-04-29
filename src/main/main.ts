@@ -32,6 +32,7 @@ import {
   type AppSettings,
   type ChatMessage,
   type SavedChat,
+  type WizardProfile,
   type WizardPromptApprovalRequest,
   type WizardSetupRequest
 } from '@shared/types';
@@ -284,6 +285,42 @@ const modelService = new ModelService(
       }
     });
   },
+  async (wizardId, displayName) => {
+    const trimmed = displayName.trim();
+    if (!trimmed || trimmed.length > 120) {
+      throw new Error('Invalid Wizard display name.');
+    }
+    const chat = await chatStore.loadChat(wizardId);
+    if (!chat || chat.kind !== 'wizard' || !chat.wizard) {
+      throw new Error('Wizard not found.');
+    }
+    const prevRoot = chat.wizard.workspaceRoot;
+    const wizard = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName({
+      ...chat.wizard,
+      name: trimmed
+    });
+    await chatStore.saveChat({
+      ...chat,
+      title: trimmed,
+      titleOverride: trimmed,
+      updatedAt: Date.now(),
+      wizard
+    });
+    if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(prevRoot)) {
+      activeWorkspaceRoot = wizard.workspaceRoot;
+      workspaceWatch.setRoot(wizard.workspaceRoot);
+    }
+    const ls = currentSettings.lastWorkspaceRoot?.trim();
+    if (ls && resolve(ls) === resolve(prevRoot)) {
+      currentSettings = await settingsStore.save({
+        ...currentSettings,
+        lastWorkspaceRoot: wizard.workspaceRoot
+      });
+      mainWindow?.webContents.send('settings:updated', currentSettings);
+    }
+    mainWindow?.webContents.send('chats:updated');
+    return wizard;
+  },
   requestWizardPromptApproval
 );
 
@@ -454,6 +491,19 @@ ipcMain.handle('workspace:open-last', async () => {
   };
 });
 
+/** Resolved path if Settings → last workspace still exists (does not activate or change sidebar workspace). */
+ipcMain.handle('workspace:last-valid-root', async () => {
+  const candidate = currentSettings.lastWorkspaceRoot?.trim();
+  if (!candidate) {
+    return null;
+  }
+  try {
+    return await workspaceService.assertUsableLocalWorkspace(candidate);
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('workspace:activate', async (_event, root: string) => {
   const resolved = await workspaceService.assertUsableLocalWorkspace(root);
   activeWorkspaceRoot = resolved;
@@ -490,13 +540,39 @@ ipcMain.handle('wizard:recommended-workspace', async (_event, name: string) =>
   workspaceService.getRecommendedWizardWorkspace(name)
 );
 
-ipcMain.handle('wizard:choose-workspace', async (_event, name: string) => workspaceService.chooseWizardWorkspace(name));
+ipcMain.handle('wizard:choose-workspace', async (_event, name: string, preferredDefaultPath?: string) =>
+  workspaceService.chooseWizardWorkspace(name, preferredDefaultPath)
+);
+
+ipcMain.handle('wizard:choose-projects-folder', async (_event, preferredDefaultPath?: string) =>
+  workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
+);
 
 ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {
   const result = await workspaceService.setupWizardWorkspace(request);
   activeWorkspaceRoot = result.profile.workspaceRoot;
   workspaceWatch.setRoot(result.profile.workspaceRoot);
   return result;
+});
+
+ipcMain.handle('wizard:sync-workspace-folder', async (_event, profile: WizardProfile) => {
+  const prevRoot = resolve(profile.workspaceRoot.trim());
+  const updated = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName(profile);
+  if (resolve(prevRoot) !== resolve(updated.workspaceRoot)) {
+    if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === prevRoot) {
+      activeWorkspaceRoot = updated.workspaceRoot;
+      workspaceWatch.setRoot(updated.workspaceRoot);
+    }
+    const ls = currentSettings.lastWorkspaceRoot?.trim();
+    if (ls && resolve(ls) === prevRoot) {
+      currentSettings = await settingsStore.save({
+        ...currentSettings,
+        lastWorkspaceRoot: updated.workspaceRoot
+      });
+      mainWindow?.webContents.send('settings:updated', currentSettings);
+    }
+  }
+  return updated;
 });
 
 ipcMain.handle('wizard:delete-workspace', async (_event, root: string) => {

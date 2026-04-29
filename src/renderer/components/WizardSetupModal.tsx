@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useMemo, useState } from 'react';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type WizardSetupRequest } from '@shared/types';
+import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
 
@@ -10,12 +11,17 @@ interface WizardSetupModalProps {
   onClose: () => void;
   onCreate: (request: WizardSetupRequest) => Promise<void>;
   onListModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
+  /** Persist the chosen parent folder so new Wizards keep using it until changed. */
+  onPersistWizardProjectsParentFolder: (absoluteFolderPath: string) => Promise<void>;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
   { value: 'openrouter', label: 'OpenRouter' }
 ];
+
+/** Preferred default when creating a Wizard (OpenRouter catalog id: Gemini 3.1 Flash Lite Preview). */
+const WIZARD_SETUP_DEFAULT_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 
 const defaultPrompt = (name: string) => `You are ${name || 'this Wizard'}, a persistent OpenKiwi Wizard.
 
@@ -29,14 +35,31 @@ Before making important decisions, read the relevant core documents. Keep your m
 
 At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.`;
 
-export function WizardSetupModal({ open, settings, onClose, onCreate, onListModels }: WizardSetupModalProps) {
+function previewWizardWorkspacePath(platform: string, parentFolder: string, wizardDisplayName: string): string {
+  const segment = sanitizeWizardFolderSegment(wizardDisplayName);
+  if (!segment) return '';
+  const base = parentFolder.trim().replace(/[/\\]+$/, '');
+  if (!base) return segment;
+  const sep = platform === 'win32' ? '\\' : '/';
+  return `${base}${sep}${segment}`;
+}
+
+export function WizardSetupModal({
+  open,
+  settings,
+  onClose,
+  onCreate,
+  onListModels,
+  onPersistWizardProjectsParentFolder
+}: WizardSetupModalProps) {
   const [name, setName] = useState('');
-  const [provider, setProvider] = useState<ProviderKind>('lmstudio');
+  const [provider, setProvider] = useState<ProviderKind>('openrouter');
   const [model, setModel] = useState('');
   const [modelOptions, setModelOptions] = useState<ModelInfo[]>([]);
-  const [workspaceMode, setWorkspaceMode] = useState<'desktop' | 'choose'>('desktop');
-  const [chosenWorkspace, setChosenWorkspace] = useState('');
-  const [recommendedWorkspace, setRecommendedWorkspace] = useState('');
+  /** Absolute path of the folder that will contain one subfolder per Wizard. */
+  const [wizardProjectsParentFolder, setWizardProjectsParentFolder] = useState('');
+  /** Same source as sidebar “reopen last workspace”; seeds the folder picker when no parent is saved yet. */
+  const [lastValidWorkspaceRoot, setLastValidWorkspaceRoot] = useState<string | null>(null);
   const [customDocsRaw, setCustomDocsRaw] = useState('');
   const [prompt, setPrompt] = useState(defaultPrompt(''));
   const [promptDirty, setPromptDirty] = useState(false);
@@ -47,27 +70,23 @@ export function WizardSetupModal({ open, settings, onClose, onCreate, onListMode
   useEffect(() => {
     if (!open) return;
     setName('');
-    setProvider(settings?.selectedProvider ?? 'lmstudio');
+    setProvider('openrouter');
     setModel('');
     setModelOptions([]);
-    setWorkspaceMode('desktop');
-    setChosenWorkspace('');
-    setRecommendedWorkspace('');
+    setWizardProjectsParentFolder(settings?.ui?.wizardProjectsParentFolder?.trim() ?? '');
     setCustomDocsRaw('');
     setPrompt(defaultPrompt(''));
     setPromptDirty(false);
     setError('');
-  }, [open, settings?.selectedProvider]);
+    void window.electronAPI.getLastValidWorkspaceRoot().then(setLastValidWorkspaceRoot);
+    // Intentionally only when `open` toggles — avoid resetting the form when parent-folder preference saves mid-modal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settings read once when the dialog opens
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const trimmed = name.trim();
     if (!promptDirty) setPrompt(defaultPrompt(trimmed));
-    if (!trimmed) {
-      setRecommendedWorkspace('');
-      return;
-    }
-    void window.electronAPI.getRecommendedWizardWorkspace(trimmed).then(setRecommendedWorkspace);
   }, [name, open, promptDirty]);
 
   useEffect(() => {
@@ -78,7 +97,11 @@ export function WizardSetupModal({ open, settings, onClose, onCreate, onListMode
       .then((list) => {
         if (cancelled) return;
         setModelOptions(list);
-        setModel((current) => (current && list.some((item) => item.id === current) ? current : (list[0]?.id ?? '')));
+        setModel((current) => {
+          if (current && list.some((item) => item.id === current)) return current;
+          const preferred = list.find((item) => item.id === WIZARD_SETUP_DEFAULT_MODEL_ID);
+          return preferred?.id ?? list[0]?.id ?? '';
+        });
       })
       .catch((e) => {
         if (cancelled) return;
@@ -103,14 +126,23 @@ export function WizardSetupModal({ open, settings, onClose, onCreate, onListMode
     [customDocsRaw]
   );
 
-  const canCreate = Boolean(name.trim() && model.trim() && (workspaceMode === 'desktop' || chosenWorkspace.trim()));
+  const workspacePreview = useMemo(
+    () => previewWizardWorkspacePath(window.electronAPI.platform, wizardProjectsParentFolder, name),
+    [wizardProjectsParentFolder, name]
+  );
 
-  const chooseFolder = async () => {
+  const canCreate = Boolean(name.trim() && model.trim() && wizardProjectsParentFolder.trim());
+
+  const chooseProjectsFolder = async () => {
     setError('');
-    const picked = await window.electronAPI.chooseWizardWorkspace(name.trim() || 'OpenKiwi Wizard');
-    if (picked) {
-      setWorkspaceMode('choose');
-      setChosenWorkspace(picked);
+    const hint = wizardProjectsParentFolder.trim() || lastValidWorkspaceRoot || undefined;
+    const picked = await window.electronAPI.chooseWizardProjectsFolder(hint);
+    if (!picked) return;
+    setWizardProjectsParentFolder(picked);
+    try {
+      await onPersistWizardProjectsParentFolder(picked);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save Wizards folder preference.');
     }
   };
 
@@ -124,8 +156,7 @@ export function WizardSetupModal({ open, settings, onClose, onCreate, onListMode
         provider,
         model,
         systemPrompt: prompt,
-        createOnDesktop: workspaceMode === 'desktop',
-        workspaceRoot: workspaceMode === 'choose' ? chosenWorkspace : undefined,
+        workspaceRoot: wizardProjectsParentFolder.trim(),
         customDocuments
       });
     } catch (e) {
@@ -192,25 +223,30 @@ export function WizardSetupModal({ open, settings, onClose, onCreate, onListMode
 
               <div className="wizard-setup__wide wizard-setup__choice-block">
                 <div className="field">
-                  <span>Workspace</span>
+                  <span>Wizards folder</span>
                   <div className="wizard-setup__workspace-actions">
-                    <button
-                      className={`btn btn--secondary ${workspaceMode === 'desktop' ? 'is-selected' : ''}`}
-                      onClick={() => setWorkspaceMode('desktop')}
-                      type="button"
-                    >
-                      Create on Desktop
-                    </button>
-                    <button className="btn btn--secondary" onClick={chooseFolder} type="button">
-                      Choose folder
+                    <button className="btn btn--secondary" onClick={() => void chooseProjectsFolder()} type="button">
+                      Choose folder…
                     </button>
                   </div>
                 </div>
                 <div className="inline-hint">
-                  {workspaceMode === 'desktop'
-                    ? recommendedWorkspace || 'Enter a name to preview the recommended local folder.'
-                    : chosenWorkspace || 'Choose a local folder. Cloud-synced folders are blocked.'}
+                  Pick one folder that will hold every Wizard&apos;s workspace. Each Wizard is created as a subfolder named
+                  from its title (sanitized). Two Wizards cannot use the same folder name here unless you choose a
+                  different Wizards folder later.
                 </div>
+                {wizardProjectsParentFolder ? (
+                  <div className="inline-hint">
+                    <strong>Parent:</strong> {wizardProjectsParentFolder}
+                  </div>
+                ) : (
+                  <div className="inline-hint">Choose a local folder (cloud-synced paths are blocked).</div>
+                )}
+                {workspacePreview ? (
+                  <div className="inline-hint">
+                    <strong>This Wizard:</strong> <code>{workspacePreview}</code>
+                  </div>
+                ) : null}
               </div>
 
               <label className="field wizard-setup__wide">

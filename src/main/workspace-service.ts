@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { dialog } from 'electron';
 import type { OpenFile, WizardDocument, WizardProfile, WizardSetupRequest, WizardSetupResult, WorkspaceChanges, WorkspaceNode } from '@shared/types';
+import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'out', 'build', 'coverage']);
 const MAX_TREE_DEPTH = 10;
@@ -30,14 +31,6 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
   'corrections.md': () =>
     `# Corrections\n\nUser corrections, mistakes to avoid, and lessons learned.\n`
 };
-
-const sanitizeFolderName = (name: string) =>
-  name
-    .trim()
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
-    .replace(/\s+/g, ' ')
-    .slice(0, 80)
-    .trim() || 'OpenKiwi Wizard';
 
 const normalizeDocName = (name: string) => {
   const base = name
@@ -211,10 +204,20 @@ export class WorkspaceService {
     return this.assertUsableLocalWorkspace(result.filePaths[0]);
   }
 
-  async chooseWizardWorkspace(defaultName: string): Promise<string | null> {
+  async chooseWizardWorkspace(defaultName: string, preferredDefaultPath?: string): Promise<string | null> {
+    let defaultPath = join(process.env.HOME ?? '', 'Desktop', sanitizeWizardFolderSegment(defaultName));
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+        // Missing or invalid path — fall back to Desktop suggestion.
+      }
+    }
+
     const result = await dialog.showOpenDialog({
       buttonLabel: 'Use this folder',
-      defaultPath: join(process.env.HOME ?? '', 'Desktop', sanitizeFolderName(defaultName)),
+      defaultPath,
       message: 'Choose a local folder for this Wizard.',
       properties: ['openDirectory', 'createDirectory']
     });
@@ -227,8 +230,35 @@ export class WorkspaceService {
     return result.filePaths[0];
   }
 
+  /** Pick the folder that will contain one subfolder per Wizard (`<parent>/<sanitized name>/`). */
+  async chooseWizardProjectsFolder(preferredDefaultPath?: string): Promise<string | null> {
+    let defaultPath = join(process.env.HOME ?? '', 'Desktop');
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+        // Missing or invalid — fall back to Desktop.
+      }
+    }
+
+    const result = await dialog.showOpenDialog({
+      buttonLabel: 'Use this folder',
+      defaultPath,
+      message:
+        'Choose a folder for Wizard workspaces. Each new Wizard will get its own subfolder inside here (named from the Wizard title).',
+      properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+
   getRecommendedWizardWorkspace(name: string): string {
-    return join(process.env.HOME ?? '', 'Desktop', sanitizeFolderName(name));
+    return join(process.env.HOME ?? '', 'Desktop', sanitizeWizardFolderSegment(name));
   }
 
   async setupWizardWorkspace(request: WizardSetupRequest): Promise<WizardSetupResult> {
@@ -240,12 +270,39 @@ export class WorkspaceService {
       throw new Error('Choose a model for this Wizard.');
     }
 
-    const root = resolve(
-      request.createOnDesktop || !request.workspaceRoot
-        ? this.getRecommendedWizardWorkspace(name)
-        : request.workspaceRoot
-    );
-    assertLocalWorkspace(root);
+    let parentDir: string;
+    const ws = request.workspaceRoot?.trim();
+    if (ws) {
+      parentDir = resolve(ws);
+    } else if (request.createOnDesktop) {
+      parentDir = resolve(join(process.env.HOME ?? '', 'Desktop'));
+    } else {
+      throw new Error(
+        'Choose the folder where Wizard workspaces live. Each Wizard gets its own subfolder inside it.'
+      );
+    }
+
+    assertLocalWorkspace(parentDir);
+    const parentStat = await stat(parentDir).catch(() => null);
+    if (!parentStat?.isDirectory()) {
+      throw new Error('Wizard workspaces folder must be an existing local folder.');
+    }
+
+    const childSegment = sanitizeWizardFolderSegment(name);
+    const root = resolve(join(parentDir, childSegment));
+
+    try {
+      await stat(root);
+      throw new Error(
+        `A Wizard folder "${childSegment}" already exists in that location. Choose a different Wizard name, or delete or rename that folder.`
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('A Wizard folder')) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+
     await mkdir(root, { recursive: true });
 
     const documents: WizardDocument[] = [];
@@ -285,6 +342,57 @@ export class WorkspaceService {
     return {
       profile,
       tree: await this.getTree(root)
+    };
+  }
+
+  /**
+   * Renames the wizard workspace directory when its basename does not match the sanitized display name.
+   * Keeps the same parent folder; updates `workspaceRoot` and absolute paths in `documents`.
+   */
+  async ensureWizardWorkspaceFolderMatchesDisplayName(profile: WizardProfile): Promise<WizardProfile> {
+    const oldRoot = resolve(profile.workspaceRoot.trim());
+    assertLocalWorkspace(oldRoot);
+    await stat(oldRoot);
+
+    const parent = dirname(oldRoot);
+    const desiredBase = sanitizeWizardFolderSegment(profile.name);
+    const newRoot = resolve(join(parent, desiredBase));
+
+    if (newRoot === oldRoot) {
+      return profile;
+    }
+
+    let destInWay = false;
+    try {
+      await stat(newRoot);
+      destInWay = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (destInWay) {
+      throw new Error(
+        `Cannot rename workspace folder to "${desiredBase}" — that name is already taken in this location. Use a different Wizard name or remove/rename the conflicting folder.`
+      );
+    }
+
+    await rename(oldRoot, newRoot);
+    return this.remapWizardProfileRoots(profile, oldRoot, newRoot);
+  }
+
+  private remapWizardProfileRoots(profile: WizardProfile, oldRoot: string, newRoot: string): WizardProfile {
+    const oldR = resolve(oldRoot);
+    const newR = resolve(newRoot);
+    const prefix = oldR.endsWith(sep) ? oldR : `${oldR}${sep}`;
+    return {
+      ...profile,
+      workspaceRoot: newR,
+      documents: profile.documents.map((d) => {
+        const abs = resolve(d.path);
+        if (abs === oldR || abs.startsWith(prefix)) {
+          return { ...d, path: join(newR, relative(oldR, abs)) };
+        }
+        return d;
+      })
     };
   }
 

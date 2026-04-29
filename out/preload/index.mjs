@@ -5,6 +5,7 @@ const electronAPI = {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   openLastWorkspace: () => ipcRenderer.invoke("workspace:open-last"),
+  getLastValidWorkspaceRoot: () => ipcRenderer.invoke("workspace:last-valid-root"),
   activateWorkspace: (root) => ipcRenderer.invoke("workspace:activate", root),
   getWorkspaceTree: (root) => ipcRenderer.invoke("workspace:tree", root),
   detachWorkspace: () => ipcRenderer.invoke("workspace:detach"),
@@ -12,8 +13,10 @@ const electronAPI = {
   saveFile: (root, target, content) => ipcRenderer.invoke("workspace:save-file", root, target, content),
   getWorkspaceChanges: (root) => ipcRenderer.invoke("workspace:changes", root),
   getRecommendedWizardWorkspace: (name) => ipcRenderer.invoke("wizard:recommended-workspace", name),
-  chooseWizardWorkspace: (name) => ipcRenderer.invoke("wizard:choose-workspace", name),
+  chooseWizardWorkspace: (name, preferredDefaultPath) => ipcRenderer.invoke("wizard:choose-workspace", name, preferredDefaultPath),
+  chooseWizardProjectsFolder: (preferredDefaultPath) => ipcRenderer.invoke("wizard:choose-projects-folder", preferredDefaultPath),
   setupWizard: (request) => ipcRenderer.invoke("wizard:setup", request),
+  syncWizardWorkspaceFolder: (profile) => ipcRenderer.invoke("wizard:sync-workspace-folder", profile),
   deleteWizardWorkspace: (root) => ipcRenderer.invoke("wizard:delete-workspace", root),
   respondWizardPromptApproval: (id, approved) => ipcRenderer.invoke("wizard:prompt-approval-response", id, approved),
   onWizardPromptApprovalRequest: (callback) => {
@@ -66,6 +69,11 @@ const electronAPI = {
     const listener = (_event, settings) => callback(settings);
     ipcRenderer.on("settings:updated", listener);
     return () => ipcRenderer.removeListener("settings:updated", listener);
+  },
+  onChatsUpdated: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("chats:updated", listener);
+    return () => ipcRenderer.removeListener("chats:updated", listener);
   },
   listChats: () => ipcRenderer.invoke("chats:list"),
   loadChat: (id) => ipcRenderer.invoke("chats:load", id),

@@ -30,7 +30,12 @@ export interface WizardSetupRequest {
   provider: ProviderKind;
   model: string;
   systemPrompt: string;
+  /**
+   * Absolute path of the folder that holds Wizard workspaces. Each Wizard is created at
+   * `<wizardProjectsParent>/<sanitized wizard name>/`.
+   */
   workspaceRoot?: string;
+  /** @deprecated Parent folder should be set explicitly; when true and no workspaceRoot, Desktop is used as parent. */
   createOnDesktop?: boolean;
   customDocuments?: string[];
 }
@@ -106,6 +111,10 @@ export interface UiSettings {
    * Used in Settings model picker: favorites sort first, then the rest.
    */
   favoriteModels: Record<ProviderKind, string[]>;
+  /**
+   * Folder where new Wizards get subfolders (`<this>/<sanitized name>/`). Persisted when chosen in New Wizard.
+   */
+  wizardProjectsParentFolder: string | null;
 }
 
 export interface AgentSettings {
@@ -325,7 +334,8 @@ export const defaultSettings: AppSettings = {
     themeId: 'neon-grid',
     sessionMode: 'agent',
     webSearch: false,
-    favoriteModels: { lmstudio: [], openrouter: [] }
+    favoriteModels: { lmstudio: [], openrouter: [] },
+    wizardProjectsParentFolder: null
   },
   lastWorkspaceRoot: null
 };

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { join as join$1, relative, dirname, resolve, extname, basename, sep } from "node:path";
+import { join as join$1, relative, resolve, sep, dirname, extname, basename } from "node:path";
 import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
@@ -1022,6 +1022,18 @@ function mapCompletionUsage(u) {
   const tt = u.total_tokens ?? pt + ct;
   return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
 }
+function remapActiveFilePathAfterWorkspaceRootChange(prevRoot, nextRoot, activeFilePath) {
+  if (!prevRoot?.trim() || !activeFilePath?.trim()) return activeFilePath;
+  const prevR = resolve(prevRoot.trim());
+  const nextR = resolve(nextRoot.trim());
+  if (prevR === nextR) return activeFilePath;
+  const af = resolve(activeFilePath);
+  const prefix = prevR.endsWith(sep) ? prevR : `${prevR}${sep}`;
+  if (af === prevR || af.startsWith(prefix)) {
+    return resolve(join$1(nextR, relative(prevR, af)));
+  }
+  return activeFilePath;
+}
 const normalizeBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
   if (kind !== "lmstudio") {
@@ -1127,8 +1139,37 @@ const toApiMessage = (message) => {
     content: message.content
   };
 };
+function wizardPromptLooksLikeInjectedRouting(text) {
+  const markers = [
+    ["[OpenKiwi model routing", "OpenKiwi routing header"],
+    ["[OpenKiwi] Thread id:", "thread routing line"],
+    ["Non-Wizard Tool access lines elsewhere in this prompt", "routing reminder copied from this message"]
+  ];
+  for (const [needle, label] of markers) {
+    if (text.includes(needle)) return label;
+  }
+  return void 0;
+}
+function agentModeSystemPromptInstructions(settings, runtime) {
+  if (runtime.wizardId) {
+    const label = runtime.wizardName?.trim() || "this Wizard";
+    return [
+      `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global LLM provider preset in Settings.`,
+      "To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. OpenKiwi opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.",
+      "`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global LLM provider** preset in Settings—do not confuse the two.",
+      "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). OpenKiwi also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit soul.md and adjust `set_wizard_system_prompt` so identity text matches.",
+      "Non-Wizard Tool access lines elsewhere in this prompt still apply to files, workspace search, and commands; Wizard prompt edits bypass the “AI can change system prompt” toggle.",
+      "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[OpenKiwi model routing`, `[OpenKiwi] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on soul.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
+      "The app already appends an “OpenKiwi Wizard runtime” reminder at send time; you usually should not duplicate long runtime explanations inside `system_prompt` unless the user explicitly asks."
+    ];
+  }
+  return [
+    openkiwiModelSystemPromptInstruction,
+    settings.tools.allowModelSystemPrompt ? "set_system_prompt is enabled in Settings → you may update the system prompt when the user asks." : "set_system_prompt is disabled; the user can enable “AI can change system prompt” under Tool access. You can still call get_system_prompt anytime in Agent mode to read the stored prompt."
+  ];
+}
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, requestWizardPromptApproval2) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, persistWizardDisplayName, requestWizardPromptApproval2) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
@@ -1137,6 +1178,7 @@ class ModelService {
     this.setCustomTheme = setCustomTheme2;
     this.persistAppSettings = persistAppSettings;
     this.persistWizardSystemPrompt = persistWizardSystemPrompt;
+    this.persistWizardDisplayName = persistWizardDisplayName;
     this.requestWizardPromptApproval = requestWizardPromptApproval2;
   }
   workspaceService;
@@ -1147,6 +1189,7 @@ class ModelService {
   setCustomTheme;
   persistAppSettings;
   persistWizardSystemPrompt;
+  persistWizardDisplayName;
   requestWizardPromptApproval;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
@@ -1480,6 +1523,20 @@ class ModelService {
       }
     };
   }
+  buildGetWizardSystemPromptTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_wizard_system_prompt",
+        description: "Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not OpenKiwi’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global LLM provider preset in Settings. Long prompts may be truncated.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildRevertAppThemeTool() {
     return {
       type: "function",
@@ -1611,20 +1668,39 @@ class ModelService {
       });
     }
     if (runtime.wizardId) {
+      tools.push(this.buildGetWizardSystemPromptTool());
       tools.push({
         type: "function",
         function: {
           name: "set_wizard_system_prompt",
-          description: "Replace this Wizard’s private system prompt only. Use only when the user clearly asks this Wizard to change its own instructions. Always requires explicit user approval with before/after preview.",
+          description: "Replace this Wizard’s private system prompt only—not the global LLM provider preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. OpenKiwi shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste OpenKiwi Agent routing text from this chat into system_prompt—only persona/editor-style instructions.",
           parameters: {
             type: "object",
             properties: {
               system_prompt: {
                 type: "string",
-                description: "Full new private system prompt text for this Wizard."
+                description: "Full new Wizard-only prompt text (persona / instructions like in the Wizard settings editor). Must not include hidden `[OpenKiwi model routing` blocks, `[OpenKiwi] Thread id` lines, tool/workspace listings from Agent routing, or other pasted system-injection text—only user-facing Wizard instructions."
               }
             },
             required: ["system_prompt"],
+            additionalProperties: false
+          }
+        }
+      });
+      tools.push({
+        type: "function",
+        function: {
+          name: "set_wizard_display_name",
+          description: "Change this Wizard’s **display name** in OpenKiwi (sidebar list, chat subtitle, Inspector Wizard settings header). Does not edit soul.md or the stored system prompt—after renaming here, update soul.md (identity heading/text) and use `set_wizard_system_prompt` if your instructions still mention the old name so everything stays consistent.",
+          parameters: {
+            type: "object",
+            properties: {
+              display_name: {
+                type: "string",
+                description: "New short display name for this Wizard (shown in the UI)."
+              }
+            },
+            required: ["display_name"],
             additionalProperties: false
           }
         }
@@ -1908,8 +1984,7 @@ class ModelService {
         openkiwiWebSearchEmbedInstruction,
         openkiwiSetAppThemeAgentInstruction,
         openkiwiToolAccessReadInstruction,
-        openkiwiModelSystemPromptInstruction,
-        settings.tools.allowModelSystemPrompt ? "set_system_prompt is enabled in Settings → you may update the system prompt when the user asks." : "set_system_prompt is disabled; the user can enable “AI can change system prompt” under Tool access. You can still call get_system_prompt anytime in Agent mode to read the stored prompt.",
+        ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
         ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []
@@ -1932,7 +2007,7 @@ class ModelService {
       settings.tools.fileWrite ? "apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path" : null,
       settings.tools.commandDeck ? "get_git_diff, run_tests, run_command" : null,
       settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null,
-      runtime.wizardId ? "set_wizard_system_prompt" : null
+      runtime.wizardId ? "get_wizard_system_prompt, set_wizard_system_prompt, set_wizard_display_name" : null
     ].filter(Boolean).join(", ");
     return [
       "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
@@ -1945,13 +2020,13 @@ class ModelService {
       webHeaderUiStateLine(settings.ui.webSearch),
       openkiwiSetAppThemeAgentInstruction,
       openkiwiToolAccessReadInstruction,
-      openkiwiModelSystemPromptInstruction,
+      ...agentModeSystemPromptInstructions(settings, runtime),
       openkiwiCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
       `Approval: ${settings.agent.fullAccess ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
-      runtime.wizardId ? `Wizard private prompt: if the user asks you to change your own Wizard system prompt, use set_wizard_system_prompt. It updates only this Wizard and always asks the user for before/after approval.` : "",
+      runtime.wizardId ? "Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access." : "",
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
@@ -2054,6 +2129,31 @@ class ModelService {
             commandDeck: "Command deck",
             allowModelSystemPrompt: "AI can change system prompt"
           }
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "get_wizard_system_prompt") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "get_wizard_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!runtime.wizardId) {
+        throw new Error("get_wizard_system_prompt is only available inside a Wizard session.");
+      }
+      const full = runtime.wizardSystemPrompt ?? "";
+      const MAX_PREVIEW = 24e3;
+      const truncated = full.length > MAX_PREVIEW;
+      const system_prompt = truncated ? truncate(full, MAX_PREVIEW) : full;
+      return JSON.stringify(
+        {
+          wizard_id: runtime.wizardId,
+          wizard_name: runtime.wizardName ?? null,
+          system_prompt,
+          system_prompt_length: full.length,
+          system_prompt_truncated: truncated
         },
         null,
         2
@@ -2189,6 +2289,12 @@ ${truncate(system_prompt, 900)}`
       if (system_prompt.length > MAX_SYSTEM_PROMPT) {
         throw new Error(`system_prompt is too long (max ${MAX_SYSTEM_PROMPT} characters).`);
       }
+      const leaked = wizardPromptLooksLikeInjectedRouting(system_prompt);
+      if (leaked) {
+        throw new Error(
+          `set_wizard_system_prompt contained pasted OpenKiwi routing text (${leaked}). Put only this Wizard’s authored instructions—use read_file on soul.md or workspace docs for facts, then edit minimally. Remove any blocks matching hidden Agent routing (e.g. lines beginning with “[OpenKiwi model routing” or “[OpenKiwi] Thread id”).`
+        );
+      }
       const before = runtime.wizardSystemPrompt ?? "";
       this.emitActivity(window, requestId, "approval", "Approve Wizard system prompt change: waiting for user approval.");
       if (this.requestWizardPromptApproval) {
@@ -2216,6 +2322,46 @@ ${truncate(system_prompt, 900)}`
           wizardId: runtime.wizardId,
           length: system_prompt.length,
           message: "Wizard system prompt saved. It applies on the next message."
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "set_wizard_display_name") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "set_wizard_display_name is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+        );
+      }
+      if (!runtime.wizardId) {
+        throw new Error("set_wizard_display_name is only available inside a Wizard session.");
+      }
+      if (!this.persistWizardDisplayName) {
+        throw new Error("Wizard display name updates are not available in this build.");
+      }
+      const raw = String(args.display_name ?? "");
+      const display_name = raw.replace(/[\u0000-\u001f]/g, "").trim();
+      if (!display_name) {
+        throw new Error("set_wizard_display_name requires a non-empty display_name.");
+      }
+      if (display_name.length > 120) {
+        throw new Error("display_name is too long (max 120 characters).");
+      }
+      const prevWizardRoot = runtime.workspaceRoot;
+      const wizard = await this.persistWizardDisplayName(runtime.wizardId, display_name);
+      runtime.wizardName = wizard.name;
+      runtime.workspaceRoot = wizard.workspaceRoot;
+      runtime.activeFilePath = remapActiveFilePathAfterWorkspaceRootChange(
+        prevWizardRoot,
+        wizard.workspaceRoot,
+        runtime.activeFilePath
+      );
+      return JSON.stringify(
+        {
+          ok: true,
+          wizardId: runtime.wizardId,
+          display_name,
+          message: "Wizard display name saved for the sidebar and Wizard settings. OpenKiwi renames the workspace folder when needed so it matches your name. Update soul.md and call set_wizard_system_prompt if needed so your identity text matches."
         },
         null,
         2
@@ -2605,7 +2751,8 @@ const defaultSettings = {
     themeId: "neon-grid",
     sessionMode: "agent",
     webSearch: false,
-    favoriteModels: { lmstudio: [], openrouter: [] }
+    favoriteModels: { lmstudio: [], openrouter: [] },
+    wizardProjectsParentFolder: null
   },
   lastWorkspaceRoot: null
 };
@@ -2723,6 +2870,9 @@ class SettingsStore {
     return next;
   }
 }
+function sanitizeWizardFolderSegment(name) {
+  return name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "OpenKiwi Wizard";
+}
 const IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "out", "build", "coverage"]);
 const MAX_TREE_DEPTH = 10;
 const MAX_LIST_DEPTH = 24;
@@ -2755,7 +2905,6 @@ Durable notes this Wizard should remember across sessions.
 User corrections, mistakes to avoid, and lessons learned.
 `
 };
-const sanitizeFolderName = (name) => name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "OpenKiwi Wizard";
 const normalizeDocName = (name) => {
   const base = name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/^\.+/, "").slice(0, 80).trim();
   if (!base) return null;
@@ -2884,10 +3033,18 @@ class WorkspaceService {
     }
     return this.assertUsableLocalWorkspace(result.filePaths[0]);
   }
-  async chooseWizardWorkspace(defaultName) {
+  async chooseWizardWorkspace(defaultName, preferredDefaultPath) {
+    let defaultPath = join$1(process.env.HOME ?? "", "Desktop", sanitizeWizardFolderSegment(defaultName));
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+      }
+    }
     const result = await dialog.showOpenDialog({
       buttonLabel: "Use this folder",
-      defaultPath: join$1(process.env.HOME ?? "", "Desktop", sanitizeFolderName(defaultName)),
+      defaultPath,
       message: "Choose a local folder for this Wizard.",
       properties: ["openDirectory", "createDirectory"]
     });
@@ -2897,8 +3054,29 @@ class WorkspaceService {
     assertLocalWorkspace(result.filePaths[0]);
     return result.filePaths[0];
   }
+  /** Pick the folder that will contain one subfolder per Wizard (`<parent>/<sanitized name>/`). */
+  async chooseWizardProjectsFolder(preferredDefaultPath) {
+    let defaultPath = join$1(process.env.HOME ?? "", "Desktop");
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+      }
+    }
+    const result = await dialog.showOpenDialog({
+      buttonLabel: "Use this folder",
+      defaultPath,
+      message: "Choose a folder for Wizard workspaces. Each new Wizard will get its own subfolder inside here (named from the Wizard title).",
+      properties: ["openDirectory", "createDirectory"]
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
   getRecommendedWizardWorkspace(name) {
-    return join$1(process.env.HOME ?? "", "Desktop", sanitizeFolderName(name));
+    return join$1(process.env.HOME ?? "", "Desktop", sanitizeWizardFolderSegment(name));
   }
   async setupWizardWorkspace(request) {
     const name = request.name.trim();
@@ -2908,10 +3086,35 @@ class WorkspaceService {
     if (!request.model.trim()) {
       throw new Error("Choose a model for this Wizard.");
     }
-    const root = resolve(
-      request.createOnDesktop || !request.workspaceRoot ? this.getRecommendedWizardWorkspace(name) : request.workspaceRoot
-    );
-    assertLocalWorkspace(root);
+    let parentDir;
+    const ws = request.workspaceRoot?.trim();
+    if (ws) {
+      parentDir = resolve(ws);
+    } else if (request.createOnDesktop) {
+      parentDir = resolve(join$1(process.env.HOME ?? "", "Desktop"));
+    } else {
+      throw new Error(
+        "Choose the folder where Wizard workspaces live. Each Wizard gets its own subfolder inside it."
+      );
+    }
+    assertLocalWorkspace(parentDir);
+    const parentStat = await stat(parentDir).catch(() => null);
+    if (!parentStat?.isDirectory()) {
+      throw new Error("Wizard workspaces folder must be an existing local folder.");
+    }
+    const childSegment = sanitizeWizardFolderSegment(name);
+    const root = resolve(join$1(parentDir, childSegment));
+    try {
+      await stat(root);
+      throw new Error(
+        `A Wizard folder "${childSegment}" already exists in that location. Choose a different Wizard name, or delete or rename that folder.`
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("A Wizard folder")) {
+        throw error;
+      }
+      if (error.code !== "ENOENT") throw error;
+    }
     await mkdir(root, { recursive: true });
     const documents = [];
     for (const [file, label] of WIZARD_CORE_DOCS) {
@@ -2949,6 +3152,51 @@ class WorkspaceService {
     return {
       profile,
       tree: await this.getTree(root)
+    };
+  }
+  /**
+   * Renames the wizard workspace directory when its basename does not match the sanitized display name.
+   * Keeps the same parent folder; updates `workspaceRoot` and absolute paths in `documents`.
+   */
+  async ensureWizardWorkspaceFolderMatchesDisplayName(profile) {
+    const oldRoot = resolve(profile.workspaceRoot.trim());
+    assertLocalWorkspace(oldRoot);
+    await stat(oldRoot);
+    const parent = dirname(oldRoot);
+    const desiredBase = sanitizeWizardFolderSegment(profile.name);
+    const newRoot = resolve(join$1(parent, desiredBase));
+    if (newRoot === oldRoot) {
+      return profile;
+    }
+    let destInWay = false;
+    try {
+      await stat(newRoot);
+      destInWay = true;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (destInWay) {
+      throw new Error(
+        `Cannot rename workspace folder to "${desiredBase}" — that name is already taken in this location. Use a different Wizard name or remove/rename the conflicting folder.`
+      );
+    }
+    await rename(oldRoot, newRoot);
+    return this.remapWizardProfileRoots(profile, oldRoot, newRoot);
+  }
+  remapWizardProfileRoots(profile, oldRoot, newRoot) {
+    const oldR = resolve(oldRoot);
+    const newR = resolve(newRoot);
+    const prefix = oldR.endsWith(sep) ? oldR : `${oldR}${sep}`;
+    return {
+      ...profile,
+      workspaceRoot: newR,
+      documents: profile.documents.map((d) => {
+        const abs = resolve(d.path);
+        if (abs === oldR || abs.startsWith(prefix)) {
+          return { ...d, path: join$1(newR, relative(oldR, abs)) };
+        }
+        return d;
+      })
     };
   }
   async getTree(root) {
@@ -3405,6 +3653,42 @@ const modelService = new ModelService(
       }
     });
   },
+  async (wizardId, displayName) => {
+    const trimmed = displayName.trim();
+    if (!trimmed || trimmed.length > 120) {
+      throw new Error("Invalid Wizard display name.");
+    }
+    const chat = await chatStore.loadChat(wizardId);
+    if (!chat || chat.kind !== "wizard" || !chat.wizard) {
+      throw new Error("Wizard not found.");
+    }
+    const prevRoot = chat.wizard.workspaceRoot;
+    const wizard = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName({
+      ...chat.wizard,
+      name: trimmed
+    });
+    await chatStore.saveChat({
+      ...chat,
+      title: trimmed,
+      titleOverride: trimmed,
+      updatedAt: Date.now(),
+      wizard
+    });
+    if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(prevRoot)) {
+      activeWorkspaceRoot = wizard.workspaceRoot;
+      workspaceWatch.setRoot(wizard.workspaceRoot);
+    }
+    const ls = currentSettings.lastWorkspaceRoot?.trim();
+    if (ls && resolve(ls) === resolve(prevRoot)) {
+      currentSettings = await settingsStore.save({
+        ...currentSettings,
+        lastWorkspaceRoot: wizard.workspaceRoot
+      });
+      mainWindow?.webContents.send("settings:updated", currentSettings);
+    }
+    mainWindow?.webContents.send("chats:updated");
+    return wizard;
+  },
   requestWizardPromptApproval
 );
 const assertActiveWorkspace = (root) => {
@@ -3540,6 +3824,17 @@ ipcMain.handle("workspace:open-last", async () => {
     tree: await workspaceService.getTree(candidate)
   };
 });
+ipcMain.handle("workspace:last-valid-root", async () => {
+  const candidate = currentSettings.lastWorkspaceRoot?.trim();
+  if (!candidate) {
+    return null;
+  }
+  try {
+    return await workspaceService.assertUsableLocalWorkspace(candidate);
+  } catch {
+    return null;
+  }
+});
 ipcMain.handle("workspace:activate", async (_event, root) => {
   const resolved = await workspaceService.assertUsableLocalWorkspace(root);
   activeWorkspaceRoot = resolved;
@@ -3574,12 +3869,38 @@ ipcMain.handle(
   "wizard:recommended-workspace",
   async (_event, name) => workspaceService.getRecommendedWizardWorkspace(name)
 );
-ipcMain.handle("wizard:choose-workspace", async (_event, name) => workspaceService.chooseWizardWorkspace(name));
+ipcMain.handle(
+  "wizard:choose-workspace",
+  async (_event, name, preferredDefaultPath) => workspaceService.chooseWizardWorkspace(name, preferredDefaultPath)
+);
+ipcMain.handle(
+  "wizard:choose-projects-folder",
+  async (_event, preferredDefaultPath) => workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
+);
 ipcMain.handle("wizard:setup", async (_event, request) => {
   const result = await workspaceService.setupWizardWorkspace(request);
   activeWorkspaceRoot = result.profile.workspaceRoot;
   workspaceWatch.setRoot(result.profile.workspaceRoot);
   return result;
+});
+ipcMain.handle("wizard:sync-workspace-folder", async (_event, profile) => {
+  const prevRoot = resolve(profile.workspaceRoot.trim());
+  const updated = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName(profile);
+  if (resolve(prevRoot) !== resolve(updated.workspaceRoot)) {
+    if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === prevRoot) {
+      activeWorkspaceRoot = updated.workspaceRoot;
+      workspaceWatch.setRoot(updated.workspaceRoot);
+    }
+    const ls = currentSettings.lastWorkspaceRoot?.trim();
+    if (ls && resolve(ls) === prevRoot) {
+      currentSettings = await settingsStore.save({
+        ...currentSettings,
+        lastWorkspaceRoot: updated.workspaceRoot
+      });
+      mainWindow?.webContents.send("settings:updated", currentSettings);
+    }
+  }
+  return updated;
 });
 ipcMain.handle("wizard:delete-workspace", async (_event, root) => {
   const deleted = await workspaceService.deleteWorkspaceFolder(root);

@@ -13,7 +13,6 @@ interface SettingsPanelProps {
   modelOptions: ModelInfo[];
   statusMessage: string;
   onChange: (next: AppSettings) => void;
-  onSave: () => Promise<void>;
   /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
@@ -37,14 +36,11 @@ const searchProviderOptions: Array<{ value: SearchProvider; label: string }> = [
   { value: 'brave', label: 'Brave Search' }
 ];
 
-const HEADER_SAVE_ACK_MS = 1500;
-
 export function SettingsPanel({
   settings,
   modelOptions,
   statusMessage,
   onChange,
-  onSave,
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
@@ -52,17 +48,8 @@ export function SettingsPanel({
   onOpenSystemPromptModal,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
-  const [headerSaveAck, setHeaderSaveAck] = useState(false);
   const [themeSectionExpanded, setThemeSectionExpanded] = useState(false);
-  const saveAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSectionRef = useRef<HTMLDivElement>(null);
-
-  useEffect(
-    () => () => {
-      if (saveAckTimerRef.current) clearTimeout(saveAckTimerRef.current);
-    },
-    []
-  );
 
   useEffect(() => {
     if (focusSearchSettingsKey <= 0) return;
@@ -117,23 +104,6 @@ export function SettingsPanel({
     if (persist) void onPresetPersist(next);
   };
 
-  const onHeaderSave = async () => {
-    if (saveAckTimerRef.current) {
-      clearTimeout(saveAckTimerRef.current);
-      saveAckTimerRef.current = null;
-    }
-    try {
-      await onSave();
-      setHeaderSaveAck(true);
-      saveAckTimerRef.current = setTimeout(() => {
-        setHeaderSaveAck(false);
-        saveAckTimerRef.current = null;
-      }, HEADER_SAVE_ACK_MS);
-    } catch {
-      setHeaderSaveAck(false);
-    }
-  };
-
   return (
     <section className="panel settings-panel">
       <div className="settings-panel__header">
@@ -141,20 +111,6 @@ export function SettingsPanel({
           <h3 className="settings-panel__title">Settings</h3>
           <p className="settings-panel__subtitle">Provider, tools, and preferences</p>
         </div>
-        <button
-          aria-live="polite"
-          className={`btn btn--secondary settings-panel__save${headerSaveAck ? ' settings-panel__save--ack' : ''}`}
-          onClick={onHeaderSave}
-          type="button"
-        >
-          {headerSaveAck ? (
-            <>
-              <span aria-hidden className="settings-panel__save-check">✓</span> Saved
-            </>
-          ) : (
-            'Save'
-          )}
-        </button>
       </div>
 
       <div className="settings-scroll">

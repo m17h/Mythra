@@ -11,7 +11,6 @@ interface WizardSettingsPanelProps {
   onChange: (wizard: WizardProfile) => void;
   onOpenDocument: (path: string) => void;
   onRefreshModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
-  onSave: () => Promise<void>;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
@@ -26,21 +25,13 @@ export function WizardSettingsPanel({
   statusMessage,
   onChange,
   onOpenDocument,
-  onRefreshModels,
-  onSave
+  onRefreshModels
 }: WizardSettingsPanelProps) {
-  const [headerSaveAck, setHeaderSaveAck] = useState(false);
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
 
   useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
-
-  const save = async () => {
-    await onSave();
-    setHeaderSaveAck(true);
-    window.setTimeout(() => setHeaderSaveAck(false), 1500);
-  };
 
   return (
     <section className="panel settings-panel">
@@ -49,14 +40,6 @@ export function WizardSettingsPanel({
           <h3 className="settings-panel__title">Wizard</h3>
           <p className="settings-panel__subtitle">Model, memory, and private workspace</p>
         </div>
-        <button
-          aria-live="polite"
-          className={`btn btn--secondary settings-panel__save${headerSaveAck ? ' settings-panel__save--ack' : ''}`}
-          onClick={save}
-          type="button"
-        >
-          {headerSaveAck ? 'Saved' : 'Save'}
-        </button>
       </div>
 
       <div className="settings-scroll">
