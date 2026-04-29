@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import openkiwiLogo from '@renderer/assets/openkiwi.png';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
+import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { AppSelect } from './components/AppSelect';
 import { ChatPanel } from './components/ChatPanel';
 import { ChangesPanel } from './components/ChangesPanel';
@@ -11,6 +12,8 @@ import { ModelSearch } from './components/ModelSearch';
 import { OpenKiwiMark } from './components/OpenKiwiMark';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SystemPromptModal } from './components/SystemPromptModal';
+import { WizardSettingsPanel } from './components/WizardSettingsPanel';
+import { WizardSetupModal } from './components/WizardSetupModal';
 import {
   defaultSettings,
   type AppSettings,
@@ -26,6 +29,9 @@ import {
   type SessionMode,
   type SavedChat,
   type SavedChatMeta,
+  type WizardProfile,
+  type WizardPromptApprovalRequest,
+  type WizardSetupRequest,
   type WorkspaceChanges,
   type WorkspaceNode
 } from '@shared/types';
@@ -72,6 +78,46 @@ const resolveChatTitle = (messages: ChatMessage[], titleOverride: string | null 
   return chatTitle(messages);
 };
 
+const sessionTitle = (messages: ChatMessage[], fallback = 'New session') => {
+  const first = messages.find((m) => m.role === 'user');
+  if (!first) return fallback;
+  const text = first.content.trim();
+  return text.length > 42 ? `${text.slice(0, 42)}...` : text || fallback;
+};
+
+const buildWizardSystemPrompt = (wizard: WizardProfile) => `${wizard.systemPrompt}
+
+OpenKiwi Wizard runtime:
+- You are currently inside your private Wizard workspace: ${wizard.workspaceRoot}
+- Always use this workspace for file reads, memory, and edits unless the user explicitly tells you otherwise.
+- At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.
+- When asked about your identity, memory, tools, or corrections, read the matching Markdown file before answering.
+- Do not use app theme tools unless the user explicitly asks to change OpenKiwi's visual theme.`;
+
+const buildWizardDocsContext = async (wizard: WizardProfile): Promise<ChatMessage | null> => {
+  const coreDocs = wizard.documents.filter((doc) => doc.core);
+  if (coreDocs.length === 0) return null;
+  const parts = await Promise.all(
+    coreDocs.map(async (doc) => {
+      try {
+        const file = await window.electronAPI.openFile(wizard.workspaceRoot, doc.path);
+        return `## ${doc.path.split(/[\\/]/).pop() ?? doc.label}\n${file.content}`;
+      } catch {
+        return `## ${doc.path.split(/[\\/]/).pop() ?? doc.label}\n[Could not read this document.]`;
+      }
+    })
+  );
+  return {
+    id: `wizard-docs-${Date.now()}`,
+    role: 'system',
+    content: [
+      'Wizard core workspace documents are injected below. Treat these as current private context for this Wizard session.',
+      ...parts
+    ].join('\n\n'),
+    status: 'done'
+  };
+};
+
 const chatFingerprint = (messages: ChatMessage[], timeline: ChatTimelineEntry[]) =>
   JSON.stringify({ messages, timeline });
 
@@ -92,7 +138,7 @@ interface FileBuffer extends OpenFile {
 }
 
 type InspectorTab = 'editor' | 'changes' | 'settings';
-type SidebarTab = 'chats' | 'files';
+type SidebarTab = 'chats' | 'wizards' | 'files';
 
 interface InFlightChat {
   chatId: string;
@@ -158,12 +204,19 @@ export function App() {
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const [showWizardSetup, setShowWizardSetup] = useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
+  const [wizardDraft, setWizardDraft] = useState<WizardProfile | null>(null);
+  const [wizardDeleteTarget, setWizardDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{ wizardName: string; workspaceRoot: string } | null>(null);
+  const [wizardPromptApproval, setWizardPromptApproval] = useState<WizardPromptApprovalRequest | null>(null);
+  const [expandedWizardIds, setExpandedWizardIds] = useState<Set<string>>(new Set());
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastContentFingerprintRef = useRef<string | null>(null);
@@ -262,6 +315,31 @@ export function App() {
     () => (activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined),
     [activeChatId, chatList]
   );
+  const activeWizardMeta = useMemo(() => {
+    if (!activeChatMeta) return undefined;
+    if (activeChatMeta.kind === 'wizard') return activeChatMeta;
+    if (activeChatMeta.kind === 'wizard-session' && activeChatMeta.wizardId) {
+      return chatList.find((c) => c.id === activeChatMeta.wizardId && c.kind === 'wizard');
+    }
+    return undefined;
+  }, [activeChatMeta, chatList]);
+  const activeWizard = activeWizardMeta?.wizard ?? null;
+  const normalChatList = useMemo(() => chatList.filter((c) => (c.kind ?? 'normal') === 'normal'), [chatList]);
+  const wizardChatList = useMemo(() => chatList.filter((c) => c.kind === 'wizard'), [chatList]);
+  const wizardSessionsByWizardId = useMemo(() => {
+    const map = new Map<string, SavedChatMeta[]>();
+    for (const chat of chatList) {
+      if (chat.kind !== 'wizard-session' || !chat.wizardId) continue;
+      const list = map.get(chat.wizardId) ?? [];
+      list.push(chat);
+      map.set(chat.wizardId, list);
+    }
+    return map;
+  }, [chatList]);
+
+  useEffect(() => {
+    setWizardDraft(activeWizard);
+  }, [activeChatId, activeWizard]);
 
   const effectiveModelOverride = useMemo((): ChatModelOverride | null => {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
@@ -269,6 +347,10 @@ export function App() {
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
 
   const chatSessionSubheading = useMemo(() => {
+    if (activeWizard) {
+      const session = activeChatMeta?.kind === 'wizard-session' ? activeChatMeta.title : 'Home';
+      return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
+    }
     if (chatMessages.length === 0) {
       if (newChatModelOverride?.model) {
         return `New conversation · ${formatOverrideLabel(newChatModelOverride, pathLabel)}`;
@@ -286,7 +368,7 @@ export function App() {
       }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, chatList, chatMessages, newChatModelOverride, pathLabel]);
+  }, [activeChatId, activeChatMeta, chatList, chatMessages, newChatModelOverride, pathLabel]);
 
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
@@ -307,16 +389,22 @@ export function App() {
             ? null
             : existing.titleOverride;
       const createdAt = disk?.createdAt ?? existing?.createdAt ?? now;
+      const kind = disk?.kind ?? existing?.kind ?? 'normal';
+      const wizard = disk?.wizard ?? existing?.wizard ?? null;
+      const wizardId = disk?.wizardId ?? existing?.wizardId ?? null;
       const chat: SavedChat = {
         id,
-        title: resolveChatTitle(msgs, nameOverride),
+        kind,
+        title: kind === 'wizard-session' ? sessionTitle(msgs, nameOverride ?? undefined) : resolveChatTitle(msgs, nameOverride),
         titleOverride: nameOverride == null || nameOverride === '' ? null : nameOverride.trim() || null,
         messages: msgs,
         timeline: tl,
         createdAt,
         updatedAt: now,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
-        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : (newChatModelOverrideRef.current ?? null))
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : (newChatModelOverrideRef.current ?? null)),
+        wizard,
+        wizardId
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -489,6 +577,9 @@ export function App() {
     const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
       setSettings(next);
     });
+    const offWizardPromptApproval = window.electronAPI.onWizardPromptApprovalRequest((payload) => {
+      setWizardPromptApproval(payload);
+    });
     const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
       async ({ root, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root);
@@ -545,6 +636,7 @@ export function App() {
       offError();
       offActivity();
       offSettingsUpdated();
+      offWizardPromptApproval();
       offWorkspaceChanged();
     };
   }, [refreshWorkspaceChanges]);
@@ -579,6 +671,10 @@ export function App() {
 
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
+    if (activeWizard) {
+      setSettingsStatus('Wizard workspaces stay attached while their Wizard is selected.');
+      return;
+    }
     void window.electronAPI.detachWorkspace().finally(() => {
       setWorkspaceRoot(undefined);
       setWorkspaceTree([]);
@@ -587,6 +683,17 @@ export function App() {
       setActiveFilePath(undefined);
       setInlineTerminalLogs((c) => c + '\n[workspace cleared]\n');
     });
+  };
+
+  const activateWorkspace = async (root: string) => {
+    const result = await window.electronAPI.activateWorkspace(root);
+    setWorkspaceRoot(result.root);
+    setWorkspaceTree(result.tree);
+    setWorkspaceChanges(null);
+    setBuffers({});
+    setActiveFilePath(undefined);
+    void refreshWorkspaceChanges(result.root);
+    return result;
   };
 
   const openFile = async (target: string) => {
@@ -787,6 +894,8 @@ export function App() {
     const nextSid = uid();
     setChatSessionId(nextSid);
     chatSessionIdRef.current = nextSid;
+    setSidebarTab('chats');
+    setShowNewMenu(false);
   };
 
   const loadChat = async (id: string) => {
@@ -796,6 +905,23 @@ export function App() {
     }
     const chat = await window.electronAPI.loadChat(id);
     if (!chat) return;
+    const parentWizard =
+      chat.kind === 'wizard-session' && chat.wizardId
+        ? await window.electronAPI.loadChat(chat.wizardId)
+        : chat.kind === 'wizard'
+          ? chat
+          : null;
+    if (parentWizard?.kind === 'wizard' && parentWizard.wizard?.workspaceRoot) {
+      try {
+        await activateWorkspace(parentWizard.wizard.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : 'Wizard workspace could not be opened.');
+      }
+      setSidebarTab('wizards');
+      setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
+    } else {
+      setSidebarTab('chats');
+    }
     const inFlight = findInFlightByChatId(id);
     const messages = inFlight?.messages ?? chat.messages;
     const timeline = inFlight?.timeline ?? chat.timeline;
@@ -829,6 +955,129 @@ export function App() {
     await refreshChatList();
   };
 
+  const requestDeleteChat = (chat: SavedChatMeta) => {
+    if (chat.kind === 'wizard') {
+      setWizardDeleteTarget(chat);
+      return;
+    }
+    if (chat.kind === 'wizard-session') {
+      void deleteWizardSession(chat);
+      return;
+    }
+    void deleteChat(chat.id);
+  };
+
+  const clearActiveConversation = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    lastContentFingerprintRef.current = null;
+    setChatMessages([]);
+    setChatTimeline([]);
+    setChatInput('');
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(undefined);
+    setActiveChatId(undefined);
+    activeChatIdRef.current = undefined;
+    setNewChatModelOverride(null);
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
+  };
+
+  const deleteWizardSession = async (session: SavedChatMeta) => {
+    const wizardId = session.wizardId;
+    const inFlight = findInFlightByChatId(session.id);
+    if (inFlight) {
+      await window.electronAPI.stopChat(inFlight.requestId);
+      inFlightChatsRef.current.delete(inFlight.requestId);
+    }
+    await window.electronAPI.deleteChat(session.id);
+    if (activeChatId === session.id) {
+      const siblings = wizardId
+        ? (wizardSessionsByWizardId.get(wizardId) ?? []).filter((item) => item.id !== session.id)
+        : [];
+      if (siblings[0]) {
+        await loadChat(siblings[0].id);
+      } else {
+        clearActiveConversation();
+        setSidebarTab('wizards');
+        if (wizardId) setExpandedWizardIds((current) => new Set(current).add(wizardId));
+      }
+    }
+    if (editingTitleId === session.id) {
+      setEditingTitleId(null);
+      setEditingTitleDraft('');
+    }
+    await refreshChatList();
+  };
+
+  const confirmDeleteWizard = async () => {
+    const target = wizardDeleteTarget;
+    if (!target) return;
+    const workspaceRoot = target.wizard?.workspaceRoot;
+    const wizardName = target.wizard?.name || target.title;
+    setWizardDeleteTarget(null);
+    const sessions = wizardSessionsByWizardId.get(target.id) ?? [];
+    await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
+    await deleteChat(target.id);
+    setSidebarTab('wizards');
+    if (workspaceRoot) {
+      setWorkspaceDeleteTarget({ wizardName, workspaceRoot });
+    }
+  };
+
+  const createWizardSession = async (wizardMeta: SavedChatMeta) => {
+    const full = await window.electronAPI.loadChat(wizardMeta.id);
+    if (!full || full.kind !== 'wizard' || !full.wizard) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const now = Date.now();
+    const assistantMessage: ChatMessage = {
+      id: uid(),
+      role: 'assistant',
+      content: `New session started for ${full.wizard.name}. I will use the injected core docs and check soul.md, tools.md, memory.md, and corrections.md before my first substantive response.`,
+      status: 'done'
+    };
+    const timeline: ChatTimelineEntry[] = [{ id: `message-${assistantMessage.id}`, type: 'message', message: assistantMessage }];
+    const sessionId = uid();
+    const session: SavedChat = {
+      id: sessionId,
+      kind: 'wizard-session',
+      title: 'New session',
+      titleOverride: null,
+      messages: [assistantMessage],
+      timeline,
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      modelOverride: { provider: full.wizard.provider, model: full.wizard.model },
+      wizardId: full.id
+    };
+    await window.electronAPI.saveChat(session);
+    lastContentFingerprintRef.current = chatFingerprint([assistantMessage], timeline);
+    setChatMessages([assistantMessage]);
+    setChatTimeline(timeline);
+    setChatInput('');
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(undefined);
+    setActiveChatId(sessionId);
+    activeChatIdRef.current = sessionId;
+    setChatSessionId(sessionId);
+    chatSessionIdRef.current = sessionId;
+    setExpandedWizardIds((current) => new Set(current).add(full.id));
+    setSidebarTab('wizards');
+    await refreshChatList();
+    await activateWorkspace(full.wizard.workspaceRoot);
+  };
+
   const beginRenameChat = (e: MouseEvent, id: string, currentTitle: string) => {
     e.stopPropagation();
     skipNextRenameCommitRef.current = false;
@@ -853,6 +1102,78 @@ export function App() {
       await refreshChatList();
     },
     [activeChatId, refreshChatList]
+  );
+
+  const listModelsForWizardSetup = useCallback(
+    async (provider: ProviderKind) => {
+      const s = settingsRef.current;
+      if (!s) return [];
+      return window.electronAPI.listModels(s, provider);
+    },
+    []
+  );
+
+  const saveActiveWizard = useCallback(
+    async (wizard: WizardProfile) => {
+      const wizardId = activeWizardMeta?.id;
+      if (!wizardId) return;
+      const full = await window.electronAPI.loadChat(wizardId);
+      if (!full || full.kind !== 'wizard') return;
+      await window.electronAPI.saveChat({
+        ...full,
+        title: wizard.name,
+        titleOverride: wizard.name,
+        updatedAt: Date.now(),
+        modelOverride: { provider: wizard.provider, model: wizard.model },
+        wizard
+      });
+      await refreshChatList();
+    },
+    [activeWizardMeta?.id, refreshChatList]
+  );
+
+  const refreshWizardModels = useCallback(async (provider: ProviderKind) => listModelsForWizardSetup(provider), [listModelsForWizardSetup]);
+
+  const createWizard = useCallback(
+    async (request: WizardSetupRequest) => {
+      const result = await window.electronAPI.setupWizard(request);
+      setWorkspaceRoot(result.profile.workspaceRoot);
+      setWorkspaceTree(result.tree);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(undefined);
+      const now = Date.now();
+      const id = uid();
+      const chat: SavedChat = {
+        id,
+        kind: 'wizard',
+        title: result.profile.name,
+        titleOverride: result.profile.name,
+        messages: [],
+        timeline: [],
+        createdAt: now,
+        updatedAt: now,
+        pinned: false,
+        modelOverride: { provider: result.profile.provider, model: result.profile.model },
+        wizard: result.profile
+      };
+      await window.electronAPI.saveChat(chat);
+      await refreshChatList();
+      setShowWizardSetup(false);
+      await createWizardSession({
+        id,
+        kind: 'wizard',
+        title: result.profile.name,
+        titleOverride: result.profile.name,
+        createdAt: now,
+        updatedAt: now,
+        pinned: false,
+        modelOverride: { provider: result.profile.provider, model: result.profile.model },
+        wizard: result.profile
+      });
+      void refreshWorkspaceChanges(result.profile.workspaceRoot);
+    },
+    [refreshChatList, refreshWorkspaceChanges]
   );
 
   const togglePinChat = useCallback(
@@ -880,8 +1201,9 @@ export function App() {
     const nextOverride = trimmed.length > 0 ? trimmed : null;
     await window.electronAPI.saveChat({
       ...full,
-      title: nextOverride != null ? nextOverride : chatTitle(full.messages),
+      title: nextOverride != null ? nextOverride : full.kind === 'wizard-session' ? sessionTitle(full.messages) : chatTitle(full.messages),
       titleOverride: nextOverride,
+      wizard: full.kind === 'wizard' && full.wizard ? { ...full.wizard, name: nextOverride ?? full.wizard.name } : full.wizard,
       updatedAt: full.updatedAt
     });
     await refreshChatList();
@@ -890,6 +1212,28 @@ export function App() {
   const sendChat = async () => {
     const sendSettings = settingsRef.current;
     if (chatStreamingRef.current || !sendSettings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
+    const activeDiskChat = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+    const parentWizardChat =
+      activeDiskChat?.kind === 'wizard-session' && activeDiskChat.wizardId
+        ? await window.electronAPI.loadChat(activeDiskChat.wizardId)
+        : activeDiskChat?.kind === 'wizard'
+          ? activeDiskChat
+          : null;
+    const wizardForStream =
+      parentWizardChat?.kind === 'wizard'
+        ? parentWizardChat.wizard ?? null
+        : activeChatMeta?.kind === 'wizard'
+          ? activeChatMeta.wizard ?? null
+          : null;
+    if (wizardForStream && (!wizardForStream.model.trim() || !wizardForStream.workspaceRoot.trim())) return;
+    if (wizardForStream && workspaceRootRef.current !== wizardForStream.workspaceRoot) {
+      try {
+        await activateWorkspace(wizardForStream.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : 'Wizard workspace could not be opened.');
+        return;
+      }
+    }
     chatStreamingRef.current = true;
     const userMessage: ChatMessage = {
       id: uid(),
@@ -904,7 +1248,7 @@ export function App() {
       role: 'assistant',
       content: '',
       status: 'streaming',
-      reasoning: sendSettings.ui.sessionMode === 'talk' ? '' : undefined
+      reasoning: sendSettings.ui.sessionMode === 'talk' && !wizardForStream ? '' : undefined
     };
     const nextHistory = [...chatMessages, userMessage];
     const nextTimeline: ChatTimelineEntry[] = [
@@ -956,12 +1300,39 @@ export function App() {
       messages: [...nextHistory, assistantMessage],
       timeline: nextTimeline
     });
-    const streamSettings = applyChatModelOverride(sendSettings, overrideForStream);
+    const streamSettings = wizardForStream
+      ? {
+          ...sendSettings,
+          selectedProvider: wizardForStream.provider,
+          providers: {
+            ...sendSettings.providers,
+            [wizardForStream.provider]: {
+              ...sendSettings.providers[wizardForStream.provider],
+              model: wizardForStream.model,
+              systemPrompt: buildWizardSystemPrompt(wizardForStream)
+            }
+          },
+          tools: {
+            ...sendSettings.tools,
+            allowModelSystemPrompt: false
+          },
+          ui: {
+            ...sendSettings.ui,
+            sessionMode: 'agent' as const
+          }
+        }
+      : applyChatModelOverride(sendSettings, overrideForStream);
 
-    await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
-      workspaceRoot: workspaceRootRef.current,
+    const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : null;
+    const streamHistory = wizardDocsContext ? [wizardDocsContext, ...nextHistory] : nextHistory;
+
+    await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
+      workspaceRoot: wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
-      conversationId: chatSessionIdRef.current
+      conversationId: chatSessionIdRef.current,
+      wizardId: parentWizardChat?.kind === 'wizard' ? parentWizardChat.id : undefined,
+      wizardName: wizardForStream?.name,
+      wizardSystemPrompt: wizardForStream?.systemPrompt
     });
   };
 
@@ -990,16 +1361,17 @@ export function App() {
 
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
+  const isWizardActive = Boolean(activeWizard);
   /** Per-chat model override wins in the top bar and footer over the global default. */
   const effectiveHeaderModelId =
-    effectiveModelOverride?.model ?? selectedProvider?.model ?? '';
+    activeWizard?.model ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? '';
   const openRouterReady =
     settings && settings.selectedProvider === 'openrouter'
       ? Boolean(settings.providers.openrouter.apiKey?.trim())
       : true;
-  const providerConnected = Boolean(
-    settings && openRouterReady && models.length > 0 && selectedProvider?.model
-  );
+  const providerConnected = activeWizard
+    ? Boolean(activeWizard.model)
+    : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
   /** Catalog row for context window size (respects per-chat provider override lists). */
   const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
   const resolvedContextLimit = (() => {
@@ -1007,8 +1379,8 @@ export function App() {
     if (!id) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id)?.contextLength ?? 131072;
   })();
-  const selectedProviderLabel = settings?.selectedProvider === 'openrouter' ? 'OpenRouter' : 'LM Studio';
-  const sessionMode = settings?.ui.sessionMode ?? 'agent';
+  const selectedProviderLabel = (activeWizard?.provider ?? settings?.selectedProvider) === 'openrouter' ? 'OpenRouter' : 'LM Studio';
+  const sessionMode = activeWizard ? 'agent' : (settings?.ui.sessionMode ?? 'agent');
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
 
   return (
@@ -1087,6 +1459,125 @@ export function App() {
         }}
         onClose={() => setShowSystemPromptModal(false)}
       />
+      <WizardSetupModal
+        onClose={() => setShowWizardSetup(false)}
+        onCreate={createWizard}
+        onListModels={listModelsForWizardSetup}
+        open={showWizardSetup}
+        settings={settings}
+      />
+      <AppConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Delete Wizard"
+        confirmVariant="danger"
+        description={
+          <>
+            Delete <strong>{wizardDeleteTarget?.title ?? 'this Wizard'}</strong> from OpenKiwi? This removes the Wizard
+            entry and its conversation history, but does not delete its workspace folder yet.
+          </>
+        }
+        kicker="Delete Wizard"
+        onCancel={() => setWizardDeleteTarget(null)}
+        onConfirm={() => void confirmDeleteWizard()}
+        open={Boolean(wizardDeleteTarget)}
+        title="Are you sure?"
+      />
+      <AppConfirmDialog
+        cancelLabel="Keep folder"
+        confirmLabel="Delete folder"
+        confirmVariant="danger"
+        description={
+          <>
+            Also delete <strong>{workspaceDeleteTarget?.wizardName ?? 'this Wizard'}</strong>&apos;s workspace folder and
+            all files inside it?
+            <br />
+            <code className="app-dialog__code">{workspaceDeleteTarget?.workspaceRoot}</code>
+          </>
+        }
+        kicker="Wizard Workspace"
+        onCancel={() => setWorkspaceDeleteTarget(null)}
+        onConfirm={() => {
+          const target = workspaceDeleteTarget;
+          setWorkspaceDeleteTarget(null);
+          if (!target) return;
+          void window.electronAPI.deleteWizardWorkspace(target.workspaceRoot).then(() => {
+            if (workspaceRootRef.current === target.workspaceRoot) {
+              setWorkspaceRoot(undefined);
+              setWorkspaceTree([]);
+              setWorkspaceChanges(null);
+              setBuffers({});
+              setActiveFilePath(undefined);
+            }
+          });
+        }}
+        open={Boolean(workspaceDeleteTarget)}
+        title="Delete its workspace too?"
+      />
+      <AnimatePresence>
+        {wizardPromptApproval ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop app-dialog-backdrop--overlay-top"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            role="presentation"
+          >
+            <motion.div
+              aria-modal="true"
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="app-dialog wizard-prompt-approval"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">Wizard System Prompt</div>
+              <h3>{wizardPromptApproval.title}</h3>
+              <p>
+                {wizardPromptApproval.wizardName} wants to replace its private system prompt. Review the change before
+                allowing it.
+              </p>
+              <div className="wizard-prompt-approval__compare">
+                <section>
+                  <h4>Original</h4>
+                  <pre>{wizardPromptApproval.before || '[empty]'}</pre>
+                </section>
+                <div className="wizard-prompt-approval__arrow" aria-hidden>
+                  --&gt;
+                </div>
+                <section>
+                  <h4>New</h4>
+                  <pre>{wizardPromptApproval.after}</pre>
+                </section>
+              </div>
+              <div className="app-dialog__actions">
+                <button
+                  className="btn btn--secondary"
+                  onClick={() => {
+                    const id = wizardPromptApproval.id;
+                    setWizardPromptApproval(null);
+                    void window.electronAPI.respondWizardPromptApproval(id, false);
+                  }}
+                  type="button"
+                >
+                  Deny
+                </button>
+                <button
+                  className="btn btn--primary"
+                  onClick={() => {
+                    const id = wizardPromptApproval.id;
+                    setWizardPromptApproval(null);
+                    void window.electronAPI.respondWizardPromptApproval(id, true);
+                  }}
+                  type="button"
+                >
+                  Approve
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       <AnimatePresence>
         {showConnectionHelp ? (
           <motion.div
@@ -1199,19 +1690,74 @@ export function App() {
             </div>
 
             <div className="sidebar-quick">
-              <button className="sidebar-quick__btn sidebar-quick__btn--primary" onClick={startNewChat} type="button">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-                New Chat
-              </button>
-              <button className="sidebar-quick__btn" onClick={chooseWorkspace} type="button">
+              <div className={`sidebar-new ${showNewMenu ? 'is-open' : ''}`}>
+                <button
+                  className="sidebar-quick__btn sidebar-quick__btn--primary"
+                  onClick={() => setShowNewMenu((v) => !v)}
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  New
+                </button>
+                <AnimatePresence>
+                  {showNewMenu ? (
+                    <motion.div
+                      animate={{ opacity: 1, y: 0 }}
+                      className="sidebar-new__menu"
+                      exit={{ opacity: 0, y: -4 }}
+                      initial={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      <button onClick={startNewChat} type="button">
+                        <strong>Normal Chat</strong>
+                        <span>Regular chat with Chat and Agent modes.</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowNewMenu(false);
+                          setShowWizardSetup(true);
+                        }}
+                        type="button"
+                      >
+                        <strong>Wizard</strong>
+                        <span>Named AI with its own model, memory, and local workspace.</span>
+                      </button>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+              <button
+                className="sidebar-quick__btn"
+                disabled={Boolean(activeWizard)}
+                onClick={chooseWorkspace}
+                title={activeWizard ? 'This Wizard uses its own private workspace.' : undefined}
+                type="button"
+              >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                   <path d="M1 4.5l5-3 5 3v6l-5 3-5-3v-6z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
                 </svg>
-                {workspaceRoot ? 'Switch workspace' : 'Open workspace'}
+                {activeWizard ? 'Wizard workspace' : workspaceRoot ? 'Switch workspace' : 'Open workspace'}
               </button>
-              {workspaceRoot ? (
+              {workspaceRoot && activeWizard ? (
+                <button
+                  className="sidebar-quick__btn"
+                  disabled
+                  type="button"
+                  title="Wizard workspaces stay attached while their Wizard is selected"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                    <path
+                      d="M4 4l6 6M10 4l-6 6"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Clear workspace
+                </button>
+              ) : workspaceRoot ? (
                 <button
                   className="sidebar-quick__btn"
                   onClick={clearWorkspace}
@@ -1281,6 +1827,14 @@ export function App() {
                 role="tab"
               >
                 Chats
+              </button>
+              <button
+                className={`sidebar-tabs__tab ${sidebarTab === 'wizards' ? 'is-active' : ''}`}
+                onClick={() => setSidebarTab('wizards')}
+                type="button"
+                role="tab"
+              >
+                Wizards
               </button>
               <button
                 className={`sidebar-tabs__tab ${sidebarTab === 'files' ? 'is-active' : ''}`}
@@ -1441,13 +1995,13 @@ export function App() {
                         </AnimatePresence>
                       </div>
                     ) : null}
-                    {chatList.length === 0 ? (
+                    {normalChatList.length === 0 ? (
                       <div className="sidebar-empty">
                         <p>No conversations yet. Start a new chat to begin.</p>
                       </div>
                     ) : (
                       <div className="chat-list">
-                        {chatList.map((chat) => (
+                        {normalChatList.map((chat) => (
                           <div
                             key={chat.id}
                             className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
@@ -1516,7 +2070,7 @@ export function App() {
                                   className="chat-list__delete"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    deleteChat(chat.id);
+                                    requestDeleteChat(chat);
                                   }}
                                   onMouseDown={(e) => e.preventDefault()}
                                   type="button"
@@ -1537,6 +2091,152 @@ export function App() {
                           </div>
                         ))}
                       </div>
+                    )}
+                  </motion.div>
+                ) : sidebarTab === 'wizards' ? (
+                  <motion.div
+                    key="wizards"
+                    className="sidebar-panel"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {wizardChatList.length === 0 ? (
+                      <div className="sidebar-empty">
+                        <p>No Wizards yet. Create one from New to give it a model, memory, and workspace.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="chat-list">
+                        {wizardChatList.map((chat) => (
+                          <div className="wizard-group" key={chat.id}>
+                            <div
+                              className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
+                              onClick={() =>
+                                setExpandedWizardIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(chat.id)) next.delete(chat.id);
+                                  else next.add(chat.id);
+                                  return next;
+                                })
+                              }
+                            >
+                              {editingTitleId === chat.id ? (
+                                <div className="chat-list__content chat-list__content--editing" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    autoFocus
+                                    className="chat-list__title-input"
+                                    onBlur={(e) => {
+                                      void commitRenameChat(chat.id, e.target.value);
+                                    }}
+                                    onChange={(e) => setEditingTitleDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      e.stopPropagation();
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        skipNextRenameCommitRef.current = true;
+                                        cancelRenameChat();
+                                      }
+                                    }}
+                                    value={editingTitleDraft}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="chat-list__content">
+                                  <div className="chat-list__title wizard-title-row">
+                                    <svg
+                                      className={`wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? 'is-open' : ''}`}
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 12 12"
+                                      fill="none"
+                                      aria-hidden
+                                    >
+                                      <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>{chat.title}</span>
+                                  </div>
+                                  <div className="chat-list__date">
+                                    Wizard · {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
+                                  </div>
+                                </div>
+                              )}
+                              {editingTitleId === chat.id ? null : (
+                                <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    className={`chat-list__pin ${chat.pinned ? 'is-active' : ''}`}
+                                    onClick={(e) => void togglePinChat(e, chat.id)}
+                                    type="button"
+                                    title={chat.pinned ? 'Unpin' : 'Pin to top'}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                      <path d="M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z" fill={chat.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.1" />
+                                    </svg>
+                                  </button>
+                                  <button className="chat-list__rename" onClick={(e) => beginRenameChat(e, chat.id, chat.title)} type="button" title="Rename">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                      <path d="M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z" fill="currentColor" />
+                                    </svg>
+                                  </button>
+                                  <button className="chat-list__delete" onClick={(e) => { e.stopPropagation(); requestDeleteChat(chat); }} onMouseDown={(e) => e.preventDefault()} type="button" title="Delete Wizard">
+                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                      <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            {expandedWizardIds.has(chat.id) ? (
+                              <div className="wizard-session-list">
+                                <button className="wizard-session-button" onClick={() => void createWizardSession(chat)} type="button">
+                                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden>
+                                    <path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                  </svg>
+                                  New session
+                                </button>
+                                {(wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => (
+                                  <div
+                                    className={`wizard-session-row ${activeChatId === session.id ? 'is-active' : ''}`}
+                                    key={session.id}
+                                    onClick={() => void loadChat(session.id)}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        void loadChat(session.id);
+                                      }
+                                    }}
+                                  >
+                                    <span>{session.title}</span>
+                                    <div className="wizard-session-row__meta">
+                                      <small>{formatRelativeDate(session.updatedAt)}</small>
+                                      <button
+                                        aria-label={`Delete ${session.title}`}
+                                        className="wizard-session-row__delete"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          requestDeleteChat(session);
+                                        }}
+                                        title="Delete session"
+                                        type="button"
+                                      >
+                                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                          <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                        </div>
+                      </>
                     )}
                   </motion.div>
                 ) : (
@@ -1594,6 +2294,7 @@ export function App() {
             contextLimit={resolvedContextLimit}
             input={chatInput}
             isStreaming={chatStreaming}
+            isWizard={isWizardActive}
             lastTokenUsage={lastTokenUsage}
             sessionSubheading={chatSessionSubheading}
             timeline={chatTimeline}
@@ -1608,7 +2309,7 @@ export function App() {
             webSearchDisabled={!settings}
             onWebSearchChange={handleWebSearchChange}
             onSessionModeToggle={handleSessionModeToggle}
-            sessionModeToggleDisabled={!settings}
+            sessionModeToggleDisabled={!settings || isWizardActive}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}
@@ -1688,7 +2389,19 @@ export function App() {
                     workspaceRoot={workspaceRoot}
                   />
                 ) : null}
-                {inspectorTab === 'settings' && settings ? (
+                {inspectorTab === 'settings' && settings && wizardDraft ? (
+                  <WizardSettingsPanel
+                    modelOptions={overrideModels}
+                    onChange={setWizardDraft}
+                    onOpenDocument={(path) => void openFile(path)}
+                    onRefreshModels={refreshWizardModels}
+                    onSave={() => saveActiveWizard(wizardDraft)}
+                    settings={settings}
+                    statusMessage={settingsStatus}
+                    wizard={wizardDraft}
+                  />
+                ) : null}
+                {inspectorTab === 'settings' && settings && !wizardDraft ? (
                   <SettingsPanel
                     focusSearchSettingsKey={searchSettingsFocusKey}
                     modelOptions={models}

@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron';
@@ -26,7 +27,14 @@ import {
   type MergeThemePaletteId,
   type ThemeId
 } from '@shared/themes';
-import { defaultSettings, type AppSettings, type ChatMessage, type SavedChat } from '@shared/types';
+import {
+  defaultSettings,
+  type AppSettings,
+  type ChatMessage,
+  type SavedChat,
+  type WizardPromptApprovalRequest,
+  type WizardSetupRequest
+} from '@shared/types';
 
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
@@ -42,6 +50,7 @@ const workspaceWatch = new WorkspaceWatchController(() => {
 let currentSettings: AppSettings = defaultSettings;
 /** Last theme before the most recent change (Settings or tool); used for revert_app_theme. */
 let previousThemeId: ThemeId | undefined;
+const pendingWizardPromptApprovals = new Map<string, (approved: boolean) => void>();
 
 const recordThemeTransition = (from: ThemeId, to: ThemeId) => {
   if (from !== to) {
@@ -225,6 +234,29 @@ const getAppThemeState = () => {
   });
 };
 
+const requestWizardPromptApproval = async (
+  window: BrowserWindow,
+  wizardName: string,
+  before: string,
+  after: string
+) => {
+  const id = randomUUID();
+  const payload: WizardPromptApprovalRequest = {
+    id,
+    title: `Approve ${wizardName} prompt change`,
+    wizardName,
+    before,
+    after
+  };
+  const approved = await new Promise<boolean>((resolveApproval) => {
+    pendingWizardPromptApprovals.set(id, resolveApproval);
+    window.webContents.send('wizard:prompt-approval-request', payload);
+  });
+  if (!approved) {
+    throw new Error('Wizard system prompt change was denied by the user.');
+  }
+};
+
 const modelService = new ModelService(
   workspaceService,
   commandService,
@@ -237,7 +269,22 @@ const modelService = new ModelService(
     currentSettings = await settingsStore.save(next);
     mainWindow?.webContents.send('settings:updated', currentSettings);
     return currentSettings;
-  }
+  },
+  async (wizardId, systemPrompt) => {
+    const chat = await chatStore.loadChat(wizardId);
+    if (!chat || chat.kind !== 'wizard' || !chat.wizard) {
+      throw new Error('Wizard not found.');
+    }
+    await chatStore.saveChat({
+      ...chat,
+      updatedAt: Date.now(),
+      wizard: {
+        ...chat.wizard,
+        systemPrompt
+      }
+    });
+  },
+  requestWizardPromptApproval
 );
 
 const assertActiveWorkspace = (root: string | undefined) => {
@@ -249,7 +296,14 @@ const assertActiveWorkspace = (root: string | undefined) => {
   }
 };
 
-const sanitizeRuntime = (runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }) => {
+const sanitizeRuntime = (runtime: {
+  workspaceRoot?: string;
+  activeFilePath?: string;
+  conversationId?: string;
+  wizardId?: string;
+  wizardName?: string;
+  wizardSystemPrompt?: string;
+}) => {
   const workspaceRoot =
     runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot)
       ? activeWorkspaceRoot
@@ -263,7 +317,10 @@ const sanitizeRuntime = (runtime: { workspaceRoot?: string; activeFilePath?: str
   return {
     workspaceRoot,
     activeFilePath,
-    conversationId: runtime.conversationId
+    conversationId: runtime.conversationId,
+    wizardId: typeof runtime.wizardId === 'string' ? runtime.wizardId : undefined,
+    wizardName: typeof runtime.wizardName === 'string' ? runtime.wizardName : undefined,
+    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined
   };
 };
 
@@ -397,6 +454,17 @@ ipcMain.handle('workspace:open-last', async () => {
   };
 });
 
+ipcMain.handle('workspace:activate', async (_event, root: string) => {
+  const resolved = await workspaceService.assertUsableLocalWorkspace(root);
+  activeWorkspaceRoot = resolved;
+  workspaceWatch.setRoot(resolved);
+  return {
+    root: resolved,
+    label: basename(resolved),
+    tree: await workspaceService.getTree(resolved)
+  };
+});
+
 ipcMain.handle('workspace:tree', async (_event, root: string) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
@@ -416,6 +484,35 @@ ipcMain.handle('workspace:save-file', async (_event, root: string, target: strin
 ipcMain.handle('workspace:changes', async (_event, root: string) => {
   assertActiveWorkspace(root);
   return workspaceService.getChanges(root);
+});
+
+ipcMain.handle('wizard:recommended-workspace', async (_event, name: string) =>
+  workspaceService.getRecommendedWizardWorkspace(name)
+);
+
+ipcMain.handle('wizard:choose-workspace', async (_event, name: string) => workspaceService.chooseWizardWorkspace(name));
+
+ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {
+  const result = await workspaceService.setupWizardWorkspace(request);
+  activeWorkspaceRoot = result.profile.workspaceRoot;
+  workspaceWatch.setRoot(result.profile.workspaceRoot);
+  return result;
+});
+
+ipcMain.handle('wizard:delete-workspace', async (_event, root: string) => {
+  const deleted = await workspaceService.deleteWorkspaceFolder(root);
+  if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(deleted.path)) {
+    activeWorkspaceRoot = undefined;
+    workspaceWatch.stop();
+  }
+  return deleted;
+});
+
+ipcMain.handle('wizard:prompt-approval-response', async (_event, id: string, approved: boolean) => {
+  const resolveApproval = pendingWizardPromptApprovals.get(id);
+  if (!resolveApproval) return;
+  pendingWizardPromptApprovals.delete(id);
+  resolveApproval(Boolean(approved));
 });
 
 ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
@@ -441,7 +538,14 @@ ipcMain.handle(
     requestId: string,
     settings: AppSettings,
     messages: ChatMessage[],
-    runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
+    runtime: {
+      workspaceRoot?: string;
+      activeFilePath?: string;
+      conversationId?: string;
+      wizardId?: string;
+      wizardName?: string;
+      wizardSystemPrompt?: string;
+    }
   ) => {
     if (!mainWindow) {
       throw new Error('Main window is unavailable.');

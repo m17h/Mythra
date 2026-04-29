@@ -210,6 +210,7 @@ interface ChatPanelProps {
   selectedProviderLabel: string;
   selectedModel: string;
   sessionMode: SessionMode;
+  isWizard?: boolean;
   /** True after first model-list fetch (so we can show "Disconnected" vs initial "Waiting"). */
   modelCatalogSettled: boolean;
   providerConnected: boolean;
@@ -411,6 +412,7 @@ export function ChatPanel({
   selectedProviderLabel,
   selectedModel,
   sessionMode,
+  isWizard = false,
   modelCatalogSettled,
   providerConnected,
   isStreaming,
@@ -621,7 +623,7 @@ export function ChatPanel({
     setTerminalOpen((v) => !v);
   }, [hasWorkspace, showWorkspaceGateNotice]);
 
-  const isTalk = sessionMode === 'talk';
+  const isTalk = !isWizard && sessionMode === 'talk';
 
   const statusLabel = isStreaming
     ? 'Working'
@@ -640,30 +642,36 @@ export function ChatPanel({
       <div className="chat-panel__header">
         <div className="chat-panel__header-left">
           <div className="chat-panel__header-titles">
-            <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
-              <button
-                className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
-                disabled={sessionModeToggleDisabled}
-                onClick={() => { if (!isTalk) onSessionModeToggle(); }}
-                title="Chat mode (no tools)"
-                type="button"
-              >
-                Chat
-              </button>
-              <button
-                className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
-                disabled={sessionModeToggleDisabled}
-                onClick={() => { if (isTalk) onSessionModeToggle(); }}
-                title="Agent mode (tools & workspace)"
-                type="button"
-              >
-                Agent
-              </button>
-              <span
-                className="chat-panel__mode-slider"
-                style={{ transform: isTalk ? 'translateX(0)' : 'translateX(100%)' }}
-              />
-            </div>
+            {isWizard ? (
+              <div className="chat-panel__wizard-pill" title="Wizards always work with tools and their own workspace">
+                Wizard
+              </div>
+            ) : (
+              <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
+                <button
+                  className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
+                  disabled={sessionModeToggleDisabled}
+                  onClick={() => { if (!isTalk) onSessionModeToggle(); }}
+                  title="Chat mode (no tools)"
+                  type="button"
+                >
+                  Chat
+                </button>
+                <button
+                  className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
+                  disabled={sessionModeToggleDisabled}
+                  onClick={() => { if (isTalk) onSessionModeToggle(); }}
+                  title="Agent mode (tools & workspace)"
+                  type="button"
+                >
+                  Agent
+                </button>
+                <span
+                  className="chat-panel__mode-slider"
+                  style={{ transform: isTalk ? 'translateX(0)' : 'translateX(100%)' }}
+                />
+              </div>
+            )}
             <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
           </div>
           <span className="chat-panel__session" title={sessionSubheading}>
@@ -706,12 +714,14 @@ export function ChatPanel({
               </svg>
             </div>
             <h3 className="chat-empty__title">
-              {isTalk ? 'Start a conversation' : 'Ready to build'}
+              {isWizard ? 'Wizard ready' : isTalk ? 'Start a conversation' : 'Ready to build'}
             </h3>
             <p className="chat-empty__desc">
               {providerConnected
                 ? isTalk
                   ? 'You\'re in Chat mode. Ask anything or switch to Agent for tools and file access.'
+                  : isWizard
+                    ? 'This Wizard is connected to its own local workspace and memory documents.'
                   : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.`
                 : 'Connect in Settings → Connection, then pick a model.'}
             </p>

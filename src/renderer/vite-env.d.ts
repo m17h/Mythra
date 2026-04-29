@@ -15,7 +15,10 @@ import type {
   SavedChatMeta,
   WorkspaceChanged,
   WorkspaceChanges,
-  WorkspaceNode
+  WorkspaceNode,
+  WizardPromptApprovalRequest,
+  WizardSetupRequest,
+  WizardSetupResult
 } from '@shared/types';
 
 declare global {
@@ -26,18 +29,32 @@ declare global {
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       openLastWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
+      activateWorkspace: (root: string) => Promise<{ root: string; label: string; tree: WorkspaceNode[] }>;
       getWorkspaceTree: (root: string) => Promise<WorkspaceNode[]>;
       detachWorkspace: () => Promise<void>;
       openFile: (root: string, target: string) => Promise<OpenFile>;
       saveFile: (root: string, target: string, content: string) => Promise<OpenFile>;
       getWorkspaceChanges: (root: string) => Promise<WorkspaceChanges>;
+      getRecommendedWizardWorkspace: (name: string) => Promise<string>;
+      chooseWizardWorkspace: (name: string) => Promise<string | null>;
+      setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
+      deleteWizardWorkspace: (root: string) => Promise<{ path: string }>;
+      respondWizardPromptApproval: (id: string, approved: boolean) => Promise<void>;
+      onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => () => void;
       openExternalUrl: (url: string) => Promise<void>;
       listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') => Promise<ModelInfo[]>;
       streamChat: (
         requestId: string,
         settings: AppSettings,
         messages: ChatMessage[],
-        runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
+        runtime: {
+          workspaceRoot?: string;
+          activeFilePath?: string;
+          conversationId?: string;
+          wizardId?: string;
+          wizardName?: string;
+          wizardSystemPrompt?: string;
+        }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;
       runCommand: (command: string, cwd?: string) => Promise<{ jobId: string }>;

@@ -5,11 +5,22 @@ const electronAPI = {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   openLastWorkspace: () => ipcRenderer.invoke("workspace:open-last"),
+  activateWorkspace: (root) => ipcRenderer.invoke("workspace:activate", root),
   getWorkspaceTree: (root) => ipcRenderer.invoke("workspace:tree", root),
   detachWorkspace: () => ipcRenderer.invoke("workspace:detach"),
   openFile: (root, target) => ipcRenderer.invoke("workspace:open-file", root, target),
   saveFile: (root, target, content) => ipcRenderer.invoke("workspace:save-file", root, target, content),
   getWorkspaceChanges: (root) => ipcRenderer.invoke("workspace:changes", root),
+  getRecommendedWizardWorkspace: (name) => ipcRenderer.invoke("wizard:recommended-workspace", name),
+  chooseWizardWorkspace: (name) => ipcRenderer.invoke("wizard:choose-workspace", name),
+  setupWizard: (request) => ipcRenderer.invoke("wizard:setup", request),
+  deleteWizardWorkspace: (root) => ipcRenderer.invoke("wizard:delete-workspace", root),
+  respondWizardPromptApproval: (id, approved) => ipcRenderer.invoke("wizard:prompt-approval-response", id, approved),
+  onWizardPromptApprovalRequest: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("wizard:prompt-approval-request", listener);
+    return () => ipcRenderer.removeListener("wizard:prompt-approval-request", listener);
+  },
   openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
   listModels: (settings, providerKind) => ipcRenderer.invoke("models:list", settings, providerKind),
   streamChat: (requestId, settings, messages, runtime) => ipcRenderer.invoke("chat:stream", requestId, settings, messages, runtime),

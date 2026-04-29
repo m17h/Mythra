@@ -1,9 +1,9 @@
 import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { dialog } from 'electron';
-import type { OpenFile, WorkspaceChanges, WorkspaceNode } from '@shared/types';
+import type { OpenFile, WizardDocument, WizardProfile, WizardSetupRequest, WizardSetupResult, WorkspaceChanges, WorkspaceNode } from '@shared/types';
 
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'out', 'build', 'coverage']);
 const MAX_TREE_DEPTH = 10;
@@ -13,6 +13,63 @@ const MAX_LIST_ENTRIES = 5_000;
 const MAX_SEARCH_FILES = 1_500;
 const MAX_SEARCH_FILE_BYTES = 500_000;
 const execFileAsync = promisify(execFile);
+const WIZARD_CORE_DOCS = [
+  ['soul.md', 'Soul'],
+  ['tools.md', 'Tools'],
+  ['memory.md', 'Memory'],
+  ['corrections.md', 'Corrections']
+] as const;
+
+const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
+  'soul.md': (name) =>
+    `# ${name}\n\nDescribe this Wizard's identity, tone, principles, strengths, boundaries, and working style here.\n`,
+  'tools.md': () =>
+    `# Tools\n\nDescribe preferred tools, workflows, commands, project conventions, and when this Wizard should use them.\n`,
+  'memory.md': () =>
+    `# Memory\n\nDurable notes this Wizard should remember across sessions.\n`,
+  'corrections.md': () =>
+    `# Corrections\n\nUser corrections, mistakes to avoid, and lessons learned.\n`
+};
+
+const sanitizeFolderName = (name: string) =>
+  name
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80)
+    .trim() || 'OpenKiwi Wizard';
+
+const normalizeDocName = (name: string) => {
+  const base = name
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+    .replace(/^\.+/, '')
+    .slice(0, 80)
+    .trim();
+  if (!base) return null;
+  return base.toLowerCase().endsWith('.md') ? base : `${base}.md`;
+};
+
+const isLikelyCloudPath = (root: string) => {
+  const normalized = resolve(root);
+  const parts = normalized.split(sep).map((part) => part.toLowerCase());
+  const lower = normalized.toLowerCase();
+  return (
+    lower.includes(`${sep}library${sep}mobile documents${sep}`) ||
+    lower.includes(`${sep}library${sep}cloudstorage${sep}`) ||
+    parts.includes('dropbox') ||
+    parts.some((part) => part.startsWith('googledrive')) ||
+    parts.some((part) => part.startsWith('onedrive')) ||
+    parts.includes('google drive') ||
+    parts.includes('icloud drive')
+  );
+};
+
+const assertLocalWorkspace = (root: string) => {
+  if (isLikelyCloudPath(root)) {
+    throw new Error('Choose a local folder. Synced cloud folders can cause file conflicts while a Wizard is editing.');
+  }
+};
 
 const spawnWithInput = (cmd: string, args: string[], cwd: string, input: string) =>
   new Promise<void>((resolvePromise, reject) => {
@@ -132,6 +189,16 @@ const RASTER_IMAGE_EXT: Record<string, string> = {
 };
 
 export class WorkspaceService {
+  async assertUsableLocalWorkspace(root: string): Promise<string> {
+    const resolved = resolve(root);
+    assertLocalWorkspace(resolved);
+    const st = await stat(resolved);
+    if (!st.isDirectory()) {
+      throw new Error('Workspace path is not a folder.');
+    }
+    return resolved;
+  }
+
   async chooseWorkspace(): Promise<string | null> {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory']
@@ -141,7 +208,84 @@ export class WorkspaceService {
       return null;
     }
 
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+
+  async chooseWizardWorkspace(defaultName: string): Promise<string | null> {
+    const result = await dialog.showOpenDialog({
+      buttonLabel: 'Use this folder',
+      defaultPath: join(process.env.HOME ?? '', 'Desktop', sanitizeFolderName(defaultName)),
+      message: 'Choose a local folder for this Wizard.',
+      properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    assertLocalWorkspace(result.filePaths[0]);
     return result.filePaths[0];
+  }
+
+  getRecommendedWizardWorkspace(name: string): string {
+    return join(process.env.HOME ?? '', 'Desktop', sanitizeFolderName(name));
+  }
+
+  async setupWizardWorkspace(request: WizardSetupRequest): Promise<WizardSetupResult> {
+    const name = request.name.trim();
+    if (!name) {
+      throw new Error('Wizard name is required.');
+    }
+    if (!request.model.trim()) {
+      throw new Error('Choose a model for this Wizard.');
+    }
+
+    const root = resolve(
+      request.createOnDesktop || !request.workspaceRoot
+        ? this.getRecommendedWizardWorkspace(name)
+        : request.workspaceRoot
+    );
+    assertLocalWorkspace(root);
+    await mkdir(root, { recursive: true });
+
+    const documents: WizardDocument[] = [];
+    for (const [file, label] of WIZARD_CORE_DOCS) {
+      const target = join(root, file);
+      try {
+        await writeFile(target, WIZARD_DEFAULT_CONTENT[file](name), { encoding: 'utf8', flag: 'wx' });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+      documents.push({ path: target, label, core: true });
+    }
+
+    const seen = new Set(WIZARD_CORE_DOCS.map(([file]) => file.toLowerCase()));
+    for (const raw of request.customDocuments ?? []) {
+      const file = normalizeDocName(raw);
+      if (!file || seen.has(file.toLowerCase())) continue;
+      seen.add(file.toLowerCase());
+      const target = join(root, file);
+      try {
+        await writeFile(target, `# ${file.replace(/\.md$/i, '')}\n\n`, { encoding: 'utf8', flag: 'wx' });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+      documents.push({ path: target, label: file.replace(/\.md$/i, ''), core: false });
+    }
+
+    const profile: WizardProfile = {
+      name,
+      workspaceRoot: root,
+      provider: request.provider,
+      model: request.model,
+      systemPrompt: request.systemPrompt,
+      documents
+    };
+
+    return {
+      profile,
+      tree: await this.getTree(root)
+    };
   }
 
   async getTree(root: string): Promise<WorkspaceNode[]> {
@@ -236,6 +380,13 @@ export class WorkspaceService {
   async deletePath(root: string, target: string): Promise<{ path: string }> {
     const safePath = ensureInsideRoot(root, target);
     await rm(safePath, { recursive: true, force: false });
+    return { path: safePath };
+  }
+
+  async deleteWorkspaceFolder(root: string): Promise<{ path: string }> {
+    const safePath = resolve(root);
+    assertLocalWorkspace(safePath);
+    await rm(safePath, { recursive: true, force: true });
     return { path: safePath };
   }
 

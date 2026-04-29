@@ -8,6 +8,46 @@ export interface ChatModelOverride {
   model: string;
 }
 
+export type ChatKind = 'normal' | 'wizard' | 'wizard-session';
+
+export interface WizardDocument {
+  path: string;
+  label: string;
+  core: boolean;
+}
+
+export interface WizardProfile {
+  name: string;
+  workspaceRoot: string;
+  provider: ProviderKind;
+  model: string;
+  systemPrompt: string;
+  documents: WizardDocument[];
+}
+
+export interface WizardSetupRequest {
+  name: string;
+  provider: ProviderKind;
+  model: string;
+  systemPrompt: string;
+  workspaceRoot?: string;
+  createOnDesktop?: boolean;
+  customDocuments?: string[];
+}
+
+export interface WizardSetupResult {
+  profile: WizardProfile;
+  tree: WorkspaceNode[];
+}
+
+export interface WizardPromptApprovalRequest {
+  id: string;
+  title: string;
+  wizardName: string;
+  before: string;
+  after: string;
+}
+
 /** User-saved system prompt preset for a provider profile. */
 export interface SavedPromptPreset {
   id: string;
@@ -206,6 +246,7 @@ export interface WorkspaceChanges {
 
 export interface SavedChat {
   id: string;
+  kind?: ChatKind;
   title: string;
   /** If set to a non-empty string, that label is used instead of the auto title from the first user message. */
   titleOverride?: string | null;
@@ -220,16 +261,21 @@ export interface SavedChat {
    * Omitted or `null` = use the app’s selected provider and model from Settings.
    */
   modelOverride?: ChatModelOverride | null;
+  wizard?: WizardProfile | null;
+  wizardId?: string | null;
 }
 
 export interface SavedChatMeta {
   id: string;
+  kind?: ChatKind;
   title: string;
   titleOverride?: string | null;
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
   modelOverride?: ChatModelOverride | null;
+  wizard?: WizardProfile | null;
+  wizardId?: string | null;
 }
 
 export const defaultSettings: AppSettings = {

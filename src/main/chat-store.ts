@@ -57,12 +57,15 @@ export class ChatStore {
         const chat = JSON.parse(raw) as SavedChat;
         metas.push({
           id: chat.id,
+          kind: chat.kind ?? 'normal',
           title: chat.title,
           titleOverride: chat.titleOverride ?? null,
           createdAt: chat.createdAt,
           updatedAt: chat.updatedAt,
           pinned: chat.pinned ?? false,
-          modelOverride: chat.modelOverride ?? null
+          modelOverride: chat.modelOverride ?? null,
+          wizard: chat.wizard ?? null,
+          wizardId: chat.wizardId ?? null
         });
       } catch {
         // skip corrupted files

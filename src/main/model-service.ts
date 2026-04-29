@@ -207,6 +207,9 @@ interface ChatRuntimeContext {
   activeFilePath?: string;
   /** Opaque id for this chat thread; new on “New chat”, stable when loading a saved chat. */
   conversationId?: string;
+  wizardId?: string;
+  wizardName?: string;
+  wizardSystemPrompt?: string;
 }
 
 interface ActiveRequest {
@@ -229,7 +232,11 @@ export class ModelService {
     /** Apply a complete semantic custom theme; returns JSON for the tool result. */
     private readonly setCustomTheme?: (incoming: Record<string, unknown>) => Promise<string>,
     /** Persist full settings (e.g. set_system_prompt); returns saved settings from disk. */
-    private readonly persistAppSettings?: (updater: (base: AppSettings) => AppSettings) => Promise<AppSettings>
+    private readonly persistAppSettings?: (updater: (base: AppSettings) => AppSettings) => Promise<AppSettings>,
+    /** Persist one Wizard profile prompt without touching global provider prompts. */
+    private readonly persistWizardSystemPrompt?: (wizardId: string, systemPrompt: string) => Promise<void>,
+    /** Renderer-hosted before/after approval for Wizard prompt edits. */
+    private readonly requestWizardPromptApproval?: (window: BrowserWindow, wizardName: string, before: string, after: string) => Promise<void>
   ) {}
 
   async listModels(settings: AppSettings, providerKind?: ProviderKind): Promise<ModelInfo[]> {
@@ -287,7 +294,7 @@ export class ModelService {
         ...messages.map((message) => toApiMessage(message))
       ];
 
-      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
+      const toolDefinitions = this.buildToolDefinitions(settings, runtime);
 
       if (isTalk && toolDefinitions.length === 0) {
         await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
@@ -383,7 +390,7 @@ export class ModelService {
               `Requested ${toolCall.function.name}${toolCall.function.arguments ? ` with ${truncate(toolCall.function.arguments, 180)}` : ''}.`
             );
 
-            const toolResult = await this.executeToolCall(window, requestId, settings, runtime.workspaceRoot, toolCall);
+            const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
             this.assertNotStopped(requestId);
 
             apiMessages.push({
@@ -760,7 +767,7 @@ export class ModelService {
     };
   }
 
-  private buildToolDefinitions(settings: AppSettings, workspaceRoot?: string): ChatCompletionTool[] {
+  private buildToolDefinitions(settings: AppSettings, runtime: ChatRuntimeContext): ChatCompletionTool[] {
     const tools: ChatCompletionTool[] = [];
     if (settings.ui.webSearch) {
       tools.push(this.buildWebSearchTool());
@@ -801,7 +808,29 @@ export class ModelService {
       });
     }
 
-    if (!workspaceRoot) {
+    if (runtime.wizardId) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: 'set_wizard_system_prompt',
+          description:
+            'Replace this Wizard’s private system prompt only. Use only when the user clearly asks this Wizard to change its own instructions. Always requires explicit user approval with before/after preview.',
+          parameters: {
+            type: 'object',
+            properties: {
+              system_prompt: {
+                type: 'string',
+                description: 'Full new private system prompt text for this Wizard.'
+              }
+            },
+            required: ['system_prompt'],
+            additionalProperties: false
+          }
+        }
+      });
+    }
+
+    if (!runtime.workspaceRoot) {
       return tools;
     }
 
@@ -1133,7 +1162,8 @@ export class ModelService {
       settings.tools.fileRead ? 'read_file' : null,
       settings.tools.fileWrite ? 'apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path' : null,
       settings.tools.commandDeck ? 'get_git_diff, run_tests, run_command' : null,
-      settings.tools.allowModelSystemPrompt ? 'set_system_prompt' : null
+      settings.tools.allowModelSystemPrompt ? 'set_system_prompt' : null,
+      runtime.wizardId ? 'set_wizard_system_prompt' : null
     ]
       .filter(Boolean)
       .join(', ');
@@ -1155,6 +1185,9 @@ export class ModelService {
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : 'none'}`,
       `Enabled tools: ${enabledTools || 'none'}`,
       `Approval: ${settings.agent.fullAccess ? 'writes/commands/system prompt runs without per-action approval' : 'user approval may be required for some writes, deletes, commands, and system prompt changes'}.`,
+      runtime.wizardId
+        ? `Wizard private prompt: if the user asks you to change your own Wizard system prompt, use set_wizard_system_prompt. It updates only this Wizard and always asks the user for before/after approval.`
+        : '',
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
       ...(settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []),
@@ -1167,9 +1200,10 @@ export class ModelService {
     window: BrowserWindow,
     requestId: string,
     settings: AppSettings,
-    workspaceRoot: string | undefined,
+    runtime: ChatRuntimeContext,
     toolCall: ChatCompletionMessageFunctionToolCall
   ) {
+    const workspaceRoot = runtime.workspaceRoot;
     let args: Record<string, unknown>;
     try {
       args = toolCall.function.arguments ? (JSON.parse(toolCall.function.arguments) as Record<string, unknown>) : {};
@@ -1387,6 +1421,54 @@ export class ModelService {
           provider: providerKind,
           length: system_prompt.length,
           message: 'System prompt saved for the active provider. It applies on the next message.'
+        },
+        null,
+        2
+      );
+    }
+
+    if (toolCall.function.name === 'set_wizard_system_prompt') {
+      if (!runtime.wizardId) {
+        throw new Error('set_wizard_system_prompt is only available inside a Wizard session.');
+      }
+      if (!this.persistWizardSystemPrompt) {
+        throw new Error('Wizard system prompt updates are not available in this build.');
+      }
+      const system_prompt = String((args as { system_prompt?: string }).system_prompt ?? '');
+      if (!system_prompt.trim()) {
+        throw new Error('set_wizard_system_prompt requires a non-empty system_prompt string.');
+      }
+      const MAX_SYSTEM_PROMPT = 120_000;
+      if (system_prompt.length > MAX_SYSTEM_PROMPT) {
+        throw new Error(`system_prompt is too long (max ${MAX_SYSTEM_PROMPT} characters).`);
+      }
+      const before = runtime.wizardSystemPrompt ?? '';
+      this.emitActivity(window, requestId, 'approval', 'Approve Wizard system prompt change: waiting for user approval.');
+      if (this.requestWizardPromptApproval) {
+        await this.requestWizardPromptApproval(window, runtime.wizardName ?? 'Wizard', before, system_prompt);
+      } else {
+        await this.requestApproval(
+          window,
+          `Approve ${runtime.wizardName ?? 'Wizard'} prompt change`,
+          [
+            'The Wizard wants to replace its private system prompt.',
+            '',
+            'ORIGINAL SYSTEM PROMPT',
+            truncate(before || '[empty]', 1_500),
+            '',
+            '→ NEW SYSTEM PROMPT',
+            truncate(system_prompt, 1_500)
+          ].join('\n')
+        );
+      }
+      await this.persistWizardSystemPrompt(runtime.wizardId, system_prompt);
+      runtime.wizardSystemPrompt = system_prompt;
+      return JSON.stringify(
+        {
+          ok: true,
+          wizardId: runtime.wizardId,
+          length: system_prompt.length,
+          message: 'Wizard system prompt saved. It applies on the next message.'
         },
         null,
         2

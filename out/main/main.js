@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
-import { join as join$1, relative, dirname, extname, resolve, basename, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { join as join$1, relative, dirname, resolve, extname, basename, sep } from "node:path";
 import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
 import { existsSync, watch } from "node:fs";
 import { spawn, execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { promisify } from "node:util";
 import __cjs_mod__ from "node:module";
@@ -58,12 +58,15 @@ class ChatStore {
         const chat = JSON.parse(raw);
         metas.push({
           id: chat.id,
+          kind: chat.kind ?? "normal",
           title: chat.title,
           titleOverride: chat.titleOverride ?? null,
           createdAt: chat.createdAt,
           updatedAt: chat.updatedAt,
           pinned: chat.pinned ?? false,
-          modelOverride: chat.modelOverride ?? null
+          modelOverride: chat.modelOverride ?? null,
+          wizard: chat.wizard ?? null,
+          wizardId: chat.wizardId ?? null
         });
       } catch {
       }
@@ -1125,7 +1128,7 @@ const toApiMessage = (message) => {
   };
 };
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, requestWizardPromptApproval2) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
@@ -1133,6 +1136,8 @@ class ModelService {
     this.mergeCustomThemeTokens = mergeCustomThemeTokens2;
     this.setCustomTheme = setCustomTheme2;
     this.persistAppSettings = persistAppSettings;
+    this.persistWizardSystemPrompt = persistWizardSystemPrompt;
+    this.requestWizardPromptApproval = requestWizardPromptApproval2;
   }
   workspaceService;
   commandService;
@@ -1141,6 +1146,8 @@ class ModelService {
   mergeCustomThemeTokens;
   setCustomTheme;
   persistAppSettings;
+  persistWizardSystemPrompt;
+  requestWizardPromptApproval;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -1179,7 +1186,7 @@ class ModelService {
         { role: "system", content: sessionContext },
         ...messages.map((message) => toApiMessage(message))
       ];
-      const toolDefinitions = this.buildToolDefinitions(settings, runtime.workspaceRoot);
+      const toolDefinitions = this.buildToolDefinitions(settings, runtime);
       if (isTalk && toolDefinitions.length === 0) {
         await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
         return;
@@ -1262,7 +1269,7 @@ class ModelService {
               toolCall.function.name === "run_command" ? "command" : "tool",
               `Requested ${toolCall.function.name}${toolCall.function.arguments ? ` with ${truncate(toolCall.function.arguments, 180)}` : ""}.`
             );
-            const toolResult = await this.executeToolCall(window, requestId, settings, runtime.workspaceRoot, toolCall);
+            const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
             this.assertNotStopped(requestId);
             apiMessages.push({
               role: "tool",
@@ -1568,7 +1575,7 @@ class ModelService {
       }
     };
   }
-  buildToolDefinitions(settings, workspaceRoot) {
+  buildToolDefinitions(settings, runtime) {
     const tools = [];
     if (settings.ui.webSearch) {
       tools.push(this.buildWebSearchTool());
@@ -1603,7 +1610,27 @@ class ModelService {
         }
       });
     }
-    if (!workspaceRoot) {
+    if (runtime.wizardId) {
+      tools.push({
+        type: "function",
+        function: {
+          name: "set_wizard_system_prompt",
+          description: "Replace this Wizard’s private system prompt only. Use only when the user clearly asks this Wizard to change its own instructions. Always requires explicit user approval with before/after preview.",
+          parameters: {
+            type: "object",
+            properties: {
+              system_prompt: {
+                type: "string",
+                description: "Full new private system prompt text for this Wizard."
+              }
+            },
+            required: ["system_prompt"],
+            additionalProperties: false
+          }
+        }
+      });
+    }
+    if (!runtime.workspaceRoot) {
       return tools;
     }
     if (settings.tools.workspaceSearch) {
@@ -1904,7 +1931,8 @@ class ModelService {
       settings.tools.fileRead ? "read_file" : null,
       settings.tools.fileWrite ? "apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path" : null,
       settings.tools.commandDeck ? "get_git_diff, run_tests, run_command" : null,
-      settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null
+      settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null,
+      runtime.wizardId ? "set_wizard_system_prompt" : null
     ].filter(Boolean).join(", ");
     return [
       "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
@@ -1923,6 +1951,7 @@ class ModelService {
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
       `Approval: ${settings.agent.fullAccess ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
+      runtime.wizardId ? `Wizard private prompt: if the user asks you to change your own Wizard system prompt, use set_wizard_system_prompt. It updates only this Wizard and always asks the user for before/after approval.` : "",
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
@@ -1930,7 +1959,8 @@ class ModelService {
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
   }
-  async executeToolCall(window, requestId, settings, workspaceRoot, toolCall) {
+  async executeToolCall(window, requestId, settings, runtime, toolCall) {
+    const workspaceRoot = runtime.workspaceRoot;
     let args;
     try {
       args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
@@ -2139,6 +2169,53 @@ ${truncate(system_prompt, 900)}`
           provider: providerKind,
           length: system_prompt.length,
           message: "System prompt saved for the active provider. It applies on the next message."
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "set_wizard_system_prompt") {
+      if (!runtime.wizardId) {
+        throw new Error("set_wizard_system_prompt is only available inside a Wizard session.");
+      }
+      if (!this.persistWizardSystemPrompt) {
+        throw new Error("Wizard system prompt updates are not available in this build.");
+      }
+      const system_prompt = String(args.system_prompt ?? "");
+      if (!system_prompt.trim()) {
+        throw new Error("set_wizard_system_prompt requires a non-empty system_prompt string.");
+      }
+      const MAX_SYSTEM_PROMPT = 12e4;
+      if (system_prompt.length > MAX_SYSTEM_PROMPT) {
+        throw new Error(`system_prompt is too long (max ${MAX_SYSTEM_PROMPT} characters).`);
+      }
+      const before = runtime.wizardSystemPrompt ?? "";
+      this.emitActivity(window, requestId, "approval", "Approve Wizard system prompt change: waiting for user approval.");
+      if (this.requestWizardPromptApproval) {
+        await this.requestWizardPromptApproval(window, runtime.wizardName ?? "Wizard", before, system_prompt);
+      } else {
+        await this.requestApproval(
+          window,
+          `Approve ${runtime.wizardName ?? "Wizard"} prompt change`,
+          [
+            "The Wizard wants to replace its private system prompt.",
+            "",
+            "ORIGINAL SYSTEM PROMPT",
+            truncate(before || "[empty]", 1500),
+            "",
+            "→ NEW SYSTEM PROMPT",
+            truncate(system_prompt, 1500)
+          ].join("\n")
+        );
+      }
+      await this.persistWizardSystemPrompt(runtime.wizardId, system_prompt);
+      runtime.wizardSystemPrompt = system_prompt;
+      return JSON.stringify(
+        {
+          ok: true,
+          wizardId: runtime.wizardId,
+          length: system_prompt.length,
+          message: "Wizard system prompt saved. It applies on the next message."
         },
         null,
         2
@@ -2654,6 +2731,47 @@ const MAX_LIST_ENTRIES = 5e3;
 const MAX_SEARCH_FILES = 1500;
 const MAX_SEARCH_FILE_BYTES = 5e5;
 const execFileAsync = promisify(execFile);
+const WIZARD_CORE_DOCS = [
+  ["soul.md", "Soul"],
+  ["tools.md", "Tools"],
+  ["memory.md", "Memory"],
+  ["corrections.md", "Corrections"]
+];
+const WIZARD_DEFAULT_CONTENT = {
+  "soul.md": (name) => `# ${name}
+
+Describe this Wizard's identity, tone, principles, strengths, boundaries, and working style here.
+`,
+  "tools.md": () => `# Tools
+
+Describe preferred tools, workflows, commands, project conventions, and when this Wizard should use them.
+`,
+  "memory.md": () => `# Memory
+
+Durable notes this Wizard should remember across sessions.
+`,
+  "corrections.md": () => `# Corrections
+
+User corrections, mistakes to avoid, and lessons learned.
+`
+};
+const sanitizeFolderName = (name) => name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "OpenKiwi Wizard";
+const normalizeDocName = (name) => {
+  const base = name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/^\.+/, "").slice(0, 80).trim();
+  if (!base) return null;
+  return base.toLowerCase().endsWith(".md") ? base : `${base}.md`;
+};
+const isLikelyCloudPath = (root) => {
+  const normalized = resolve(root);
+  const parts = normalized.split(sep).map((part) => part.toLowerCase());
+  const lower = normalized.toLowerCase();
+  return lower.includes(`${sep}library${sep}mobile documents${sep}`) || lower.includes(`${sep}library${sep}cloudstorage${sep}`) || parts.includes("dropbox") || parts.some((part) => part.startsWith("googledrive")) || parts.some((part) => part.startsWith("onedrive")) || parts.includes("google drive") || parts.includes("icloud drive");
+};
+const assertLocalWorkspace = (root) => {
+  if (isLikelyCloudPath(root)) {
+    throw new Error("Choose a local folder. Synced cloud folders can cause file conflicts while a Wizard is editing.");
+  }
+};
 const spawnWithInput = (cmd, args, cwd, input) => new Promise((resolvePromise, reject) => {
   const child = spawn(cmd, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
@@ -2748,6 +2866,15 @@ const RASTER_IMAGE_EXT = {
   ".avif": "image/avif"
 };
 class WorkspaceService {
+  async assertUsableLocalWorkspace(root) {
+    const resolved = resolve(root);
+    assertLocalWorkspace(resolved);
+    const st = await stat(resolved);
+    if (!st.isDirectory()) {
+      throw new Error("Workspace path is not a folder.");
+    }
+    return resolved;
+  }
   async chooseWorkspace() {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"]
@@ -2755,7 +2882,74 @@ class WorkspaceService {
     if (result.canceled || result.filePaths.length === 0) {
       return null;
     }
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+  async chooseWizardWorkspace(defaultName) {
+    const result = await dialog.showOpenDialog({
+      buttonLabel: "Use this folder",
+      defaultPath: join$1(process.env.HOME ?? "", "Desktop", sanitizeFolderName(defaultName)),
+      message: "Choose a local folder for this Wizard.",
+      properties: ["openDirectory", "createDirectory"]
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    assertLocalWorkspace(result.filePaths[0]);
     return result.filePaths[0];
+  }
+  getRecommendedWizardWorkspace(name) {
+    return join$1(process.env.HOME ?? "", "Desktop", sanitizeFolderName(name));
+  }
+  async setupWizardWorkspace(request) {
+    const name = request.name.trim();
+    if (!name) {
+      throw new Error("Wizard name is required.");
+    }
+    if (!request.model.trim()) {
+      throw new Error("Choose a model for this Wizard.");
+    }
+    const root = resolve(
+      request.createOnDesktop || !request.workspaceRoot ? this.getRecommendedWizardWorkspace(name) : request.workspaceRoot
+    );
+    assertLocalWorkspace(root);
+    await mkdir(root, { recursive: true });
+    const documents = [];
+    for (const [file, label] of WIZARD_CORE_DOCS) {
+      const target = join$1(root, file);
+      try {
+        await writeFile(target, WIZARD_DEFAULT_CONTENT[file](name), { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+      documents.push({ path: target, label, core: true });
+    }
+    const seen = new Set(WIZARD_CORE_DOCS.map(([file]) => file.toLowerCase()));
+    for (const raw of request.customDocuments ?? []) {
+      const file = normalizeDocName(raw);
+      if (!file || seen.has(file.toLowerCase())) continue;
+      seen.add(file.toLowerCase());
+      const target = join$1(root, file);
+      try {
+        await writeFile(target, `# ${file.replace(/\.md$/i, "")}
+
+`, { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+      documents.push({ path: target, label: file.replace(/\.md$/i, ""), core: false });
+    }
+    const profile = {
+      name,
+      workspaceRoot: root,
+      provider: request.provider,
+      model: request.model,
+      systemPrompt: request.systemPrompt,
+      documents
+    };
+    return {
+      profile,
+      tree: await this.getTree(root)
+    };
   }
   async getTree(root) {
     await stat(root);
@@ -2839,6 +3033,12 @@ class WorkspaceService {
   async deletePath(root, target) {
     const safePath = ensureInsideRoot(root, target);
     await rm(safePath, { recursive: true, force: false });
+    return { path: safePath };
+  }
+  async deleteWorkspaceFolder(root) {
+    const safePath = resolve(root);
+    assertLocalWorkspace(safePath);
+    await rm(safePath, { recursive: true, force: true });
     return { path: safePath };
   }
   async listFiles(root) {
@@ -3020,6 +3220,7 @@ const workspaceWatch = new WorkspaceWatchController(() => {
 });
 let currentSettings = defaultSettings;
 let previousThemeId;
+const pendingWizardPromptApprovals = /* @__PURE__ */ new Map();
 const recordThemeTransition = (from, to) => {
   if (from !== to) {
     previousThemeId = from;
@@ -3160,6 +3361,23 @@ const getAppThemeState = () => {
     canRevert
   });
 };
+const requestWizardPromptApproval = async (window, wizardName, before, after) => {
+  const id = randomUUID();
+  const payload = {
+    id,
+    title: `Approve ${wizardName} prompt change`,
+    wizardName,
+    before,
+    after
+  };
+  const approved = await new Promise((resolveApproval) => {
+    pendingWizardPromptApprovals.set(id, resolveApproval);
+    window.webContents.send("wizard:prompt-approval-request", payload);
+  });
+  if (!approved) {
+    throw new Error("Wizard system prompt change was denied by the user.");
+  }
+};
 const modelService = new ModelService(
   workspaceService,
   commandService,
@@ -3172,7 +3390,22 @@ const modelService = new ModelService(
     currentSettings = await settingsStore.save(next);
     mainWindow?.webContents.send("settings:updated", currentSettings);
     return currentSettings;
-  }
+  },
+  async (wizardId, systemPrompt) => {
+    const chat = await chatStore.loadChat(wizardId);
+    if (!chat || chat.kind !== "wizard" || !chat.wizard) {
+      throw new Error("Wizard not found.");
+    }
+    await chatStore.saveChat({
+      ...chat,
+      updatedAt: Date.now(),
+      wizard: {
+        ...chat.wizard,
+        systemPrompt
+      }
+    });
+  },
+  requestWizardPromptApproval
 );
 const assertActiveWorkspace = (root) => {
   if (!root) {
@@ -3188,7 +3421,10 @@ const sanitizeRuntime = (runtime) => {
   return {
     workspaceRoot,
     activeFilePath,
-    conversationId: runtime.conversationId
+    conversationId: runtime.conversationId,
+    wizardId: typeof runtime.wizardId === "string" ? runtime.wizardId : void 0,
+    wizardName: typeof runtime.wizardName === "string" ? runtime.wizardName : void 0,
+    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0
   };
 };
 const sanitizeChatSettings = (requested) => ({
@@ -3304,6 +3540,16 @@ ipcMain.handle("workspace:open-last", async () => {
     tree: await workspaceService.getTree(candidate)
   };
 });
+ipcMain.handle("workspace:activate", async (_event, root) => {
+  const resolved = await workspaceService.assertUsableLocalWorkspace(root);
+  activeWorkspaceRoot = resolved;
+  workspaceWatch.setRoot(resolved);
+  return {
+    root: resolved,
+    label: basename(resolved),
+    tree: await workspaceService.getTree(resolved)
+  };
+});
 ipcMain.handle("workspace:tree", async (_event, root) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
@@ -3323,6 +3569,31 @@ ipcMain.handle("workspace:save-file", async (_event, root, target, content) => {
 ipcMain.handle("workspace:changes", async (_event, root) => {
   assertActiveWorkspace(root);
   return workspaceService.getChanges(root);
+});
+ipcMain.handle(
+  "wizard:recommended-workspace",
+  async (_event, name) => workspaceService.getRecommendedWizardWorkspace(name)
+);
+ipcMain.handle("wizard:choose-workspace", async (_event, name) => workspaceService.chooseWizardWorkspace(name));
+ipcMain.handle("wizard:setup", async (_event, request) => {
+  const result = await workspaceService.setupWizardWorkspace(request);
+  activeWorkspaceRoot = result.profile.workspaceRoot;
+  workspaceWatch.setRoot(result.profile.workspaceRoot);
+  return result;
+});
+ipcMain.handle("wizard:delete-workspace", async (_event, root) => {
+  const deleted = await workspaceService.deleteWorkspaceFolder(root);
+  if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(deleted.path)) {
+    activeWorkspaceRoot = void 0;
+    workspaceWatch.stop();
+  }
+  return deleted;
+});
+ipcMain.handle("wizard:prompt-approval-response", async (_event, id, approved) => {
+  const resolveApproval = pendingWizardPromptApprovals.get(id);
+  if (!resolveApproval) return;
+  pendingWizardPromptApprovals.delete(id);
+  resolveApproval(Boolean(approved));
 });
 ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") return;

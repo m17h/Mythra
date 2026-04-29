@@ -14,7 +14,10 @@ import type {
   SavedChatMeta,
   WorkspaceChanged,
   WorkspaceChanges,
-  WorkspaceNode
+  WorkspaceNode,
+  WizardPromptApprovalRequest,
+  WizardSetupRequest,
+  WizardSetupResult
 } from '@shared/types';
 
 const electronAPI = {
@@ -25,6 +28,8 @@ const electronAPI = {
     ipcRenderer.invoke('workspace:choose') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
   openLastWorkspace: () =>
     ipcRenderer.invoke('workspace:open-last') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
+  activateWorkspace: (root: string) =>
+    ipcRenderer.invoke('workspace:activate', root) as Promise<{ root: string; label: string; tree: WorkspaceNode[] }>,
   getWorkspaceTree: (root: string) => ipcRenderer.invoke('workspace:tree', root) as Promise<WorkspaceNode[]>,
   detachWorkspace: () => ipcRenderer.invoke('workspace:detach') as Promise<void>,
   openFile: (root: string, target: string) =>
@@ -33,6 +38,20 @@ const electronAPI = {
     ipcRenderer.invoke('workspace:save-file', root, target, content) as Promise<OpenFile>,
   getWorkspaceChanges: (root: string) =>
     ipcRenderer.invoke('workspace:changes', root) as Promise<WorkspaceChanges>,
+  getRecommendedWizardWorkspace: (name: string) =>
+    ipcRenderer.invoke('wizard:recommended-workspace', name) as Promise<string>,
+  chooseWizardWorkspace: (name: string) => ipcRenderer.invoke('wizard:choose-workspace', name) as Promise<string | null>,
+  setupWizard: (request: WizardSetupRequest) =>
+    ipcRenderer.invoke('wizard:setup', request) as Promise<WizardSetupResult>,
+  deleteWizardWorkspace: (root: string) =>
+    ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
+  respondWizardPromptApproval: (id: string, approved: boolean) =>
+    ipcRenderer.invoke('wizard:prompt-approval-response', id, approved) as Promise<void>,
+  onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => {
+    const listener = (_event: unknown, payload: WizardPromptApprovalRequest) => callback(payload);
+    ipcRenderer.on('wizard:prompt-approval-request', listener);
+    return () => ipcRenderer.removeListener('wizard:prompt-approval-request', listener);
+  },
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
   listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>
     ipcRenderer.invoke('models:list', settings, providerKind) as Promise<ModelInfo[]>,
@@ -40,7 +59,14 @@ const electronAPI = {
     requestId: string,
     settings: AppSettings,
     messages: ChatMessage[],
-    runtime: { workspaceRoot?: string; activeFilePath?: string; conversationId?: string }
+    runtime: {
+      workspaceRoot?: string;
+      activeFilePath?: string;
+      conversationId?: string;
+      wizardId?: string;
+      wizardName?: string;
+      wizardSystemPrompt?: string;
+    }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,
   runCommand: (command: string, cwd?: string) =>
