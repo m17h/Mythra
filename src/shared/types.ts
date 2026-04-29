@@ -23,6 +23,11 @@ export interface WizardProfile {
   model: string;
   systemPrompt: string;
   documents: WizardDocument[];
+  /**
+   * When true, file writes, deletes, shell commands, and similar tool actions run without per-action approval
+   * for this Wizard’s sessions (same idea as Settings → Agent autonomy → Full access for normal chats).
+   */
+  fullAccess?: boolean;
 }
 
 export interface WizardSetupRequest {
@@ -38,6 +43,10 @@ export interface WizardSetupRequest {
   /** @deprecated Parent folder should be set explicitly; when true and no workspaceRoot, Desktop is used as parent. */
   createOnDesktop?: boolean;
   customDocuments?: string[];
+  /** Optional onboarding text merged into soul.md (identity, tone, boundaries). */
+  wizardPersonality?: string;
+  /** Optional onboarding text merged into memory.md (durable facts to remember). */
+  wizardMemory?: string;
 }
 
 export interface WizardSetupResult {
@@ -51,6 +60,16 @@ export interface WizardPromptApprovalRequest {
   wizardName: string;
   before: string;
   after: string;
+}
+
+/** In-app confirmation for tool actions when Full access is off. */
+export interface ToolApprovalRequest {
+  id: string;
+  title: string;
+  detail: string;
+  /** When both are set (UTF-8 text), the renderer shows Wizard-style side-by-side diff with highlighted lines instead of plain `detail` only. */
+  diffBefore?: string;
+  diffAfter?: string;
 }
 
 /** User-saved system prompt preset for a provider profile. */
@@ -298,7 +317,7 @@ export const defaultSettings: AppSettings = {
       systemPrompt: '',
       activePromptPresetId: null,
       promptPresets: [],
-      appName: 'OpenKiwi',
+      appName: 'Mythra',
       appUrl: 'https://example.local'
     },
     openrouter: {
@@ -309,7 +328,7 @@ export const defaultSettings: AppSettings = {
       systemPrompt: '',
       activePromptPresetId: null,
       promptPresets: [],
-      appName: 'OpenKiwi',
+      appName: 'Mythra',
       appUrl: 'https://example.local'
     }
   },

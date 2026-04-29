@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron';
-import appIconPath from './openkiwi_icon.png?asset';
+import appIconPath from './mythra_icon.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
@@ -32,6 +32,7 @@ import {
   type AppSettings,
   type ChatMessage,
   type SavedChat,
+  type ToolApprovalRequest,
   type WizardProfile,
   type WizardPromptApprovalRequest,
   type WizardSetupRequest
@@ -52,6 +53,7 @@ let currentSettings: AppSettings = defaultSettings;
 /** Last theme before the most recent change (Settings or tool); used for revert_app_theme. */
 let previousThemeId: ThemeId | undefined;
 const pendingWizardPromptApprovals = new Map<string, (approved: boolean) => void>();
+const pendingToolApprovals = new Map<string, (approved: boolean) => void>();
 
 const recordThemeTransition = (from: ThemeId, to: ThemeId) => {
   if (from !== to) {
@@ -258,6 +260,28 @@ const requestWizardPromptApproval = async (
   }
 };
 
+const requestToolApproval = async (
+  window: BrowserWindow,
+  title: string,
+  detail: string,
+  diff?: { before: string; after: string }
+) => {
+  const id = randomUUID();
+  const payload: ToolApprovalRequest = {
+    id,
+    title,
+    detail,
+    ...(diff ? { diffBefore: diff.before, diffAfter: diff.after } : {})
+  };
+  const approved = await new Promise<boolean>((resolveApproval) => {
+    pendingToolApprovals.set(id, resolveApproval);
+    window.webContents.send('tool:approval-request', payload);
+  });
+  if (!approved) {
+    throw new Error(`${title} was denied by the user.`);
+  }
+};
+
 const modelService = new ModelService(
   workspaceService,
   commandService,
@@ -321,7 +345,8 @@ const modelService = new ModelService(
     mainWindow?.webContents.send('chats:updated');
     return wizard;
   },
-  requestWizardPromptApproval
+  requestWizardPromptApproval,
+  requestToolApproval
 );
 
 const assertActiveWorkspace = (root: string | undefined) => {
@@ -340,6 +365,7 @@ const sanitizeRuntime = (runtime: {
   wizardId?: string;
   wizardName?: string;
   wizardSystemPrompt?: string;
+  wizardFullAccess?: boolean;
 }) => {
   const workspaceRoot =
     runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot)
@@ -357,7 +383,8 @@ const sanitizeRuntime = (runtime: {
     conversationId: runtime.conversationId,
     wizardId: typeof runtime.wizardId === 'string' ? runtime.wizardId : undefined,
     wizardName: typeof runtime.wizardName === 'string' ? runtime.wizardName : undefined,
-    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined
+    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined,
+    wizardFullAccess: typeof runtime.wizardFullAccess === 'boolean' ? runtime.wizardFullAccess : undefined
   };
 };
 
@@ -384,7 +411,7 @@ const createWindow = async () => {
     height: 980,
     minWidth: 1280,
     minHeight: 760,
-    title: 'OpenKiwi',
+    title: 'Mythra',
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#04111f',
     icon: windowIcon,
@@ -591,6 +618,15 @@ ipcMain.handle('wizard:prompt-approval-response', async (_event, id: string, app
   resolveApproval(Boolean(approved));
 });
 
+ipcMain.handle('tool:approval-response', async (_event, id: string, approved: boolean) => {
+  const resolveApproval = pendingToolApprovals.get(id);
+  if (!resolveApproval) return;
+  pendingToolApprovals.delete(id);
+  resolveApproval(Boolean(approved));
+});
+
+ipcMain.handle('wizard:list-documents', async (_event, root: string) => workspaceService.listWizardWorkspaceDocuments(root));
+
 ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
   if (typeof rawUrl !== 'string') return;
   let parsed: URL;
@@ -621,6 +657,7 @@ ipcMain.handle(
       wizardId?: string;
       wizardName?: string;
       wizardSystemPrompt?: string;
+      wizardFullAccess?: boolean;
     }
   ) => {
     if (!mainWindow) {

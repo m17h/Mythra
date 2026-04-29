@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { app } from 'electron';
 import type { SavedChat, SavedChatMeta } from '@shared/types';
 
-const CHATS_DIR = 'openkiwi-chats';
-const LEGACY_CHATS_DIR = 'pixel-forge-chats';
+const CHATS_DIR = 'mythra-chats';
+/** Older installs (OpenKiwi / Pixel Forge). */
+const LEGACY_CHAT_DIRS = ['openkiwi-chats', 'pixel-forge-chats'] as const;
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 
 const assertSafeChatId = (id: string) => {
@@ -17,7 +18,6 @@ const assertSafeChatId = (id: string) => {
 export class ChatStore {
   private readonly userData = app.getPath('userData');
   private readonly dir = join(this.userData, CHATS_DIR);
-  private readonly legacyDir = join(this.userData, LEGACY_CHATS_DIR);
   private legacyMigrated = false;
 
   private async migrateLegacyChatsIfNeeded() {
@@ -27,13 +27,18 @@ export class ChatStore {
       const newHas =
         existsSync(this.dir) && (await readdir(this.dir)).some((f) => f.endsWith('.json'));
       if (newHas) return;
-      if (!existsSync(this.legacyDir)) return;
-      const files = (await readdir(this.legacyDir)).filter((f) => f.endsWith('.json'));
-      if (files.length === 0) return;
-      await mkdir(this.dir, { recursive: true });
-      for (const f of files) {
-        const dst = join(this.dir, f);
-        if (!existsSync(dst)) await copyFile(join(this.legacyDir, f), dst);
+
+      for (const legacyName of LEGACY_CHAT_DIRS) {
+        const legacyDir = join(this.userData, legacyName);
+        if (!existsSync(legacyDir)) continue;
+        const files = (await readdir(legacyDir)).filter((f) => f.endsWith('.json'));
+        if (files.length === 0) continue;
+        await mkdir(this.dir, { recursive: true });
+        for (const f of files) {
+          const dst = join(this.dir, f);
+          if (!existsSync(dst)) await copyFile(join(legacyDir, f), dst);
+        }
+        break;
       }
     } catch {
       // non-fatal

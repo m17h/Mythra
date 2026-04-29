@@ -14,15 +14,16 @@ import {
   roughTokensForDraft,
   roughTokensFromMessages
 } from '@renderer/lib/estimate-context-tokens';
-import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+import { ALL_EMBED_STRIP_STRINGS } from '@shared/mythra-embeds';
 import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
 
 function getCopyableMessageText(content: string): string {
-  return content
-    .replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, '')
-    .replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, '')
-    .trim();
+  let s = content;
+  for (const token of ALL_EMBED_STRIP_STRINGS) {
+    s = s.replaceAll(token, '');
+  }
+  return s.trim();
 }
 
 function formatTokensShort(n: number): string {
@@ -815,11 +816,7 @@ export function ChatPanel({
                       webSearchDisabled={webSearchDisabled}
                     />
                   ) : (
-                    <ChatMarkdown
-                      text={message.content
-                        .replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, '')
-                        .replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, '')}
-                    />
+                    <ChatMarkdown text={getCopyableMessageText(message.content)} />
                   )}
                 </div>
               ) : null}

@@ -417,42 +417,31 @@ html[data-platform='darwin'] .app-shell {
   overflow: hidden;
 }
 
-/* “OpenKiwi” wordmark — Monomaniac One, green “Kiwi” */
-.openkiwi-mark {
-  display: inline-flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 0.2em;
+/* “Mythra” wordmark — Monomaniac One */
+.mythra-mark {
+  display: inline-block;
   font-family: 'Monomaniac One', ui-sans-serif, system-ui, sans-serif;
   font-size: 1em;
   font-weight: 400;
   line-height: 1.1;
   letter-spacing: 0.02em;
   white-space: nowrap;
-}
-
-.openkiwi-mark__open {
-  color: inherit;
-}
-
-.openkiwi-mark__kiwi {
   color: #8ede9a;
   text-shadow: 0 0 18px color-mix(in srgb, #8ede9a 25%, transparent);
 }
 
-:root[data-theme='ice-station'] .openkiwi-mark__kiwi,
-:root[data-theme='kiwi'] .openkiwi-mark__kiwi ,
-:root[data-theme='custom'][data-custom-light='true'] .openkiwi-mark__kiwi {
-
+:root[data-theme='ice-station'] .mythra-mark,
+:root[data-theme='kiwi'] .mythra-mark,
+:root[data-theme='custom'][data-custom-light='true'] .mythra-mark {
   color: #3dad5c;
   text-shadow: none;
 }
 
-.sidebar-brand__title .openkiwi-mark {
+.sidebar-brand__title .mythra-mark {
   font-size: 1.75rem;
 }
 
-.workspace-empty__eyebrow .openkiwi-mark {
+.workspace-empty__eyebrow .mythra-mark {
   font-size: 1.35em;
   letter-spacing: 0.04em;
 }
@@ -495,15 +484,6 @@ html[data-platform='darwin'] .app-shell {
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-0);
-}
-
-.sidebar-brand__logo {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
-  flex-shrink: 0;
-  display: block;
-  transform: translate(-3px, 6px);
 }
 
 .sidebar-brand__copy {
@@ -895,7 +875,9 @@ html[data-platform='darwin'] .app-shell {
 .wizard-title-row__chevron {
   flex-shrink: 0;
   color: var(--text-2);
-  transition: transform 0.16s ease, color var(--transition-fast);
+  transition:
+    transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    color var(--transition-fast);
 }
 
 .chat-list__item--wizard:hover .wizard-title-row__chevron,
@@ -934,6 +916,10 @@ html[data-platform='darwin'] .app-shell {
 .wizard-group {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.wizard-session-list-anim {
   min-width: 0;
 }
 
@@ -1733,7 +1719,7 @@ details.chat-activity--collapsible {
   word-break: break-word;
 }
 
-/* Inline UI from model placeholders: [[OPENKIWI_SESSION_MODE_TOGGLE]], [[OPENKIWI_WEB_SEARCH_TOGGLE]] */
+/* Inline UI from model placeholders: MYTHRA / legacy OPENKIWI embed tokens */
 .message-embed {
   margin: 12px 0;
   padding: 10px 12px;
@@ -2561,6 +2547,25 @@ details.chat-activity--collapsible {
   min-height: 0;
 }
 
+.inspector-settings-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.inspector-settings-wrap > .settings-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.inspector-settings-scope {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
 .inspector-card .panel,
 .inspector-card .editor-panel,
 .inspector-card .changes-panel {
@@ -2864,9 +2869,43 @@ details.chat-activity--collapsible {
   border-radius: 2px;
 }
 
-.wizard-setup {
-  width: min(720px, calc(100vw - 48px));
+.tool-approval-dialog {
+  width: min(560px, calc(100vw - 48px));
 }
+
+.tool-approval-dialog__detail {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  max-height: min(360px, 50vh);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-1);
+}
+
+.wizard-setup__steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+
+.wizard-setup__steps .is-active {
+  color: var(--accent-light);
+}
+
 
 .wizard-setup .btn:disabled {
   cursor: default;

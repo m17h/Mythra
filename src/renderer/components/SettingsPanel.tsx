@@ -121,8 +121,8 @@ export function SettingsPanel({
               <button
                 className="settings-info-button"
                 type="button"
-                aria-label="About OpenRouter, LM Studio, and OpenKiwi"
-                title="OpenRouter & LM Studio in OpenKiwi"
+                aria-label="About OpenRouter, LM Studio, and Mythra"
+                title="OpenRouter & LM Studio in Mythra"
                 onClick={onOpenConnectionHelp}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -161,7 +161,7 @@ export function SettingsPanel({
           </label>
 
           <div className="field-row">
-            <label className="field">
+            <div className="field">
               <span>Model</span>
               {modelOptions.length > 0 ? (
                 <ModelSearch
@@ -196,7 +196,7 @@ export function SettingsPanel({
                   <option value="">Select model</option>
                 </select>
               )}
-            </label>
+            </div>
             {isLmStudio ? (
               <button className="btn btn--secondary field-row__button" onClick={onRefreshModels} type="button">
                 Test + Refresh
@@ -313,7 +313,7 @@ export function SettingsPanel({
 
           {activeSearchProvider !== 'duckduckgo' && !activeSearchHasKey ? (
             <div className="inline-hint inline-hint--warning">
-              Add and save an API key for {activeSearchProvider === 'tavily' ? 'Tavily' : 'Brave Search'}, or OpenKiwi
+              Add and save an API key for {activeSearchProvider === 'tavily' ? 'Tavily' : 'Brave Search'}, or Mythra
               will fall back to DuckDuckGo instant answers.
             </div>
           ) : null}

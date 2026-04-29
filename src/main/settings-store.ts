@@ -5,8 +5,9 @@ import { app } from 'electron';
 import { defaultSettings, type AppSettings } from '@shared/types';
 import { normalizeProviderProfile } from '@shared/provider-profile';
 
-const SETTINGS_FILE = 'openkiwi-settings.json';
-const LEGACY_SETTINGS_FILE = 'pixel-forge-settings.json';
+const SETTINGS_FILE = 'mythra-settings.json';
+/** Older installs before the Mythra rename. */
+const LEGACY_SETTINGS_FILES = ['openkiwi-settings.json', 'pixel-forge-settings.json'] as const;
 
 const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => ({
   ...defaultSettings,
@@ -54,22 +55,25 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
 export class SettingsStore {
   private readonly userData = app.getPath('userData');
   private readonly path = join(this.userData, SETTINGS_FILE);
-  private readonly legacyPath = join(this.userData, LEGACY_SETTINGS_FILE);
 
   async load(): Promise<AppSettings> {
-    if (!existsSync(this.path) && existsSync(this.legacyPath)) {
+    const pathsToTry = [this.path, ...LEGACY_SETTINGS_FILES.map((f) => join(this.userData, f))];
+
+    for (const tryPath of pathsToTry) {
       try {
-        await copyFile(this.legacyPath, this.path);
+        const raw = await readFile(tryPath, 'utf8');
+        const merged = mergeSettings(JSON.parse(raw) as Partial<AppSettings>);
+        if (tryPath !== this.path && !existsSync(this.path)) {
+          try {
+            await mkdir(dirname(this.path), { recursive: true });
+            await writeFile(this.path, JSON.stringify(merged, null, 2), 'utf8');
+          } catch {
+            /* non-fatal migration copy */
+          }
+        }
+        return merged;
       } catch {
-        // fall through to read legacy
-      }
-    }
-    for (const p of [this.path, this.legacyPath]) {
-      try {
-        const raw = await readFile(p, 'utf8');
-        return mergeSettings(JSON.parse(raw) as Partial<AppSettings>);
-      } catch {
-        // try next
+        /* try next */
       }
     }
     return defaultSettings;

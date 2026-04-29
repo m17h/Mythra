@@ -13,9 +13,11 @@ import type {
   OpenFile,
   SavedChat,
   SavedChatMeta,
+  ToolApprovalRequest,
   WorkspaceChanged,
   WorkspaceChanges,
   WorkspaceNode,
+  WizardDocument,
   WizardPromptApprovalRequest,
   WizardSetupRequest,
   WizardSetupResult,
@@ -41,10 +43,13 @@ declare global {
       chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) => Promise<string | null>;
       chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
       setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
+      listWizardDocuments: (workspaceRoot: string) => Promise<WizardDocument[]>;
       syncWizardWorkspaceFolder: (profile: WizardProfile) => Promise<WizardProfile>;
       deleteWizardWorkspace: (root: string) => Promise<{ path: string }>;
       respondWizardPromptApproval: (id: string, approved: boolean) => Promise<void>;
+      respondToolApproval: (id: string, approved: boolean) => Promise<void>;
       onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => () => void;
+      onToolApprovalRequest: (callback: (payload: ToolApprovalRequest) => void) => () => void;
       openExternalUrl: (url: string) => Promise<void>;
       listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') => Promise<ModelInfo[]>;
       streamChat: (
@@ -58,6 +63,7 @@ declare global {
           wizardId?: string;
           wizardName?: string;
           wizardSystemPrompt?: string;
+          wizardFullAccess?: boolean;
         }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;

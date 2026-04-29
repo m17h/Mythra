@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import openkiwiLogo from '@renderer/assets/openkiwi.png';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { AppSelect } from './components/AppSelect';
@@ -9,7 +8,7 @@ import { ChangesPanel } from './components/ChangesPanel';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
 import { ModelSearch } from './components/ModelSearch';
-import { OpenKiwiMark } from './components/OpenKiwiMark';
+import { MythraMark } from './components/MythraMark';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SystemPromptModal } from './components/SystemPromptModal';
 import { WizardSettingsPanel } from './components/WizardSettingsPanel';
@@ -29,6 +28,8 @@ import {
   type SessionMode,
   type SavedChat,
   type SavedChatMeta,
+  type ToolApprovalRequest,
+  type WizardDocument,
   type WizardProfile,
   type WizardPromptApprovalRequest,
   type WizardSetupRequest,
@@ -108,12 +109,12 @@ const sessionTitle = (messages: ChatMessage[], fallback = 'New session') => {
 
 const buildWizardSystemPrompt = (wizard: WizardProfile) => `${wizard.systemPrompt}
 
-OpenKiwi Wizard runtime:
+Mythra Wizard runtime:
 - You are currently inside your private Wizard workspace: ${wizard.workspaceRoot}
 - Always use this workspace for file reads, memory, and edits unless the user explicitly tells you otherwise.
 - At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.
 - When asked about your identity, memory, tools, or corrections, read the matching Markdown file before answering.
-- Do not use app theme tools unless the user explicitly asks to change OpenKiwi's visual theme.`;
+- Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
 
 interface WizardDocsContextResult {
   message: ChatMessage | null;
@@ -203,6 +204,7 @@ interface FileBuffer extends OpenFile {
 }
 
 type InspectorTab = 'editor' | 'changes' | 'settings';
+type SettingsInspectorScope = 'general' | 'wizard';
 type SidebarTab = 'chats' | 'wizards' | 'files';
 
 interface InFlightChat {
@@ -266,6 +268,8 @@ export function App() {
   const [inlineTerminalJobId, setInlineTerminalJobId] = useState<string>();
   const inlineTerminalJobIdRef = useRef<string | undefined>(undefined);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
+  const [settingsInspectorScope, setSettingsInspectorScope] = useState<SettingsInspectorScope>('general');
+  const settingsInspectorWizardIdRef = useRef<string | undefined>(undefined);
   const lastInspectorTabRef = useRef<InspectorTab>(inspectorTab);
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -283,6 +287,7 @@ export function App() {
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{ wizardName: string; workspaceRoot: string } | null>(null);
   const [wizardPromptApproval, setWizardPromptApproval] = useState<WizardPromptApprovalRequest | null>(null);
+  const [toolApprovalRequest, setToolApprovalRequest] = useState<ToolApprovalRequest | null>(null);
   const [expandedWizardIds, setExpandedWizardIds] = useState<Set<string>>(new Set());
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -410,6 +415,20 @@ export function App() {
   useEffect(() => {
     setWizardDraft(activeWizard);
   }, [activeChatId, activeWizard]);
+
+  useEffect(() => {
+    const id = activeWizardMeta?.id;
+    if (!id) {
+      setSettingsInspectorScope('general');
+      settingsInspectorWizardIdRef.current = undefined;
+      return;
+    }
+    const prev = settingsInspectorWizardIdRef.current;
+    if (prev !== id) {
+      settingsInspectorWizardIdRef.current = id;
+      if (prev === undefined) setSettingsInspectorScope('wizard');
+    }
+  }, [activeWizardMeta?.id]);
 
   useEffect(() => {
     wizardDraftRef.current = wizardDraft;
@@ -664,11 +683,34 @@ export function App() {
     const offWizardPromptApproval = window.electronAPI.onWizardPromptApprovalRequest((payload) => {
       setWizardPromptApproval(payload);
     });
+    const offToolApproval = window.electronAPI.onToolApprovalRequest((payload) => {
+      setToolApprovalRequest(payload);
+    });
     const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
       async ({ root, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root);
         setWorkspaceTree(latestTree);
         void refreshWorkspaceChanges(root);
+
+        const wDraft = wizardDraftRef.current;
+        if (wDraft && pathsEqual(wDraft.workspaceRoot, root)) {
+          try {
+            const docs = await window.electronAPI.listWizardDocuments(root);
+            const wid = activeWizardMeta?.id;
+            const cur = wizardDraftRef.current;
+            if (wid && cur && pathsEqual(cur.workspaceRoot, root)) {
+              const full = await window.electronAPI.loadChat(wid);
+              if (full?.kind === 'wizard' && full.wizard) {
+                const merged: WizardProfile = { ...full.wizard, documents: docs };
+                setWizardDraft(merged);
+                wizardDraftRef.current = merged;
+                await window.electronAPI.saveChat({ ...full, wizard: merged, updatedAt: Date.now() });
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
 
         if (!fileWritten && activeFilePathRef.current) {
           const activeKey = activeFilePathRef.current;
@@ -722,9 +764,10 @@ export function App() {
       offSettingsUpdated();
       offChatsUpdated();
       offWizardPromptApproval();
+      offToolApproval();
       offWorkspaceChanged();
     };
-  }, [refreshChatList, refreshWorkspaceChanges]);
+  }, [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]);
 
   useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
@@ -780,6 +823,44 @@ export function App() {
     void refreshWorkspaceChanges(result.root);
     return result;
   };
+
+  const isWizardOwnedWorkspaceRoot = useCallback(
+    (root: string) =>
+      wizardChatList.some(
+        (w) => w.kind === 'wizard' && w.wizard?.workspaceRoot && pathsEqual(w.wizard.workspaceRoot, root)
+      ),
+    [wizardChatList]
+  );
+
+  /** When leaving Wizard context, detach the Wizard folder rather than treating it as the normal sidebar workspace (avoids edits in the wrong tree). Optionally remount Settings → lastWorkspaceRoot when it is not a Wizard workspace. */
+  const switchAwayFromWizardMountedWorkspace = useCallback(async () => {
+    const root = workspaceRootRef.current;
+    if (!root || !isWizardOwnedWorkspaceRoot(root)) return;
+
+    await window.electronAPI.detachWorkspace();
+    setWorkspaceRoot(undefined);
+    setWorkspaceTree([]);
+    setWorkspaceChanges(null);
+    setBuffers({});
+    setActiveFilePath(undefined);
+
+    const lastRoot = await window.electronAPI.getLastValidWorkspaceRoot();
+    if (lastRoot && !isWizardOwnedWorkspaceRoot(lastRoot)) {
+      try {
+        const result = await window.electronAPI.activateWorkspace(lastRoot);
+        setWorkspaceRoot(result.root);
+        setWorkspaceTree(result.tree);
+        setWorkspaceChanges(null);
+        setBuffers({});
+        setActiveFilePath(undefined);
+        void refreshWorkspaceChanges(result.root);
+      } catch (e) {
+        setSettingsStatus(
+          e instanceof Error ? e.message : 'Could not reopen your saved workspace folder. Use Open workspace in the sidebar.'
+        );
+      }
+    }
+  }, [isWizardOwnedWorkspaceRoot, refreshWorkspaceChanges]);
 
   const openFile = async (target: string) => {
     if (!workspaceRoot) return;
@@ -1014,11 +1095,12 @@ export function App() {
     setChatAttachments((c) => [...c, ...nextAttachments]);
   };
 
-  const startNewChat = () => {
+  const startNewChat = async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
     setChatTimeline([]);
@@ -1060,6 +1142,7 @@ export function App() {
       setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
     } else {
       setSidebarTab('chats');
+      await switchAwayFromWizardMountedWorkspace();
     }
     const inFlight = findInFlightByChatId(id);
     const messages = inFlight?.messages ?? chat.messages;
@@ -1086,7 +1169,7 @@ export function App() {
       inFlightChatsRef.current.delete(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(id);
-    if (activeChatId === id) startNewChat();
+    if (activeChatId === id) await startNewChat();
     if (editingTitleId === id) {
       setEditingTitleId(null);
       setEditingTitleDraft('');
@@ -1106,11 +1189,12 @@ export function App() {
     void deleteChat(chat.id);
   };
 
-  const clearActiveConversation = () => {
+  const clearActiveConversation = async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
     setChatTimeline([]);
@@ -1142,7 +1226,7 @@ export function App() {
       if (siblings[0]) {
         await loadChat(siblings[0].id);
       } else {
-        clearActiveConversation();
+        await clearActiveConversation();
         setSidebarTab('wizards');
         if (wizardId) setExpandedWizardIds((current) => new Set(current).add(wizardId));
       }
@@ -1177,7 +1261,7 @@ export function App() {
     await deleteChat(target.id);
 
     if (priorActiveId && idsRemoved.has(priorActiveId)) {
-      startNewChat();
+      await startNewChat();
     }
     if (editingTitleId && idsRemoved.has(editingTitleId)) {
       setEditingTitleId(null);
@@ -1627,7 +1711,8 @@ export function App() {
       conversationId: chatSessionIdRef.current,
       wizardId: parentWizardChat?.kind === 'wizard' ? parentWizardChat.id : undefined,
       wizardName: wizardForStream?.name,
-      wizardSystemPrompt: wizardForStream?.systemPrompt
+      wizardSystemPrompt: wizardForStream?.systemPrompt,
+      wizardFullAccess: wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined
     });
   };
 
@@ -1680,6 +1765,12 @@ export function App() {
   const wizardPromptDiff = wizardPromptApproval
     ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after)
     : { left: [], right: [] };
+  const toolApprovalDiff =
+    toolApprovalRequest &&
+    typeof toolApprovalRequest.diffBefore === 'string' &&
+    typeof toolApprovalRequest.diffAfter === 'string'
+      ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter)
+      : null;
 
   return (
     <div className="app-shell">
@@ -1705,7 +1796,7 @@ export function App() {
               <div className="app-dialog__kicker">Web Search</div>
               <h3>Search works better with an API key</h3>
               <p>
-                OpenKiwi can search without a key, but the built-in DuckDuckGo fallback only returns short instant
+                Mythra can search without a key, but the built-in DuckDuckGo fallback only returns short instant
                 answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key
                 in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web
                 search option.
@@ -1773,7 +1864,7 @@ export function App() {
         confirmVariant="danger"
         description={
           <>
-            Delete <strong>{wizardDeleteTarget?.title ?? 'this Wizard'}</strong> from OpenKiwi? This removes the Wizard
+            Delete <strong>{wizardDeleteTarget?.title ?? 'this Wizard'}</strong> from Mythra? This removes the Wizard
             entry and its conversation history, but does not delete its workspace folder yet.
           </>
         }
@@ -1914,6 +2005,88 @@ export function App() {
         ) : null}
       </AnimatePresence>
       <AnimatePresence>
+        {toolApprovalRequest ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop app-dialog-backdrop--overlay-top"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            role="presentation"
+          >
+            <motion.div
+              aria-modal="true"
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className={`app-dialog app-dialog--scrollable ${toolApprovalDiff ? 'wizard-prompt-approval' : 'tool-approval-dialog'}`}
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">Approval required</div>
+              <h3>{toolApprovalRequest.title}</h3>
+              {toolApprovalDiff ? (
+                <>
+                  <div className="wizard-prompt-approval__intro">
+                    <p id="tool-approval-desc">{toolApprovalRequest.detail}</p>
+                  </div>
+                  <div aria-describedby="tool-approval-desc" className="wizard-prompt-approval__compare">
+                    <section>
+                      <h4>Before</h4>
+                      <pre>
+                        {toolApprovalDiff.left.map((line, index) => (
+                          <span className={`wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`} key={`tool-dl-${index}-${line.kind}`}>
+                            {line.text || ' '}
+                          </span>
+                        ))}
+                      </pre>
+                    </section>
+                    <div className="wizard-prompt-approval__arrow" aria-hidden>
+                      --&gt;
+                    </div>
+                    <section>
+                      <h4>After</h4>
+                      <pre>
+                        {toolApprovalDiff.right.map((line, index) => (
+                          <span className={`wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`} key={`tool-dr-${index}-${line.kind}`}>
+                            {line.text || ' '}
+                          </span>
+                        ))}
+                      </pre>
+                    </section>
+                  </div>
+                </>
+              ) : (
+                <pre className="tool-approval-dialog__detail">{toolApprovalRequest.detail}</pre>
+              )}
+              <div className="app-dialog__actions">
+                <button
+                  className="btn btn--secondary"
+                  onClick={() => {
+                    const id = toolApprovalRequest.id;
+                    setToolApprovalRequest(null);
+                    void window.electronAPI.respondToolApproval(id, false);
+                  }}
+                  type="button"
+                >
+                  Deny
+                </button>
+                <button
+                  className="btn btn--primary"
+                  onClick={() => {
+                    const id = toolApprovalRequest.id;
+                    setToolApprovalRequest(null);
+                    void window.electronAPI.respondToolApproval(id, true);
+                  }}
+                  type="button"
+                >
+                  Approve
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
         {showConnectionHelp ? (
           <motion.div
             animate={{ opacity: 1 }}
@@ -1936,7 +2109,7 @@ export function App() {
               <div className="app-dialog__kicker">Connection</div>
               <h3 id="connection-help-title">Need help?</h3>
               <p id="connection-help-desc">
-                OpenKiwi sends your chats to an LLM through either <strong>OpenRouter</strong> (many cloud models, one API
+                Mythra sends your chats to an LLM through either <strong>OpenRouter</strong> (many cloud models, one API
                 key) or <strong>LM Studio</strong> (models running on your computer). Use the guide below for the option
                 you prefer.
               </p>
@@ -1944,7 +2117,7 @@ export function App() {
                 <div className="app-dialog__section-title">OpenRouter</div>
                 <p>
                   OpenRouter is a service that routes requests to a large catalog of hosted models so you do not run the
-                  weights locally. In OpenKiwi, choose <strong>OpenRouter</strong> under Provider, paste an API key from
+                  weights locally. In Mythra, choose <strong>OpenRouter</strong> under Provider, paste an API key from
                   your OpenRouter account (for example <code className="app-dialog__code">sk-or-v1-…</code>), then pick a
                   model. The default base URL points at OpenRouter’s API and usually does not need changing. Your key is
                   stored only in this app’s settings on your machine.
@@ -1955,7 +2128,7 @@ export function App() {
                 <p>
                   LM Studio is a desktop app that downloads and runs models on your own hardware. Install it, load a
                   model, and start the <strong>local server</strong> (often on port <code className="app-dialog__code">1234</code>
-                  ). In OpenKiwi, choose <strong>LM Studio</strong>, confirm the base URL matches your server (the default
+                  ). In Mythra, choose <strong>LM Studio</strong>, confirm the base URL matches your server (the default
                   is <code className="app-dialog__code">http://127.0.0.1:1234/v1</code>), then use <strong>Test +
                   Refresh</strong> to load the model list. The server key defaults to{' '}
                   <code className="app-dialog__code">lm-studio</code> unless you changed it in LM Studio.
@@ -2010,15 +2183,7 @@ export function App() {
               <div className="sidebar-brand__badge">OK</div>
               <div>
                 <div className="sidebar-brand__title">
-                  <OpenKiwiMark />
-                  <img
-                    alt=""
-                    className="sidebar-brand__logo"
-                    decoding="async"
-                    height={32}
-                    src={openkiwiLogo}
-                    width={32}
-                  />
+                  <MythraMark />
                 </div>
                 <div className="sidebar-brand__copy">Local AI workspace</div>
               </div>
@@ -2045,7 +2210,7 @@ export function App() {
                       initial={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.15 }}
                     >
-                      <button onClick={startNewChat} type="button">
+                      <button onClick={() => void startNewChat()} type="button">
                         <strong>Normal Chat</strong>
                         <span>Regular chat with Chat and Agent modes.</span>
                       </button>
@@ -2447,6 +2612,7 @@ export function App() {
                         {wizardChatList.map((chat) => (
                           <div className="wizard-group" key={chat.id}>
                             <div
+                              aria-expanded={expandedWizardIds.has(chat.id)}
                               className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
                               onClick={() =>
                                 setExpandedWizardIds((current) => {
@@ -2524,7 +2690,22 @@ export function App() {
                                 </div>
                               )}
                             </div>
-                            {expandedWizardIds.has(chat.id) ? (
+                            <motion.div
+                              aria-hidden={!expandedWizardIds.has(chat.id)}
+                              className="wizard-session-list-anim"
+                              initial={false}
+                              animate={{
+                                height: expandedWizardIds.has(chat.id) ? 'auto' : 0
+                              }}
+                              style={{
+                                overflow: 'hidden',
+                                pointerEvents: expandedWizardIds.has(chat.id) ? 'auto' : 'none'
+                              }}
+                              transition={{
+                                duration: 0.32,
+                                ease: [0.4, 0, 0.2, 1]
+                              }}
+                            >
                               <div className="wizard-session-list">
                                 <button className="wizard-session-button" onClick={() => void createWizardSession(chat)} type="button">
                                   <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden>
@@ -2567,7 +2748,7 @@ export function App() {
                                   </div>
                                 ))}
                               </div>
-                            ) : null}
+                            </motion.div>
                           </div>
                         ))}
                         </div>
@@ -2724,30 +2905,61 @@ export function App() {
                     workspaceRoot={workspaceRoot}
                   />
                 ) : null}
-                {inspectorTab === 'settings' && settings && wizardDraft ? (
-                  <WizardSettingsPanel
-                    modelOptions={overrideModels}
-                    onChange={handleWizardDraftChange}
-                    onOpenDocument={(path) => void openFile(path)}
-                    onRefreshModels={refreshWizardModels}
-                    settings={settings}
-                    statusMessage={settingsStatus}
-                    wizard={wizardDraft}
-                  />
-                ) : null}
-                {inspectorTab === 'settings' && settings && !wizardDraft ? (
-                  <SettingsPanel
-                    focusSearchSettingsKey={searchSettingsFocusKey}
-                    modelOptions={models}
-                    onChange={handleSettingsPanelChange}
-                    onOpenConnectionHelp={() => setShowConnectionHelp(true)}
-                    onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
-                    onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
-                    onPresetPersist={persistAfterPresetAction}
-                    onRefreshModels={refreshModels}
-                    settings={settings}
-                    statusMessage={settingsStatus}
-                  />
+                {inspectorTab === 'settings' && settings ? (
+                  <div className="inspector-settings-wrap">
+                    {activeWizard ? (
+                      <div className="inspector-settings-scope" role="group" aria-label="Which settings to edit">
+                        <div className="session-mode-toggle">
+                          <button
+                            className={`session-mode-toggle__option ${settingsInspectorScope === 'general' ? 'is-active' : ''}`}
+                            onClick={() => setSettingsInspectorScope('general')}
+                            type="button"
+                          >
+                            General
+                          </button>
+                          <button
+                            className={`session-mode-toggle__option ${settingsInspectorScope === 'wizard' ? 'is-active' : ''}`}
+                            onClick={() => setSettingsInspectorScope('wizard')}
+                            type="button"
+                          >
+                            Wizard
+                          </button>
+                          <span
+                            className="session-mode-toggle__slider"
+                            style={{
+                              transform: settingsInspectorScope === 'wizard' ? 'translateX(100%)' : 'translateX(0)'
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                    {settingsInspectorScope === 'wizard' && wizardDraft ? (
+                      <WizardSettingsPanel
+                        modelOptions={overrideModels}
+                        onChange={handleWizardDraftChange}
+                        onOpenDocument={(path) => void openFile(path)}
+                        onPresetPersist={persistAfterPresetAction}
+                        onRefreshModels={refreshWizardModels}
+                        onSettingsChangeForFavorites={handleSettingsPanelChange}
+                        settings={settings}
+                        statusMessage={settingsStatus}
+                        wizard={wizardDraft}
+                      />
+                    ) : (
+                      <SettingsPanel
+                        focusSearchSettingsKey={searchSettingsFocusKey}
+                        modelOptions={models}
+                        onChange={handleSettingsPanelChange}
+                        onOpenConnectionHelp={() => setShowConnectionHelp(true)}
+                        onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
+                        onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
+                        onPresetPersist={persistAfterPresetAction}
+                        onRefreshModels={refreshModels}
+                        settings={settings}
+                        statusMessage={settingsStatus}
+                      />
+                    )}
+                  </div>
                 ) : null}
               </motion.div>
             </AnimatePresence>

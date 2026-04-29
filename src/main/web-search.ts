@@ -164,7 +164,7 @@ async function searchDuckDuckGo(q: string): Promise<string> {
   let data: unknown;
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'OpenKiwi/0.1 (https://github.com) desktop assistant' }
+      headers: { 'User-Agent': 'Mythra/0.1 (https://github.com) desktop assistant' }
     });
     if (!res.ok) {
       return `Web search request failed (HTTP ${res.status}). You can try again or share a direct link.`;
@@ -311,7 +311,7 @@ async function tryOpenMeteoWeatherSupplement(q: string): Promise<string | null> 
   const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=3&language=en`;
   let geo: unknown;
   try {
-    const res = await fetch(geoUrl, { headers: { 'User-Agent': 'OpenKiwi/0.1 (desktop; Open-Meteo geocoding)' } });
+    const res = await fetch(geoUrl, { headers: { 'User-Agent': 'Mythra/0.1 (desktop; Open-Meteo geocoding)' } });
     if (!res.ok) return null;
     geo = await res.json();
   } catch {
@@ -335,7 +335,7 @@ async function tryOpenMeteoWeatherSupplement(q: string): Promise<string | null> 
 
   let data: unknown;
   try {
-    const res = await fetch(fcUrl.toString(), { headers: { 'User-Agent': 'OpenKiwi/0.1 (Open-Meteo forecast)' } });
+    const res = await fetch(fcUrl.toString(), { headers: { 'User-Agent': 'Mythra/0.1 (Open-Meteo forecast)' } });
     if (!res.ok) return null;
     data = await res.json();
   } catch {

@@ -1,5 +1,5 @@
 import Editor from '@monaco-editor/react';
-import { OpenKiwiMark } from './OpenKiwiMark';
+import { MythraMark } from './MythraMark';
 
 interface EditorPanelProps {
   filePath?: string;
@@ -15,7 +15,7 @@ export function EditorPanel({ filePath, content, imagePreview, dirty, onChange, 
     return (
       <section className="workspace-empty">
         <div className="workspace-empty__eyebrow">
-          <OpenKiwiMark />
+          <MythraMark />
           <span className="workspace-empty__eyebrow-suffix">· Console</span>
         </div>
         <h2>Open a workspace, pick a file, then wire your model settings on the right.</h2>

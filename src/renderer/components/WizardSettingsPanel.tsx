@@ -11,6 +11,9 @@ interface WizardSettingsPanelProps {
   onChange: (wizard: WizardProfile) => void;
   onOpenDocument: (path: string) => void;
   onRefreshModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
+  /** Update + persist favorites (same mechanism as Connection → Model in Settings). */
+  onPresetPersist: (next: AppSettings) => Promise<void>;
+  onSettingsChangeForFavorites: (next: AppSettings) => void;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
@@ -25,13 +28,37 @@ export function WizardSettingsPanel({
   statusMessage,
   onChange,
   onOpenDocument,
-  onRefreshModels
+  onRefreshModels,
+  onPresetPersist,
+  onSettingsChangeForFavorites
 }: WizardSettingsPanelProps) {
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
 
   useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const docs = await window.electronAPI.listWizardDocuments(wizard.workspaceRoot);
+        if (cancelled) return;
+        const prevKey = wizard.documents.map((d) => d.path).join('\0');
+        const nextKey = docs.map((d) => d.path).join('\0');
+        if (prevKey !== nextKey) {
+          onChange({ ...wizard, documents: docs });
+        }
+      } catch {
+        /* workspace missing or unreadable */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-scan when switching to another Wizard workspace; live updates come from App workspace events.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional narrow deps
+  }, [wizard.workspaceRoot]);
 
   return (
     <section className="panel settings-panel">
@@ -77,12 +104,47 @@ export function WizardSettingsPanel({
                 favoriteIds={settings.ui.favoriteModels?.[wizard.provider] ?? defaultSettings.ui.favoriteModels[wizard.provider]}
                 models={localModels}
                 onChange={(model) => onChange({ ...wizard, model })}
-                onToggleFavorite={() => undefined}
+                onToggleFavorite={(id) => {
+                  const k = wizard.provider;
+                  const baseFav =
+                    settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                  const nextSet = new Set(baseFav[k] ?? []);
+                  if (nextSet.has(id)) nextSet.delete(id);
+                  else nextSet.add(id);
+                  const next: AppSettings = {
+                    ...settings,
+                    ui: {
+                      ...settings.ui,
+                      favoriteModels: {
+                        ...baseFav,
+                        [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                      }
+                    }
+                  };
+                  onSettingsChangeForFavorites(next);
+                  void onPresetPersist(next);
+                }}
                 value={wizard.model}
               />
             ) : (
               <input readOnly value={wizard.model || 'No model selected'} />
             )}
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h4 className="settings-section__title">Agent autonomy</h4>
+          <label className={`toggle-row toggle-row--warning ${wizard.fullAccess ? 'is-active' : ''}`}>
+            <span>Full access mode</span>
+            <input
+              checked={Boolean(wizard.fullAccess)}
+              onChange={(e) => onChange({ ...wizard, fullAccess: e.target.checked })}
+              type="checkbox"
+            />
+          </label>
+          <div className="inline-hint inline-hint--warning">
+            When on, this Wizard can write, delete files, and run commands without per-action approval — same idea as
+            Settings → Agent autonomy → Full access for normal chats.
           </div>
         </div>
 

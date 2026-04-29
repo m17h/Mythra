@@ -1,6 +1,9 @@
 import { Fragment } from 'react';
 import type { SessionMode } from '@shared/types';
-import { OPENKIWI_SESSION_MODE_TOGGLE, OPENKIWI_WEB_SEARCH_TOGGLE } from '@shared/openkiwi-embeds';
+import {
+  SESSION_MODE_EMBED_STRINGS,
+  WEB_SEARCH_EMBED_STRINGS
+} from '@shared/mythra-embeds';
 import { ChatMarkdown } from './ChatMarkdown';
 import { SessionModeMessageEmbed } from './SessionModeMessageEmbed';
 import { WebSearchMessageEmbed } from './WebSearchMessageEmbed';
@@ -17,26 +20,32 @@ type Props = {
 
 type EmbedSegment = { type: 'md'; text: string } | { type: 'session' } | { type: 'web' };
 
+function textHasAnyEmbedToken(text: string): boolean {
+  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text.includes(t));
+}
+
+function findNextEmbed(rest: string): { i: number; len: number; kind: 'session' | 'web' } | null {
+  let best: { i: number; len: number; kind: 'session' | 'web' } | null = null;
+  for (const s of SESSION_MODE_EMBED_STRINGS) {
+    const i = rest.indexOf(s);
+    if (i >= 0 && (!best || i < best.i)) best = { i, len: s.length, kind: 'session' };
+  }
+  for (const s of WEB_SEARCH_EMBED_STRINGS) {
+    const i = rest.indexOf(s);
+    if (i >= 0 && (!best || i < best.i)) best = { i, len: s.length, kind: 'web' };
+  }
+  return best;
+}
+
 function parseAssistantEmbeds(text: string): EmbedSegment[] {
-  if (!text.includes(OPENKIWI_SESSION_MODE_TOGGLE) && !text.includes(OPENKIWI_WEB_SEARCH_TOGGLE)) {
+  if (!textHasAnyEmbedToken(text)) {
     return [{ type: 'md', text }];
   }
 
   const out: EmbedSegment[] = [];
   let rest = text;
   while (rest.length > 0) {
-    const iSession = rest.indexOf(OPENKIWI_SESSION_MODE_TOGGLE);
-    const iWeb = rest.indexOf(OPENKIWI_WEB_SEARCH_TOGGLE);
-    const next =
-      iSession < 0 && iWeb < 0
-        ? null
-        : iSession < 0
-          ? { i: iWeb, kind: 'web' as const, len: OPENKIWI_WEB_SEARCH_TOGGLE.length }
-          : iWeb < 0
-            ? { i: iSession, kind: 'session' as const, len: OPENKIWI_SESSION_MODE_TOGGLE.length }
-            : iSession <= iWeb
-              ? { i: iSession, kind: 'session' as const, len: OPENKIWI_SESSION_MODE_TOGGLE.length }
-              : { i: iWeb, kind: 'web' as const, len: OPENKIWI_WEB_SEARCH_TOGGLE.length };
+    const next = findNextEmbed(rest);
 
     if (!next) {
       out.push({ type: 'md', text: rest });
@@ -53,7 +62,7 @@ function parseAssistantEmbeds(text: string): EmbedSegment[] {
 
 /**
  * Renders assistant markdown, replacing model-emitted embed tokens with live controls
- * ([[OPENKIWI_SESSION_MODE_TOGGLE]], [[OPENKIWI_WEB_SEARCH_TOGGLE]]).
+ * (`MYTHRA_*` tokens and legacy `OPENKIWI_*` placeholders).
  */
 export function AssistantMessageContent({
   text,

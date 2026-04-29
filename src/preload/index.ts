@@ -12,9 +12,11 @@ import type {
   OpenFile,
   SavedChat,
   SavedChatMeta,
+  ToolApprovalRequest,
   WorkspaceChanged,
   WorkspaceChanges,
   WorkspaceNode,
+  WizardDocument,
   WizardPromptApprovalRequest,
   WizardProfile,
   WizardSetupRequest,
@@ -51,14 +53,23 @@ const electronAPI = {
     ipcRenderer.invoke('wizard:setup', request) as Promise<WizardSetupResult>,
   syncWizardWorkspaceFolder: (profile: WizardProfile) =>
     ipcRenderer.invoke('wizard:sync-workspace-folder', profile) as Promise<WizardProfile>,
+  listWizardDocuments: (workspaceRoot: string) =>
+    ipcRenderer.invoke('wizard:list-documents', workspaceRoot) as Promise<WizardDocument[]>,
   deleteWizardWorkspace: (root: string) =>
     ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
   respondWizardPromptApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke('wizard:prompt-approval-response', id, approved) as Promise<void>,
+  respondToolApproval: (id: string, approved: boolean) =>
+    ipcRenderer.invoke('tool:approval-response', id, approved) as Promise<void>,
   onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => {
     const listener = (_event: unknown, payload: WizardPromptApprovalRequest) => callback(payload);
     ipcRenderer.on('wizard:prompt-approval-request', listener);
     return () => ipcRenderer.removeListener('wizard:prompt-approval-request', listener);
+  },
+  onToolApprovalRequest: (callback: (payload: ToolApprovalRequest) => void) => {
+    const listener = (_event: unknown, payload: ToolApprovalRequest) => callback(payload);
+    ipcRenderer.on('tool:approval-request', listener);
+    return () => ipcRenderer.removeListener('tool:approval-request', listener);
   },
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
   listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>
@@ -74,6 +85,7 @@ const electronAPI = {
       wizardId?: string;
       wizardName?: string;
       wizardSystemPrompt?: string;
+      wizardFullAccess?: boolean;
     }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,

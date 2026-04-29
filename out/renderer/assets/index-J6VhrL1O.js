@@ -20457,7 +20457,6 @@ const featureBundle = {
   ...layout
 };
 const motion = /* @__PURE__ */ createMotionProxy(featureBundle, createDomVisualElement);
-const openkiwiLogo = "" + new URL("openkiwi-D1aerqyI.png", import.meta.url).href;
 function applyChatModelOverride(settings, override) {
   if (!override?.model?.trim()) {
     return settings;
@@ -20480,6 +20479,74 @@ function formatOverrideLabel(override, pathLabel2) {
   return `${prov}: ${pathLabel2(override.model)}`;
 }
 var reactDomExports = requireReactDom();
+const dialogTransition$1 = { duration: 0.18, ease: "easeOut" };
+function AppConfirmDialog({
+  open,
+  kicker,
+  title,
+  description,
+  confirmLabel,
+  cancelLabel = "Cancel",
+  confirmVariant = "primary",
+  onConfirm,
+  onCancel
+}) {
+  const uid2 = reactExports.useId();
+  const titleId = `${uid2}-title`;
+  const descId = `${uid2}-desc`;
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+  return reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            animate: { opacity: 1, scale: 1, y: 0 },
+            "aria-describedby": descId,
+            "aria-labelledby": titleId,
+            "aria-modal": "true",
+            className: "app-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: dialogTransition$1,
+            children: [
+              kicker ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: kicker }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: titleId, children: title }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descId, children: description }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: onCancel, type: "button", children: cancelLabel }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `btn ${confirmVariant === "danger" ? "btn--danger" : "btn--primary"}`,
+                    onClick: onConfirm,
+                    type: "button",
+                    children: confirmLabel
+                  }
+                )
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
+    document.body
+  );
+}
 function AppSelect({
   options,
   value,
@@ -20598,8 +20665,16 @@ function roughTokensForDraft(input, attachments) {
   return n;
 }
 const DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS = 8200;
-const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
-const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
+const MYTHRA_SESSION_MODE_TOGGLE = "[[MYTHRA_SESSION_MODE_TOGGLE]]";
+const MYTHRA_WEB_SEARCH_TOGGLE = "[[MYTHRA_WEB_SEARCH_TOGGLE]]";
+const LEGACY_OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
+const LEGACY_OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
+const SESSION_MODE_EMBED_STRINGS = [
+  MYTHRA_SESSION_MODE_TOGGLE,
+  LEGACY_OPENKIWI_SESSION_MODE_TOGGLE
+];
+const WEB_SEARCH_EMBED_STRINGS = [MYTHRA_WEB_SEARCH_TOGGLE, LEGACY_OPENKIWI_WEB_SEARCH_TOGGLE];
+const ALL_EMBED_STRIP_STRINGS = [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS];
 function ok$1() {
 }
 function unreachable() {
@@ -33250,16 +33325,29 @@ function WebSearchMessageEmbed({ webSearch, onWebSearchChange, disabled }) {
     }
   );
 }
+function textHasAnyEmbedToken(text2) {
+  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text2.includes(t));
+}
+function findNextEmbed(rest) {
+  let best = null;
+  for (const s of SESSION_MODE_EMBED_STRINGS) {
+    const i = rest.indexOf(s);
+    if (i >= 0 && (!best || i < best.i)) best = { i, len: s.length, kind: "session" };
+  }
+  for (const s of WEB_SEARCH_EMBED_STRINGS) {
+    const i = rest.indexOf(s);
+    if (i >= 0 && (!best || i < best.i)) best = { i, len: s.length, kind: "web" };
+  }
+  return best;
+}
 function parseAssistantEmbeds(text2) {
-  if (!text2.includes(OPENKIWI_SESSION_MODE_TOGGLE) && !text2.includes(OPENKIWI_WEB_SEARCH_TOGGLE)) {
+  if (!textHasAnyEmbedToken(text2)) {
     return [{ type: "md", text: text2 }];
   }
   const out = [];
   let rest = text2;
   while (rest.length > 0) {
-    const iSession = rest.indexOf(OPENKIWI_SESSION_MODE_TOGGLE);
-    const iWeb = rest.indexOf(OPENKIWI_WEB_SEARCH_TOGGLE);
-    const next = iSession < 0 && iWeb < 0 ? null : iSession < 0 ? { i: iWeb, kind: "web", len: OPENKIWI_WEB_SEARCH_TOGGLE.length } : iWeb < 0 ? { i: iSession, kind: "session", len: OPENKIWI_SESSION_MODE_TOGGLE.length } : iSession <= iWeb ? { i: iSession, kind: "session", len: OPENKIWI_SESSION_MODE_TOGGLE.length } : { i: iWeb, kind: "web", len: OPENKIWI_WEB_SEARCH_TOGGLE.length };
+    const next = findNextEmbed(rest);
     if (!next) {
       out.push({ type: "md", text: rest });
       break;
@@ -33315,7 +33403,11 @@ function AssistantMessageContent({
   }) });
 }
 function getCopyableMessageText(content2) {
-  return content2.replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, "").replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, "").trim();
+  let s = content2;
+  for (const token of ALL_EMBED_STRIP_STRINGS) {
+    s = s.replaceAll(token, "");
+  }
+  return s.trim();
 }
 function formatTokensShort(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
@@ -33639,6 +33731,7 @@ function ChatPanel({
   selectedProviderLabel,
   selectedModel,
   sessionMode,
+  isWizard = false,
   modelCatalogSettled,
   providerConnected,
   isStreaming,
@@ -33663,6 +33756,7 @@ function ChatPanel({
 }) {
   const scrollRef = reactExports.useRef(null);
   const innerRef = reactExports.useRef(null);
+  const bottomRef = reactExports.useRef(null);
   const textareaRef = reactExports.useRef(null);
   const copyToastTimerRef = reactExports.useRef(null);
   const [copiedMessageId, setCopiedMessageId] = reactExports.useState(null);
@@ -33674,6 +33768,13 @@ function ChatPanel({
     return Math.max(rough, lastTokenUsage.totalTokens);
   }, [attachments, chatMessages, input, lastTokenUsage]);
   const userNearBottomRef = reactExports.useRef(true);
+  const scrollToBottom = reactExports.useCallback(() => {
+    const node2 = scrollRef.current;
+    const bottom = bottomRef.current;
+    if (!node2 || !bottom) return;
+    bottom.scrollIntoView({ block: "end" });
+    node2.scrollTop = node2.scrollHeight;
+  }, []);
   const clampAndMaybeStickToBottom = reactExports.useCallback(() => {
     const node2 = scrollRef.current;
     if (!node2) return;
@@ -33682,16 +33783,19 @@ function ChatPanel({
       node2.scrollTop = max;
     }
     if (userNearBottomRef.current) {
-      node2.scrollTop = node2.scrollHeight;
+      scrollToBottom();
     }
-  }, []);
-  const afterCollapsibleLayout = reactExports.useCallback(() => {
+  }, [scrollToBottom]);
+  const afterScrollLayout = reactExports.useCallback(() => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         clampAndMaybeStickToBottom();
       });
     });
   }, [clampAndMaybeStickToBottom]);
+  const afterCollapsibleLayout = reactExports.useCallback(() => {
+    afterScrollLayout();
+  }, [afterScrollLayout]);
   const handleScroll = reactExports.useCallback(() => {
     const n = scrollRef.current;
     if (!n) return;
@@ -33722,16 +33826,15 @@ function ChatPanel({
     if (!node2) return;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const n = scrollRef.current;
-        if (!n) return;
-        n.scrollTop = n.scrollHeight;
+        scrollToBottom();
         userNearBottomRef.current = true;
       });
     });
-  }, [timeline, isStreaming]);
+  }, [scrollToBottom, timeline, isStreaming]);
   reactExports.useEffect(() => {
     const inner = innerRef.current;
-    if (!inner) return;
+    const scroll = scrollRef.current;
+    if (!inner || !scroll) return;
     let raf = 0;
     let debounce;
     const scheduleClamp = () => {
@@ -33758,6 +33861,7 @@ function ChatPanel({
       scheduleClamp();
     });
     ro.observe(inner);
+    ro.observe(scroll);
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
@@ -33826,7 +33930,7 @@ function ChatPanel({
     }
     setTerminalOpen((v2) => !v2);
   }, [hasWorkspace, showWorkspaceGateNotice]);
-  const isTalk = sessionMode === "talk";
+  const isTalk = !isWizard && sessionMode === "talk";
   const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
@@ -33834,7 +33938,7 @@ function ChatPanel({
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-left", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-titles", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle ${sessionModeToggleDisabled ? "is-disabled" : ""}`, children: [
+          isWizard ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-panel__wizard-pill", title: "Wizards always work with tools and their own workspace", children: "Wizard" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle ${sessionModeToggleDisabled ? "is-disabled" : ""}`, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "button",
               {
@@ -33912,8 +34016,8 @@ function ChatPanel({
           /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
         ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isTalk ? "Start a conversation" : "Ready to build" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
       ] }) : null,
       renderChunks.map((chunk) => {
         if (chunk.type === "activity-group") {
@@ -33972,17 +34076,13 @@ function ChatPanel({
                   webSearch,
                   webSearchDisabled
                 }
-              ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-                ChatMarkdown,
-                {
-                  text: message.content.replaceAll(OPENKIWI_SESSION_MODE_TOGGLE, "").replaceAll(OPENKIWI_WEB_SEARCH_TOGGLE, "")
-                }
-              ) }) : null
+              ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
             ]
           },
           entry.id
         );
-      })
+      }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
     ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
@@ -34773,17 +34873,14 @@ function Ve({ defaultValue: e, defaultLanguage: r, defaultPath: n, value: t, lan
 var fe = Ve;
 var de = reactExports.memo(fe);
 var Ft = de;
-function OpenKiwiMark({ className }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `openkiwi-mark${className ? ` ${className}` : ""}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "openkiwi-mark__open", children: "Open" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "openkiwi-mark__kiwi", children: "Kiwi" })
-  ] });
+function MythraMark({ className }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `mythra-mark${className ? ` ${className}` : ""}`, children: "Mythra" });
 }
 function EditorPanel({ filePath, content: content2, imagePreview, dirty, onChange, onSave }) {
   if (!filePath) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "workspace-empty", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-empty__eyebrow", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(OpenKiwiMark, {}),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(MythraMark, {}),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "workspace-empty__eyebrow-suffix", children: "· Console" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Open a workspace, pick a file, then wire your model settings on the right." }),
@@ -35196,84 +35293,23 @@ function patchSystemPromptInSettings(settings, v2) {
     }
   };
 }
-const dialogTransition$1 = { duration: 0.18, ease: "easeOut" };
-function AppConfirmDialog({
-  open,
-  kicker,
-  title,
-  description,
-  confirmLabel,
-  cancelLabel = "Cancel",
-  confirmVariant = "primary",
-  onConfirm,
-  onCancel
-}) {
-  const uid2 = reactExports.useId();
-  const titleId = `${uid2}-title`;
-  const descId = `${uid2}-desc`;
-  reactExports.useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
-  return reactDomExports.createPortal(
-    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      motion.div,
-      {
-        animate: { opacity: 1 },
-        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
-        exit: { opacity: 0 },
-        initial: { opacity: 0 },
-        role: "presentation",
-        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          motion.div,
-          {
-            animate: { opacity: 1, scale: 1, y: 0 },
-            "aria-describedby": descId,
-            "aria-labelledby": titleId,
-            "aria-modal": "true",
-            className: "app-dialog",
-            exit: { opacity: 0, scale: 0.98, y: 8 },
-            initial: { opacity: 0, scale: 0.98, y: 8 },
-            role: "dialog",
-            transition: dialogTransition$1,
-            children: [
-              kicker ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: kicker }) : null,
-              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: titleId, children: title }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descId, children: description }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: onCancel, type: "button", children: cancelLabel }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "button",
-                  {
-                    className: `btn ${confirmVariant === "danger" ? "btn--danger" : "btn--primary"}`,
-                    onClick: onConfirm,
-                    type: "button",
-                    children: confirmLabel
-                  }
-                )
-              ] })
-            ]
-          }
-        )
-      }
-    ) : null }),
-    document.body
-  );
-}
 const uid$1 = () => Math.random().toString(36).slice(2, 11);
 function nextPresetName(list2) {
   return `Preset ${list2.length + 1}`;
 }
-function buttonLabel(provider) {
-  if (provider.activePromptPresetId) {
-    const c = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
-    if (c) return c.name;
-  }
-  return "Draft";
+function savedBaselineForProvider(provider) {
+  if (!provider.activePromptPresetId) return "";
+  const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+  return row?.prompt ?? "";
+}
+function isPromptDirty(provider) {
+  return provider.systemPrompt !== savedBaselineForProvider(provider);
+}
+function presetBarLabel(provider) {
+  if (isPromptDirty(provider)) return "Draft";
+  if (!provider.activePromptPresetId) return "Empty";
+  const row = provider.promptPresets.find((x) => x.id === provider.activePromptPresetId);
+  return row?.name ?? "Empty";
 }
 function PromptPresetMenu({ provider, onPatch }) {
   const [mainOpen, setMainOpen] = reactExports.useState(false);
@@ -35368,9 +35404,6 @@ function PromptPresetMenu({ provider, onPatch }) {
     }
     openNameForNewPreset();
   };
-  const saveCopyAsNew = () => {
-    openNameForNewPreset();
-  };
   const beginDeletePreset = (id2, name2) => {
     const payload = { id: id2, name: name2 };
     deleteTargetRef.current = payload;
@@ -35418,22 +35451,48 @@ function PromptPresetMenu({ provider, onPatch }) {
     setRenamingId(null);
   };
   const sortedPresets = [...provider.promptPresets].sort((a, b) => b.updatedAt - a.updatedAt);
+  const dirty = isPromptDirty(provider);
+  const showQuickSave = dirty && !nameForNewOpen;
+  const runQuickSave = () => {
+    if (provider.activePromptPresetId) {
+      savePresetFromEditor();
+      setMainOpen(false);
+      return;
+    }
+    setMainOpen(true);
+    openNameForNewPreset();
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu", ref: rootRef, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          "aria-expanded": mainOpen,
-          "aria-haspopup": "listbox",
-          className: "prompt-preset-menu__button",
-          onClick: () => setMainOpen((o) => !o),
-          type: "button",
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-text", children: buttonLabel(provider) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-caret", "aria-hidden": true, children: mainOpen ? "▲" : "▼" })
-          ]
-        }
-      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__bar", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            "aria-expanded": mainOpen,
+            "aria-haspopup": "listbox",
+            className: "prompt-preset-menu__button",
+            onClick: () => setMainOpen((o) => !o),
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-text", children: presetBarLabel(provider) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "prompt-preset-menu__button-caret", "aria-hidden": true, children: mainOpen ? "▲" : "▼" })
+            ]
+          }
+        ),
+        showQuickSave ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            "aria-label": provider.activePromptPresetId ? "Save changes to the active preset" : "Save as a new preset",
+            className: "prompt-preset-menu__quick-save",
+            onClick: (e) => {
+              e.stopPropagation();
+              runQuickSave();
+            },
+            type: "button",
+            children: "Save"
+          }
+        ) : null
+      ] }),
       mainOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__dropdown", role: "listbox", children: nameForNewOpen ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__name-wizard", onKeyDown: (e) => e.stopPropagation(), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__name-wizard-title", children: "Name this preset" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -35490,7 +35549,6 @@ function PromptPresetMenu({ provider, onPatch }) {
           }
         ),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "prompt-preset-menu__item", onClick: openNameForNewPreset, type: "button", children: "Save as new…" }),
-        provider.activePromptPresetId ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "prompt-preset-menu__item", onClick: saveCopyAsNew, type: "button", children: "Save copy as new…" }) : null,
         sortedPresets.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prompt-preset-menu__flyout-sep", role: "separator" }),
           sortedPresets.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt-preset-menu__flyout-row", children: [
@@ -35590,7 +35648,7 @@ function PromptPresetMenu({ provider, onPatch }) {
     )
   ] });
 }
-const providerOptions$1 = [
+const providerOptions$3 = [
   { value: "lmstudio", label: "LM Studio" },
   { value: "openrouter", label: "OpenRouter" }
 ];
@@ -35599,13 +35657,11 @@ const searchProviderOptions = [
   { value: "tavily", label: "Tavily" },
   { value: "brave", label: "Brave Search" }
 ];
-const HEADER_SAVE_ACK_MS = 1500;
 function SettingsPanel({
   settings,
   modelOptions,
   statusMessage,
   onChange,
-  onSave,
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
@@ -35613,16 +35669,8 @@ function SettingsPanel({
   onOpenSystemPromptModal,
   focusSearchSettingsKey = 0
 }) {
-  const [headerSaveAck, setHeaderSaveAck] = reactExports.useState(false);
   const [themeSectionExpanded, setThemeSectionExpanded] = reactExports.useState(false);
-  const saveAckTimerRef = reactExports.useRef(null);
   const searchSectionRef = reactExports.useRef(null);
-  reactExports.useEffect(
-    () => () => {
-      if (saveAckTimerRef.current) clearTimeout(saveAckTimerRef.current);
-    },
-    []
-  );
   reactExports.useEffect(() => {
     if (focusSearchSettingsKey <= 0) return;
     const el = searchSectionRef.current;
@@ -35666,42 +35714,11 @@ function SettingsPanel({
     onChange(next);
     if (persist) void onPresetPersist(next);
   };
-  const onHeaderSave = async () => {
-    if (saveAckTimerRef.current) {
-      clearTimeout(saveAckTimerRef.current);
-      saveAckTimerRef.current = null;
-    }
-    try {
-      await onSave();
-      setHeaderSaveAck(true);
-      saveAckTimerRef.current = setTimeout(() => {
-        setHeaderSaveAck(false);
-        saveAckTimerRef.current = null;
-      }, HEADER_SAVE_ACK_MS);
-    } catch {
-      setHeaderSaveAck(false);
-    }
-  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel settings-panel", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-panel__header", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "settings-panel__title", children: "Settings" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "settings-panel__subtitle", children: "Provider, tools, and preferences" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          "aria-live": "polite",
-          className: `btn btn--secondary settings-panel__save${headerSaveAck ? " settings-panel__save--ack" : ""}`,
-          onClick: onHeaderSave,
-          type: "button",
-          children: headerSaveAck ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, className: "settings-panel__save-check", children: "✓" }),
-            " Saved"
-          ] }) : "Save"
-        }
-      )
-    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-panel__header", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "settings-panel__title", children: "Settings" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "settings-panel__subtitle", children: "Provider, tools, and preferences" })
+    ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -35711,8 +35728,8 @@ function SettingsPanel({
             {
               className: "settings-info-button",
               type: "button",
-              "aria-label": "About OpenRouter, LM Studio, and OpenKiwi",
-              title: "OpenRouter & LM Studio in OpenKiwi",
+              "aria-label": "About OpenRouter, LM Studio, and Mythra",
+              title: "OpenRouter & LM Studio in Mythra",
               onClick: onOpenConnectionHelp,
               children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
@@ -35727,7 +35744,7 @@ function SettingsPanel({
             AppSelect,
             {
               ariaLabelledBy: "settings-connection-provider-label",
-              options: providerOptions$1,
+              options: providerOptions$3,
               value: settings.selectedProvider,
               onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
             }
@@ -35893,7 +35910,7 @@ function SettingsPanel({
         activeSearchProvider !== "duckduckgo" && !activeSearchHasKey ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint inline-hint--warning", children: [
           "Add and save an API key for ",
           activeSearchProvider === "tavily" ? "Tavily" : "Brave Search",
-          ", or OpenKiwi will fall back to DuckDuckGo instant answers."
+          ", or Mythra will fall back to DuckDuckGo instant answers."
         ] }) : null
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? "is-expanded" : ""}`, children: [
@@ -36110,11 +36127,7 @@ function SystemPromptModal({ open, value, onChange, onClose }) {
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Settings" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "system-prompt-modal-title", children: "System prompt" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "system-prompt-modal__hint", id: "system-prompt-modal-hint", children: [
-              "Changes apply in memory to the active provider. Use ",
-              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Save" }),
-              " in Settings to write your profile to disk."
-            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "system-prompt-modal__hint", id: "system-prompt-modal-hint", children: "Changes apply to the active provider and are saved automatically after you edit." }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "textarea",
               {
@@ -36133,8 +36146,448 @@ function SystemPromptModal({ open, value, onChange, onClose }) {
     }
   ) : null });
 }
+const providerOptions$2 = [
+  { value: "lmstudio", label: "LM Studio" },
+  { value: "openrouter", label: "OpenRouter" }
+];
+function WizardSettingsPanel({
+  wizard,
+  settings,
+  modelOptions,
+  statusMessage,
+  onChange,
+  onOpenDocument,
+  onRefreshModels
+}) {
+  const [localModels, setLocalModels] = reactExports.useState(modelOptions);
+  reactExports.useEffect(() => {
+    setLocalModels(modelOptions);
+  }, [modelOptions]);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const docs2 = await window.electronAPI.listWizardDocuments(wizard.workspaceRoot);
+        if (cancelled) return;
+        const prevKey = wizard.documents.map((d) => d.path).join("\0");
+        const nextKey = docs2.map((d) => d.path).join("\0");
+        if (prevKey !== nextKey) {
+          onChange({ ...wizard, documents: docs2 });
+        }
+      } catch {
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wizard.workspaceRoot]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel settings-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-panel__header", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "settings-panel__title", children: "Wizard" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "settings-panel__subtitle", children: "Model, memory, and private workspace" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Identity" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Name" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => onChange({ ...wizard, name: e.target.value }), value: wizard.name })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Workspace" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: wizard.workspaceRoot })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "This local folder belongs to this Wizard. Cloud-synced folders are not used." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Model" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Provider" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            AppSelect,
+            {
+              onChange: async (provider) => {
+                const list2 = await onRefreshModels(provider);
+                setLocalModels(list2);
+                onChange({ ...wizard, provider, model: list2[0]?.id ?? "" });
+              },
+              options: providerOptions$2,
+              value: wizard.provider
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Model" }),
+          localModels.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ModelSearch,
+            {
+              favoriteIds: settings.ui.favoriteModels?.[wizard.provider] ?? defaultSettings.ui.favoriteModels[wizard.provider],
+              models: localModels,
+              onChange: (model) => onChange({ ...wizard, model }),
+              onToggleFavorite: () => void 0,
+              value: wizard.model
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: wizard.model || "No model selected" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Agent autonomy" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row toggle-row--warning ${wizard.fullAccess ? "is-active" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Full access mode" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              checked: Boolean(wizard.fullAccess),
+              onChange: (e) => onChange({ ...wizard, fullAccess: e.target.checked }),
+              type: "checkbox"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: "When on, this Wizard can write, delete files, and run commands without per-action approval — same idea as Settings → Agent autonomy → Full access for normal chats." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Core Documents" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-list", children: wizard.documents.map((doc) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-doc-list__item", onClick: () => onOpenDocument(doc.path), type: "button", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
+        ] }, doc.path)) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "System Prompt" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Prompt" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("textarea", { onChange: (e) => onChange({ ...wizard, systemPrompt: e.target.value }), rows: 10, value: wizard.systemPrompt })
+        ] })
+      ] }),
+      statusMessage ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-line", children: statusMessage }) : null
+    ] })
+  ] });
+}
+function sanitizeWizardFolderSegment(name2) {
+  return name2.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "Mythra Wizard";
+}
+const providerOptions$1 = [
+  { value: "lmstudio", label: "LM Studio" },
+  { value: "openrouter", label: "OpenRouter" }
+];
+const WIZARD_SETUP_DEFAULT_MODEL_ID = "google/gemini-3.1-flash-lite-preview";
+const ONBOARDING_SYSTEM_TAIL = "\n\nSoul.md and memory.md were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n";
+const defaultPrompt = (name2) => `You are ${name2 || "this Wizard"}, a persistent Mythra Wizard.
+
+Use your private workspace as your long-term home base:
+- soul.md defines your identity, style, values, and boundaries.
+- tools.md defines tool preferences, workflows, and project conventions.
+- memory.md stores durable facts the user wants you to remember.
+- corrections.md stores mistakes, corrections, and lessons learned.
+
+Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
+
+At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.`;
+function previewWizardWorkspacePath(platform, parentFolder, wizardDisplayName) {
+  const segment = sanitizeWizardFolderSegment(wizardDisplayName);
+  const base = parentFolder.trim().replace(/[/\\]+$/, "");
+  if (!base) return segment;
+  const sep = platform === "win32" ? "\\" : "/";
+  return `${base}${sep}${segment}`;
+}
+function WizardSetupModal({
+  open,
+  settings,
+  onClose,
+  onCreate,
+  onListModels,
+  onPersistWizardProjectsParentFolder
+}) {
+  const [name2, setName] = reactExports.useState("");
+  const [provider, setProvider] = reactExports.useState("openrouter");
+  const [model, setModel] = reactExports.useState("");
+  const [modelOptions, setModelOptions] = reactExports.useState([]);
+  const [wizardProjectsParentFolder, setWizardProjectsParentFolder] = reactExports.useState("");
+  const [lastValidWorkspaceRoot, setLastValidWorkspaceRoot] = reactExports.useState(null);
+  const [customDocsRaw, setCustomDocsRaw] = reactExports.useState("");
+  const [prompt, setPrompt] = reactExports.useState(defaultPrompt(""));
+  const [promptDirty, setPromptDirty] = reactExports.useState(false);
+  const [loadingModels, setLoadingModels] = reactExports.useState(false);
+  const [creating, setCreating] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState("");
+  const [setupStep, setSetupStep] = reactExports.useState(1);
+  const [personalityNotes, setPersonalityNotes] = reactExports.useState("");
+  const [memoryNotes, setMemoryNotes] = reactExports.useState("");
+  reactExports.useEffect(() => {
+    if (!open) return;
+    setName("");
+    setProvider("openrouter");
+    setModel("");
+    setModelOptions([]);
+    setWizardProjectsParentFolder(settings?.ui?.wizardProjectsParentFolder?.trim() ?? "");
+    setCustomDocsRaw("");
+    setPrompt(defaultPrompt(""));
+    setPromptDirty(false);
+    setSetupStep(1);
+    setPersonalityNotes("");
+    setMemoryNotes("");
+    setError("");
+    void window.electronAPI.getLastValidWorkspaceRoot().then(setLastValidWorkspaceRoot);
+  }, [open]);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const trimmed = name2.trim();
+    if (!promptDirty) setPrompt(defaultPrompt(trimmed));
+  }, [name2, open, promptDirty]);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoadingModels(true);
+    void onListModels(provider).then((list2) => {
+      if (cancelled) return;
+      setModelOptions(list2);
+      setModel((current) => {
+        if (current && list2.some((item) => item.id === current)) return current;
+        const preferred = list2.find((item) => item.id === WIZARD_SETUP_DEFAULT_MODEL_ID);
+        return preferred?.id ?? list2[0]?.id ?? "";
+      });
+    }).catch((e) => {
+      if (cancelled) return;
+      setModelOptions([]);
+      setModel("");
+      setError(e instanceof Error ? e.message : "Could not load models.");
+    }).finally(() => {
+      if (!cancelled) setLoadingModels(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [onListModels, open, provider]);
+  const customDocuments = reactExports.useMemo(
+    () => customDocsRaw.split("\n").map((line) => line.trim()).filter(Boolean),
+    [customDocsRaw]
+  );
+  const workspacePreview = reactExports.useMemo(
+    () => previewWizardWorkspacePath(window.electronAPI.platform, wizardProjectsParentFolder, name2),
+    [wizardProjectsParentFolder, name2]
+  );
+  const canCreate = Boolean(name2.trim() && model.trim() && wizardProjectsParentFolder.trim());
+  const chooseProjectsFolder = async () => {
+    setError("");
+    const hint = wizardProjectsParentFolder.trim() || lastValidWorkspaceRoot || void 0;
+    const picked = await window.electronAPI.chooseWizardProjectsFolder(hint);
+    if (!picked) return;
+    setWizardProjectsParentFolder(picked);
+    try {
+      await onPersistWizardProjectsParentFolder(picked);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save Wizards folder preference.");
+    }
+  };
+  const submit = async () => {
+    if (setupStep !== 2 || !canCreate || creating) return;
+    setCreating(true);
+    setError("");
+    const seeded = personalityNotes.trim().length > 0 || memoryNotes.trim().length > 0;
+    const systemPromptFinal = seeded ? `${prompt.trimEnd()}${ONBOARDING_SYSTEM_TAIL}` : prompt;
+    try {
+      await onCreate({
+        name: name2.trim(),
+        provider,
+        model,
+        systemPrompt: systemPromptFinal,
+        workspaceRoot: wizardProjectsParentFolder.trim(),
+        customDocuments,
+        wizardPersonality: personalityNotes.trim() || void 0,
+        wizardMemory: memoryNotes.trim() || void 0
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create Wizard.");
+    } finally {
+      setCreating(false);
+    }
+  };
+  const goToPersonalityStep = () => {
+    if (!canCreate) return;
+    setError("");
+    setSetupStep(2);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          "aria-modal": "true",
+          animate: { opacity: 1, scale: 1, y: 0 },
+          className: "app-dialog app-dialog--scrollable wizard-setup",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          role: "dialog",
+          transition: { duration: 0.18, ease: "easeOut" },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "New Wizard" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__steps", role: "tablist", "aria-label": "Wizard setup steps", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: setupStep === 1 ? "is-active" : "", children: "1 Basics" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, children: "→" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: setupStep === 2 ? "is-active" : "", children: "2 Personality & memory" })
+            ] }),
+            setupStep === 1 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Create a Wizard" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "A Wizard is a named AI with its own model, local workspace, memory documents, and system prompt." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__grid", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Name" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => setName(e.target.value), placeholder: "Luna", value: name2 })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Provider" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(AppSelect, { options: providerOptions$1, onChange: setProvider, value: provider, portalDropdown: true })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field wizard-setup__wide", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Model" }),
+                  modelOptions.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    ModelSearch,
+                    {
+                      favoriteIds: settings?.ui.favoriteModels?.[provider] ?? defaultSettings.ui.favoriteModels[provider],
+                      models: modelOptions,
+                      onChange: (next) => setModel(next),
+                      onToggleFavorite: () => void 0,
+                      value: model,
+                      portalDropdown: true
+                    }
+                  ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      disabled: true,
+                      placeholder: loadingModels ? "Loading models..." : "No models available",
+                      value: "",
+                      readOnly: true
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__wide wizard-setup__choice-block", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Wizards folder" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-setup__workspace-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => void chooseProjectsFolder(), type: "button", children: "Choose folder…" }) })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Pick one folder that will hold every Wizard's workspace. Each Wizard is created as a subfolder named from its title (sanitized). Two Wizards cannot use the same folder name here unless you choose a different Wizards folder later." }),
+                  wizardProjectsParentFolder ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Parent:" }),
+                    " ",
+                    wizardProjectsParentFolder
+                  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Choose a local folder (cloud-synced paths are blocked)." }),
+                  workspacePreview ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "This Wizard:" }),
+                    " ",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: workspacePreview })
+                  ] }) : null
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field wizard-setup__wide", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Custom Documents" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "textarea",
+                    {
+                      onChange: (e) => setCustomDocsRaw(e.target.value),
+                      placeholder: "Optional. One Markdown document per line.\nprojects.md\npreferences.md",
+                      rows: 3,
+                      value: customDocsRaw
+                    }
+                  )
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__docs", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Core documents created automatically" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "tools.md" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "memory.md" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "corrections.md" })
+                ] })
+              ] })
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Personality & memory" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                "Describe how this Wizard should behave and what it should remember long-term. Your answers seed",
+                " ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
+                " and ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "memory.md" }),
+                " in its workspace. You can refine them anytime in the editor or ask the Wizard to update them in chat (Agent mode)."
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__grid", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field wizard-setup__wide", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Personality & style" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "textarea",
+                    {
+                      onChange: (e) => setPersonalityNotes(e.target.value),
+                      placeholder: "Tone, values, boundaries, how formal or playful to be, topics to emphasize or avoid…",
+                      rows: 5,
+                      value: personalityNotes
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field wizard-setup__wide", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Things to remember" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "textarea",
+                    {
+                      onChange: (e) => setMemoryNotes(e.target.value),
+                      placeholder: "Names, preferences, ongoing projects, facts you want kept across sessions…",
+                      rows: 5,
+                      value: memoryNotes
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field wizard-setup__wide", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "System Prompt" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "textarea",
+                    {
+                      onChange: (e) => {
+                        setPromptDirty(true);
+                        setPrompt(e.target.value);
+                      },
+                      rows: 8,
+                      value: prompt
+                    }
+                  )
+                ] })
+              ] })
+            ] }),
+            error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: error }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", disabled: creating, onClick: onClose, type: "button", children: "Cancel" }),
+              setupStep === 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !canCreate || creating, onClick: goToPersonalityStep, type: "button", children: "Next" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", disabled: creating, onClick: () => setSetupStep(1), type: "button", children: "Back" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !canCreate || creating, onClick: () => void submit(), type: "button", children: creating ? "Creating..." : "Create Wizard" })
+              ] })
+            ] })
+          ]
+        }
+      )
+    }
+  ) : null });
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+const pathsEqual = (a, b) => a.replace(/\\/g, "/").replace(/\/+$/, "") === b.replace(/\\/g, "/").replace(/\/+$/, "");
+function workspaceAbsolutePathPrefixRemap(oldRoot, newRoot) {
+  const norm = (s) => s.replace(/\\/g, "/");
+  const oldBase = norm(oldRoot).replace(/\/+$/, "");
+  const newBase = norm(newRoot).replace(/\/+$/, "");
+  const oldLen = oldBase.length;
+  return (p) => {
+    const pn = norm(p);
+    const prefix = `${oldBase}/`;
+    if (pn === oldBase || pn.startsWith(prefix)) {
+      const suffix = pn === oldBase ? "" : pn.slice(oldLen);
+      return `${newBase}${suffix}`;
+    }
+    return p;
+  };
+}
 const isEmbeddingModel = (modelId) => /embed|embedding/i.test(modelId);
 const normalizeProviderBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
@@ -36169,6 +36622,81 @@ const resolveChatTitle = (messages, titleOverride) => {
   const t = titleOverride?.trim();
   if (t) return t;
   return chatTitle(messages);
+};
+const sessionTitle = (messages, fallback = "New session") => {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return fallback;
+  const text2 = first.content.trim();
+  return text2.length > 42 ? `${text2.slice(0, 42)}...` : text2 || fallback;
+};
+const buildWizardSystemPrompt = (wizard) => `${wizard.systemPrompt}
+
+Mythra Wizard runtime:
+- You are currently inside your private Wizard workspace: ${wizard.workspaceRoot}
+- Always use this workspace for file reads, memory, and edits unless the user explicitly tells you otherwise.
+- At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.
+- When asked about your identity, memory, tools, or corrections, read the matching Markdown file before answering.
+- Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
+const buildWizardDocsContext = async (wizard) => {
+  const coreDocs = wizard.documents.filter((doc) => doc.core);
+  if (coreDocs.length === 0) return { message: null, loaded: [] };
+  const loaded = [];
+  const parts = await Promise.all(
+    coreDocs.map(async (doc) => {
+      const name2 = doc.path.split(/[\\/]/).pop() ?? doc.label;
+      try {
+        const file = await window.electronAPI.openFile(wizard.workspaceRoot, doc.path);
+        loaded.push({ name: name2, ok: true });
+        return `## ${name2}
+${file.content}`;
+      } catch {
+        loaded.push({ name: name2, ok: false });
+        return `## ${name2}
+[Could not read this document.]`;
+      }
+    })
+  );
+  return {
+    loaded,
+    message: {
+      id: `wizard-docs-${Date.now()}`,
+      role: "system",
+      content: [
+        "Wizard core workspace documents are injected below. Treat these as current private context for this Wizard session.",
+        ...parts
+      ].join("\n\n"),
+      status: "done"
+    }
+  };
+};
+const diffPromptLines = (before, after) => {
+  const a = (before || "[empty]").split("\n");
+  const b = (after || "[empty]").split("\n");
+  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i2 = a.length - 1; i2 >= 0; i2 -= 1) {
+    for (let j2 = b.length - 1; j2 >= 0; j2 -= 1) {
+      dp[i2][j2] = a[i2] === b[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+    }
+  }
+  const left = [];
+  const right = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      left.push({ text: a[i], kind: "same" });
+      right.push({ text: b[j], kind: "same" });
+      i += 1;
+      j += 1;
+    } else if (j < b.length && (i >= a.length || dp[i][j + 1] >= dp[i + 1][j])) {
+      right.push({ text: b[j], kind: "add" });
+      j += 1;
+    } else if (i < a.length) {
+      left.push({ text: a[i], kind: "remove" });
+      i += 1;
+    }
+  }
+  return { left, right };
 };
 const chatFingerprint = (messages, timeline) => JSON.stringify({ messages, timeline });
 const formatRelativeDate = (ts) => {
@@ -36225,16 +36753,31 @@ function App() {
   const [inlineTerminalJobId, setInlineTerminalJobId] = reactExports.useState();
   const inlineTerminalJobIdRef = reactExports.useRef(void 0);
   const [inspectorTab, setInspectorTab] = reactExports.useState("settings");
+  const [settingsInspectorScope, setSettingsInspectorScope] = reactExports.useState("general");
+  const settingsInspectorWizardIdRef = reactExports.useRef(void 0);
+  const lastInspectorTabRef = reactExports.useRef(inspectorTab);
   const [workspaceChanges, setWorkspaceChanges] = reactExports.useState(null);
   const [changesLoading, setChangesLoading] = reactExports.useState(false);
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
+  const [showNewMenu, setShowNewMenu] = reactExports.useState(false);
+  const [showWizardSetup, setShowWizardSetup] = reactExports.useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
+  const [wizardDraft, setWizardDraft] = reactExports.useState(null);
+  const [wizardDeleteTarget, setWizardDeleteTarget] = reactExports.useState(null);
+  const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
+  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
+  const [wizardPromptApproval, setWizardPromptApproval] = reactExports.useState(null);
+  const [toolApprovalRequest, setToolApprovalRequest] = reactExports.useState(null);
+  const [expandedWizardIds, setExpandedWizardIds] = reactExports.useState(/* @__PURE__ */ new Set());
   const saveTimerRef = reactExports.useRef(null);
+  const settingsAutosaveTimerRef = reactExports.useRef(null);
+  const wizardAutosaveTimerRef = reactExports.useRef(null);
+  const wizardDraftRef = reactExports.useRef(null);
   const lastContentFingerprintRef = reactExports.useRef(null);
   const skipNextRenameCommitRef = reactExports.useRef(false);
   activeChatIdRef.current = activeChatId;
@@ -36319,11 +36862,61 @@ function App() {
     () => activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0,
     [activeChatId, chatList]
   );
+  const activeWizardMeta = reactExports.useMemo(() => {
+    if (!activeChatMeta) return void 0;
+    if (activeChatMeta.kind === "wizard") return activeChatMeta;
+    if (activeChatMeta.kind === "wizard-session" && activeChatMeta.wizardId) {
+      return chatList.find((c) => c.id === activeChatMeta.wizardId && c.kind === "wizard");
+    }
+    return void 0;
+  }, [activeChatMeta, chatList]);
+  const activeWizard = activeWizardMeta?.wizard ?? null;
+  const normalChatList = reactExports.useMemo(() => chatList.filter((c) => (c.kind ?? "normal") === "normal"), [chatList]);
+  const wizardChatList = reactExports.useMemo(() => chatList.filter((c) => c.kind === "wizard"), [chatList]);
+  const wizardSessionsByWizardId = reactExports.useMemo(() => {
+    const map2 = /* @__PURE__ */ new Map();
+    for (const chat of chatList) {
+      if (chat.kind !== "wizard-session" || !chat.wizardId) continue;
+      const list2 = map2.get(chat.wizardId) ?? [];
+      list2.push(chat);
+      map2.set(chat.wizardId, list2);
+    }
+    return map2;
+  }, [chatList]);
+  reactExports.useEffect(() => {
+    setWizardDraft(activeWizard);
+  }, [activeChatId, activeWizard]);
+  reactExports.useEffect(() => {
+    const id2 = activeWizardMeta?.id;
+    if (!id2) {
+      setSettingsInspectorScope("general");
+      settingsInspectorWizardIdRef.current = void 0;
+      return;
+    }
+    const prev = settingsInspectorWizardIdRef.current;
+    if (prev !== id2) {
+      settingsInspectorWizardIdRef.current = id2;
+      if (prev === void 0) setSettingsInspectorScope("wizard");
+    }
+  }, [activeWizardMeta?.id]);
+  reactExports.useEffect(() => {
+    wizardDraftRef.current = wizardDraft;
+  }, [wizardDraft]);
+  reactExports.useEffect(() => {
+    if (wizardAutosaveTimerRef.current) {
+      clearTimeout(wizardAutosaveTimerRef.current);
+      wizardAutosaveTimerRef.current = null;
+    }
+  }, [activeWizardMeta?.id]);
   const effectiveModelOverride = reactExports.useMemo(() => {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
   const chatSessionSubheading = reactExports.useMemo(() => {
+    if (activeWizard) {
+      const session = activeChatMeta?.kind === "wizard-session" ? activeChatMeta.title : "Home";
+      return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
+    }
     if (chatMessages.length === 0) {
       if (newChatModelOverride?.model) {
         return `New conversation · ${formatOverrideLabel(newChatModelOverride, pathLabel)}`;
@@ -36341,7 +36934,7 @@ function App() {
       }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, chatList, chatMessages, newChatModelOverride, pathLabel]);
+  }, [activeChatId, activeChatMeta, chatList, chatMessages, newChatModelOverride, pathLabel]);
   const persistCurrentChat = reactExports.useCallback(
     async (msgs, tl, chatId) => {
       if (msgs.length === 0) return;
@@ -36356,16 +36949,22 @@ function App() {
       const disk = chatId ? await window.electronAPI.loadChat(chatId) : null;
       const nameOverride = disk != null ? disk.titleOverride ?? null : existing?.titleOverride == null || existing.titleOverride === "" ? null : existing.titleOverride;
       const createdAt = disk?.createdAt ?? existing?.createdAt ?? now2;
+      const kind = disk?.kind ?? existing?.kind ?? "normal";
+      const wizard = disk?.wizard ?? existing?.wizard ?? null;
+      const wizardId = disk?.wizardId ?? existing?.wizardId ?? null;
       const chat = {
         id: id2,
-        title: resolveChatTitle(msgs, nameOverride),
+        kind,
+        title: kind === "wizard-session" ? sessionTitle(msgs, nameOverride ?? void 0) : resolveChatTitle(msgs, nameOverride),
         titleOverride: nameOverride == null || nameOverride === "" ? null : nameOverride.trim() || null,
         messages: msgs,
         timeline: tl,
         createdAt,
         updatedAt: now2,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
-        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : newChatModelOverrideRef.current ?? null)
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : newChatModelOverrideRef.current ?? null),
+        wizard,
+        wizardId
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -36528,11 +37127,38 @@ function App() {
     const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
       setSettings(next);
     });
+    const offChatsUpdated = window.electronAPI.onChatsUpdated(() => {
+      void refreshChatList();
+    });
+    const offWizardPromptApproval = window.electronAPI.onWizardPromptApprovalRequest((payload) => {
+      setWizardPromptApproval(payload);
+    });
+    const offToolApproval = window.electronAPI.onToolApprovalRequest((payload) => {
+      setToolApprovalRequest(payload);
+    });
     const offWorkspaceChanged = window.electronAPI.onWorkspaceChanged(
       async ({ root: root2, fileWritten, fileDeleted }) => {
         const latestTree = await window.electronAPI.getWorkspaceTree(root2);
         setWorkspaceTree(latestTree);
         void refreshWorkspaceChanges(root2);
+        const wDraft = wizardDraftRef.current;
+        if (wDraft && pathsEqual(wDraft.workspaceRoot, root2)) {
+          try {
+            const docs2 = await window.electronAPI.listWizardDocuments(root2);
+            const wid = activeWizardMeta?.id;
+            const cur = wizardDraftRef.current;
+            if (wid && cur && pathsEqual(cur.workspaceRoot, root2)) {
+              const full = await window.electronAPI.loadChat(wid);
+              if (full?.kind === "wizard" && full.wizard) {
+                const merged = { ...full.wizard, documents: docs2 };
+                setWizardDraft(merged);
+                wizardDraftRef.current = merged;
+                await window.electronAPI.saveChat({ ...full, wizard: merged, updatedAt: Date.now() });
+              }
+            }
+          } catch {
+          }
+        }
         if (!fileWritten && activeFilePathRef.current) {
           const activeKey = activeFilePathRef.current;
           const buf = buffersRef.current[activeKey];
@@ -36579,9 +37205,12 @@ function App() {
       offError();
       offActivity();
       offSettingsUpdated();
+      offChatsUpdated();
+      offWizardPromptApproval();
+      offToolApproval();
       offWorkspaceChanged();
     };
-  }, [refreshWorkspaceChanges]);
+  }, [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]);
   reactExports.useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
       debouncedSave(chatMessages, chatTimeline, activeChatId);
@@ -36613,6 +37242,10 @@ function App() {
   };
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
+    if (activeWizard) {
+      setSettingsStatus("Wizard workspaces stay attached while their Wizard is selected.");
+      return;
+    }
     void window.electronAPI.detachWorkspace().finally(() => {
       setWorkspaceRoot(void 0);
       setWorkspaceTree([]);
@@ -36621,6 +37254,16 @@ function App() {
       setActiveFilePath(void 0);
       setInlineTerminalLogs((c) => c + "\n[workspace cleared]\n");
     });
+  };
+  const activateWorkspace = async (root2) => {
+    const result = await window.electronAPI.activateWorkspace(root2);
+    setWorkspaceRoot(result.root);
+    setWorkspaceTree(result.tree);
+    setWorkspaceChanges(null);
+    setBuffers({});
+    setActiveFilePath(void 0);
+    void refreshWorkspaceChanges(result.root);
+    return result;
   };
   const openFile = async (target) => {
     if (!workspaceRoot) return;
@@ -36710,7 +37353,43 @@ function App() {
     const saved = await window.electronAPI.saveSettings(next);
     setSettings(saved);
   };
+  const SETTINGS_AUTOSAVE_MS = 450;
+  const WIZARD_AUTOSAVE_MS = 450;
+  const flushSettingsAutosaveTimer = () => {
+    if (settingsAutosaveTimerRef.current) {
+      clearTimeout(settingsAutosaveTimerRef.current);
+      settingsAutosaveTimerRef.current = null;
+    }
+  };
+  const flushWizardAutosaveTimer = () => {
+    if (wizardAutosaveTimerRef.current) {
+      clearTimeout(wizardAutosaveTimerRef.current);
+      wizardAutosaveTimerRef.current = null;
+    }
+  };
+  const handleSettingsPanelChange = reactExports.useCallback((next) => {
+    settingsRef.current = next;
+    setSettings(next);
+    flushSettingsAutosaveTimer();
+    settingsAutosaveTimerRef.current = setTimeout(() => {
+      settingsAutosaveTimerRef.current = null;
+      void (async () => {
+        try {
+          const latest = settingsRef.current;
+          if (!latest) return;
+          const saved = await window.electronAPI.saveSettings(latest);
+          setSettings(saved);
+          settingsRef.current = saved;
+          setSettingsStatus("Saved.");
+        } catch (e) {
+          const m = e instanceof Error ? e.message : "Save failed";
+          setSettingsStatus(`Could not save settings: ${m}`);
+        }
+      })();
+    }, SETTINGS_AUTOSAVE_MS);
+  }, []);
   const handleWebSearchChange = reactExports.useCallback(async (next) => {
+    flushSettingsAutosaveTimer();
     const s = settingsRef.current;
     if (!s) return;
     const updated = { ...s, ui: { ...s.ui, webSearch: next } };
@@ -36719,6 +37398,7 @@ function App() {
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
+      settingsRef.current = saved;
       if (next && needsSearchApiKeyNotice(saved)) {
         setShowWebSearchNotice(true);
       }
@@ -36727,12 +37407,33 @@ function App() {
       setSettingsStatus(`Web search setting not saved: ${m}`);
     }
   }, []);
+  const persistWizardProjectsParentFolder = reactExports.useCallback(async (folder) => {
+    flushSettingsAutosaveTimer();
+    const s = settingsRef.current;
+    if (!s) return;
+    const updated = {
+      ...s,
+      ui: { ...s.ui, wizardProjectsParentFolder: folder }
+    };
+    settingsRef.current = updated;
+    setSettings(updated);
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+      settingsRef.current = saved;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Save failed";
+      setSettingsStatus(`Could not save Wizards folder: ${m}`);
+      throw e;
+    }
+  }, []);
   const jumpToSearchSettings = reactExports.useCallback(() => {
     setShowWebSearchNotice(false);
     setInspectorTab("settings");
     setSearchSettingsFocusKey((key) => key + 1);
   }, []);
   const handleSessionModeToggle = reactExports.useCallback(async () => {
+    flushSettingsAutosaveTimer();
     const s = settingsRef.current;
     if (!s) return;
     const nextMode = s.ui.sessionMode === "talk" ? "agent" : "talk";
@@ -36742,28 +37443,20 @@ function App() {
     try {
       const saved = await window.electronAPI.saveSettings(updated);
       setSettings(saved);
+      settingsRef.current = saved;
     } catch (e) {
       const m = e instanceof Error ? e.message : "Save failed";
       setSettingsStatus(`Session mode not saved: ${m}`);
     }
   }, []);
   const persistAfterPresetAction = async (next) => {
+    flushSettingsAutosaveTimer();
     try {
       await persistSettingsToDisk(next);
+      setSettingsStatus("Saved.");
     } catch (e) {
       const m = e instanceof Error ? e.message : "Save failed";
       setSettingsStatus(`Could not save settings to disk: ${m}`);
-    }
-  };
-  const saveSettings = async () => {
-    if (!settings) return;
-    try {
-      await persistSettingsToDisk(settings);
-      setSettingsStatus("Profile saved.");
-    } catch (e) {
-      const m = e instanceof Error ? e.message : "Save failed";
-      setSettingsStatus(`Profile save failed: ${m}`);
-      throw e;
     }
   };
   const addChatAttachments = async (files) => {
@@ -36799,6 +37492,8 @@ function App() {
     const nextSid = uid();
     setChatSessionId(nextSid);
     chatSessionIdRef.current = nextSid;
+    setSidebarTab("chats");
+    setShowNewMenu(false);
   };
   const loadChat = async (id2) => {
     if (saveTimerRef.current) {
@@ -36807,6 +37502,18 @@ function App() {
     }
     const chat = await window.electronAPI.loadChat(id2);
     if (!chat) return;
+    const parentWizard = chat.kind === "wizard-session" && chat.wizardId ? await window.electronAPI.loadChat(chat.wizardId) : chat.kind === "wizard" ? chat : null;
+    if (parentWizard?.kind === "wizard" && parentWizard.wizard?.workspaceRoot) {
+      try {
+        await activateWorkspace(parentWizard.wizard.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : "Wizard workspace could not be opened.");
+      }
+      setSidebarTab("wizards");
+      setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
+    } else {
+      setSidebarTab("chats");
+    }
     const inFlight = findInFlightByChatId(id2);
     const messages = inFlight?.messages ?? chat.messages;
     const timeline = inFlight?.timeline ?? chat.timeline;
@@ -36838,6 +37545,143 @@ function App() {
     }
     await refreshChatList();
   };
+  const requestDeleteChat = (chat) => {
+    if (chat.kind === "wizard") {
+      setWizardDeleteTarget(chat);
+      return;
+    }
+    if (chat.kind === "wizard-session") {
+      setWizardSessionDeleteTarget(chat);
+      return;
+    }
+    void deleteChat(chat.id);
+  };
+  const clearActiveConversation = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    lastContentFingerprintRef.current = null;
+    setChatMessages([]);
+    setChatTimeline([]);
+    setChatInput("");
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(void 0);
+    setActiveChatId(void 0);
+    activeChatIdRef.current = void 0;
+    setNewChatModelOverride(null);
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
+  };
+  const deleteWizardSession = async (session) => {
+    const wizardId = session.wizardId;
+    const inFlight = findInFlightByChatId(session.id);
+    if (inFlight) {
+      await window.electronAPI.stopChat(inFlight.requestId);
+      inFlightChatsRef.current.delete(inFlight.requestId);
+    }
+    await window.electronAPI.deleteChat(session.id);
+    if (activeChatId === session.id) {
+      const siblings = wizardId ? (wizardSessionsByWizardId.get(wizardId) ?? []).filter((item) => item.id !== session.id) : [];
+      if (siblings[0]) {
+        await loadChat(siblings[0].id);
+      } else {
+        clearActiveConversation();
+        setSidebarTab("wizards");
+        if (wizardId) setExpandedWizardIds((current) => new Set(current).add(wizardId));
+      }
+    }
+    if (editingTitleId === session.id) {
+      setEditingTitleId(null);
+      setEditingTitleDraft("");
+    }
+    await refreshChatList();
+  };
+  const confirmDeleteWizard = async () => {
+    const target = wizardDeleteTarget;
+    if (!target) return;
+    const workspaceRoot2 = target.wizard?.workspaceRoot;
+    const wizardName = target.wizard?.name || target.title;
+    const sessions = wizardSessionsByWizardId.get(target.id) ?? [];
+    const priorActiveId = activeChatId;
+    const idsRemoved = /* @__PURE__ */ new Set([target.id, ...sessions.map((s) => s.id)]);
+    setWizardDeleteTarget(null);
+    for (const cid of idsRemoved) {
+      const inf = findInFlightByChatId(cid);
+      if (inf) {
+        await window.electronAPI.stopChat(inf.requestId);
+        inFlightChatsRef.current.delete(inf.requestId);
+      }
+    }
+    await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
+    await deleteChat(target.id);
+    if (priorActiveId && idsRemoved.has(priorActiveId)) {
+      startNewChat();
+    }
+    if (editingTitleId && idsRemoved.has(editingTitleId)) {
+      setEditingTitleId(null);
+      setEditingTitleDraft("");
+    }
+    setSidebarTab("wizards");
+    setExpandedWizardIds((current) => {
+      const next = new Set(current);
+      next.delete(target.id);
+      return next;
+    });
+    if (workspaceRoot2) {
+      setWorkspaceDeleteTarget({ wizardName, workspaceRoot: workspaceRoot2 });
+    }
+  };
+  const createWizardSession = async (wizardMeta) => {
+    const full = await window.electronAPI.loadChat(wizardMeta.id);
+    if (!full || full.kind !== "wizard" || !full.wizard) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const now2 = Date.now();
+    const assistantMessage = {
+      id: uid(),
+      role: "assistant",
+      content: `New session started for ${full.wizard.name}. I will use the injected core docs and check soul.md, tools.md, memory.md, and corrections.md before my first substantive response.`,
+      status: "done"
+    };
+    const timeline = [{ id: `message-${assistantMessage.id}`, type: "message", message: assistantMessage }];
+    const sessionId = uid();
+    const session = {
+      id: sessionId,
+      kind: "wizard-session",
+      title: "New session",
+      titleOverride: null,
+      messages: [assistantMessage],
+      timeline,
+      createdAt: now2,
+      updatedAt: now2,
+      pinned: false,
+      modelOverride: { provider: full.wizard.provider, model: full.wizard.model },
+      wizardId: full.id
+    };
+    await window.electronAPI.saveChat(session);
+    lastContentFingerprintRef.current = chatFingerprint([assistantMessage], timeline);
+    setChatMessages([assistantMessage]);
+    setChatTimeline(timeline);
+    setChatInput("");
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(void 0);
+    setActiveChatId(sessionId);
+    activeChatIdRef.current = sessionId;
+    setChatSessionId(sessionId);
+    chatSessionIdRef.current = sessionId;
+    setExpandedWizardIds((current) => new Set(current).add(full.id));
+    setSidebarTab("wizards");
+    await refreshChatList();
+    await activateWorkspace(full.wizard.workspaceRoot);
+  };
   const beginRenameChat = (e, id2, currentTitle) => {
     e.stopPropagation();
     skipNextRenameCommitRef.current = false;
@@ -36861,6 +37705,129 @@ function App() {
     },
     [activeChatId, refreshChatList]
   );
+  const listModelsForWizardSetup = reactExports.useCallback(
+    async (provider) => {
+      const s = settingsRef.current;
+      if (!s) return [];
+      return window.electronAPI.listModels(s, provider);
+    },
+    []
+  );
+  const saveActiveWizard = reactExports.useCallback(
+    async (wizard) => {
+      const wizardId = activeWizardMeta?.id;
+      if (!wizardId) return;
+      const full = await window.electronAPI.loadChat(wizardId);
+      if (!full || full.kind !== "wizard" || !full.wizard) return;
+      const previousDiskRoot = full.wizard.workspaceRoot;
+      const profileInput = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
+      let profile;
+      try {
+        profile = await window.electronAPI.syncWizardWorkspaceFolder(profileInput);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSettingsStatus(msg);
+        return;
+      }
+      if (workspaceRootRef.current && pathsEqual(workspaceRootRef.current, previousDiskRoot) && profile.workspaceRoot !== previousDiskRoot) {
+        const mapPath = workspaceAbsolutePathPrefixRemap(previousDiskRoot, profile.workspaceRoot);
+        setWorkspaceRoot(profile.workspaceRoot);
+        setBuffers((current) => {
+          const next = {};
+          for (const [key, buf] of Object.entries(current)) {
+            const mappedKey = mapPath(key);
+            next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+          }
+          return next;
+        });
+        setActiveFilePath((active) => active ? mapPath(active) : active);
+        try {
+          setWorkspaceTree(await window.electronAPI.getWorkspaceTree(profile.workspaceRoot));
+        } catch {
+          setWorkspaceTree([]);
+        }
+        void refreshWorkspaceChanges(profile.workspaceRoot);
+      }
+      await window.electronAPI.saveChat({
+        ...full,
+        title: profile.name,
+        titleOverride: profile.name,
+        updatedAt: Date.now(),
+        modelOverride: { provider: profile.provider, model: profile.model },
+        wizard: profile
+      });
+      await refreshChatList();
+      setWizardDraft(profile);
+    },
+    [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]
+  );
+  const handleWizardDraftChange = reactExports.useCallback(
+    (next) => {
+      setWizardDraft(next);
+      wizardDraftRef.current = next;
+      flushWizardAutosaveTimer();
+      wizardAutosaveTimerRef.current = setTimeout(() => {
+        wizardAutosaveTimerRef.current = null;
+        const draft = wizardDraftRef.current;
+        if (draft) void saveActiveWizard(draft);
+      }, WIZARD_AUTOSAVE_MS);
+    },
+    [saveActiveWizard]
+  );
+  reactExports.useEffect(() => {
+    const prev = lastInspectorTabRef.current;
+    lastInspectorTabRef.current = inspectorTab;
+    if (prev !== "settings" || inspectorTab === "settings") return;
+    flushSettingsAutosaveTimer();
+    void (async () => {
+      try {
+        const s = settingsRef.current;
+        if (s) await persistSettingsToDisk(s);
+      } catch {
+      }
+    })();
+    flushWizardAutosaveTimer();
+    const w = wizardDraftRef.current;
+    if (w && activeWizardMeta?.id) void saveActiveWizard(w);
+  }, [inspectorTab, activeWizardMeta?.id, saveActiveWizard]);
+  const refreshWizardModels = reactExports.useCallback(async (provider) => listModelsForWizardSetup(provider), [listModelsForWizardSetup]);
+  const createWizard = reactExports.useCallback(
+    async (request) => {
+      const result = await window.electronAPI.setupWizard(request);
+      setWorkspaceRoot(result.profile.workspaceRoot);
+      setWorkspaceTree(result.tree);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(void 0);
+      const now2 = Date.now();
+      const id2 = uid();
+      const chat = {
+        id: id2,
+        kind: "wizard",
+        title: result.profile.name,
+        titleOverride: result.profile.name,
+        messages: [],
+        timeline: [],
+        createdAt: now2,
+        updatedAt: now2,
+        pinned: false,
+        modelOverride: { provider: result.profile.provider, model: result.profile.model },
+        wizard: result.profile
+      };
+      await window.electronAPI.saveChat(chat);
+      await refreshChatList();
+      setShowWizardSetup(false);
+      await createWizardSession({
+        id: id2,
+        title: result.profile.name,
+        titleOverride: result.profile.name,
+        modelOverride: { provider: result.profile.provider, model: result.profile.model },
+        wizard: result.profile
+      });
+      void refreshWorkspaceChanges(result.profile.workspaceRoot);
+    },
+    [refreshChatList, refreshWorkspaceChanges]
+  );
   const togglePinChat = reactExports.useCallback(
     async (e, id2) => {
       e.stopPropagation();
@@ -36883,17 +37850,63 @@ function App() {
     if (!full) return;
     const trimmed = draft.trim();
     const nextOverride = trimmed.length > 0 ? trimmed : null;
+    let wizardPatch = full.kind === "wizard" && full.wizard ? { ...full.wizard, name: nextOverride ?? full.wizard.name } : full.wizard;
+    const prevWizardRoot = full.kind === "wizard" ? full.wizard?.workspaceRoot : void 0;
+    if (full.kind === "wizard" && wizardPatch) {
+      try {
+        wizardPatch = await window.electronAPI.syncWizardWorkspaceFolder({
+          ...wizardPatch,
+          workspaceRoot: full.wizard.workspaceRoot
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSettingsStatus(msg);
+        return;
+      }
+    }
+    if (prevWizardRoot && wizardPatch && workspaceRootRef.current && pathsEqual(workspaceRootRef.current, prevWizardRoot) && wizardPatch.workspaceRoot !== prevWizardRoot) {
+      const mapPath = workspaceAbsolutePathPrefixRemap(prevWizardRoot, wizardPatch.workspaceRoot);
+      setWorkspaceRoot(wizardPatch.workspaceRoot);
+      setBuffers((current) => {
+        const next = {};
+        for (const [key, buf] of Object.entries(current)) {
+          const mappedKey = mapPath(key);
+          next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+        }
+        return next;
+      });
+      setActiveFilePath((active) => active ? mapPath(active) : active);
+      try {
+        setWorkspaceTree(await window.electronAPI.getWorkspaceTree(wizardPatch.workspaceRoot));
+      } catch {
+        setWorkspaceTree([]);
+      }
+      void refreshWorkspaceChanges(wizardPatch.workspaceRoot);
+    }
     await window.electronAPI.saveChat({
       ...full,
-      title: nextOverride != null ? nextOverride : chatTitle(full.messages),
+      title: nextOverride != null ? nextOverride : full.kind === "wizard-session" ? sessionTitle(full.messages) : chatTitle(full.messages),
       titleOverride: nextOverride,
-      updatedAt: full.updatedAt
+      wizard: full.kind === "wizard" ? wizardPatch : full.wizard,
+      updatedAt: Date.now()
     });
     await refreshChatList();
   };
   const sendChat = async () => {
     const sendSettings = settingsRef.current;
     if (chatStreamingRef.current || !sendSettings || chatInput.trim().length === 0 && chatAttachments.length === 0) return;
+    const activeDiskChat = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+    const parentWizardChat = activeDiskChat?.kind === "wizard-session" && activeDiskChat.wizardId ? await window.electronAPI.loadChat(activeDiskChat.wizardId) : activeDiskChat?.kind === "wizard" ? activeDiskChat : null;
+    const wizardForStream = parentWizardChat?.kind === "wizard" ? parentWizardChat.wizard ?? null : activeChatMeta?.kind === "wizard" ? activeChatMeta.wizard ?? null : null;
+    if (wizardForStream && (!wizardForStream.model.trim() || !wizardForStream.workspaceRoot.trim())) return;
+    if (wizardForStream && workspaceRootRef.current !== wizardForStream.workspaceRoot) {
+      try {
+        await activateWorkspace(wizardForStream.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : "Wizard workspace could not be opened.");
+        return;
+      }
+    }
     chatStreamingRef.current = true;
     const userMessage = {
       id: uid(),
@@ -36908,7 +37921,7 @@ function App() {
       role: "assistant",
       content: "",
       status: "streaming",
-      reasoning: sendSettings.ui.sessionMode === "talk" ? "" : void 0
+      reasoning: sendSettings.ui.sessionMode === "talk" && !wizardForStream ? "" : void 0
     };
     const nextHistory = [...chatMessages, userMessage];
     const nextTimeline = [
@@ -36959,11 +37972,58 @@ function App() {
       messages: [...nextHistory, assistantMessage],
       timeline: nextTimeline
     });
-    const streamSettings = applyChatModelOverride(sendSettings, overrideForStream);
-    await window.electronAPI.streamChat(requestId, streamSettings, nextHistory, {
-      workspaceRoot: workspaceRootRef.current,
+    const streamSettings = wizardForStream ? {
+      ...sendSettings,
+      selectedProvider: wizardForStream.provider,
+      providers: {
+        ...sendSettings.providers,
+        [wizardForStream.provider]: {
+          ...sendSettings.providers[wizardForStream.provider],
+          model: wizardForStream.model,
+          systemPrompt: buildWizardSystemPrompt(wizardForStream)
+        }
+      },
+      tools: {
+        ...sendSettings.tools,
+        allowModelSystemPrompt: false
+      },
+      ui: {
+        ...sendSettings.ui,
+        sessionMode: "agent"
+      }
+    } : applyChatModelOverride(sendSettings, overrideForStream);
+    const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
+    if (wizardForStream) {
+      const loaded = wizardDocsContext.loaded;
+      const okCount = loaded.filter((doc) => doc.ok).length;
+      const checklist = [
+        `Workspace active: ${wizardForStream.workspaceRoot}`,
+        ...loaded.map((doc) => `${doc.ok ? "Loaded" : "Missing"} ${doc.name}`),
+        `Injected ${okCount}/${loaded.length} core docs into this request.`
+      ].join("\n");
+      const activity = {
+        id: uid(),
+        requestId,
+        kind: okCount === loaded.length ? "success" : "warning",
+        message: checklist
+      };
+      const activityEntry = { id: `activity-${activity.id}`, type: "activity", activity };
+      const timelineWithChecklist = [...nextTimeline, activityEntry];
+      setChatTimeline(timelineWithChecklist);
+      const snapshot = inFlightChatsRef.current.get(requestId);
+      if (snapshot) {
+        snapshot.timeline = timelineWithChecklist;
+      }
+    }
+    const streamHistory = wizardDocsContext.message ? [wizardDocsContext.message, ...nextHistory] : nextHistory;
+    await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
+      workspaceRoot: wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
-      conversationId: chatSessionIdRef.current
+      conversationId: chatSessionIdRef.current,
+      wizardId: parentWizardChat?.kind === "wizard" ? parentWizardChat.id : void 0,
+      wizardName: wizardForStream?.name,
+      wizardSystemPrompt: wizardForStream?.systemPrompt,
+      wizardFullAccess: wizardForStream ? Boolean(wizardForStream.fullAccess) : void 0
     });
   };
   const stopChat = async () => {
@@ -36989,20 +38049,20 @@ function App() {
   }, [inlineTerminalJobId]);
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : void 0;
   const selectedProvider = settings?.providers[settings.selectedProvider];
-  const effectiveHeaderModelId = effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
+  const isWizardActive = Boolean(activeWizard);
+  const effectiveHeaderModelId = activeWizard?.model ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
   const openRouterReady = settings && settings.selectedProvider === "openrouter" ? Boolean(settings.providers.openrouter.apiKey?.trim()) : true;
-  const providerConnected = Boolean(
-    settings && openRouterReady && models.length > 0 && selectedProvider?.model
-  );
+  const providerConnected = activeWizard ? Boolean(activeWizard.model) : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
   const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
   const resolvedContextLimit = (() => {
     const id2 = effectiveHeaderModelId.trim();
     if (!id2) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
-  const selectedProviderLabel = settings?.selectedProvider === "openrouter" ? "OpenRouter" : "LM Studio";
-  const sessionMode = settings?.ui.sessionMode ?? "agent";
+  const selectedProviderLabel = (activeWizard?.provider ?? settings?.selectedProvider) === "openrouter" ? "OpenRouter" : "LM Studio";
+  const sessionMode = activeWizard ? "agent" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
+  const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showWebSearchNotice ? /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -37026,7 +38086,7 @@ function App() {
             children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Web Search" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Search works better with an API key" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "OpenKiwi can search without a key, but the built-in DuckDuckGo fallback only returns short instant answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web search option." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Mythra can search without a key, but the built-in DuckDuckGo fallback only returns short instant answers and often misses normal web results. For better AI search, add a Tavily or Brave Search API key in Settings. Tavily is the simplest recommendation for AI-ready results; Brave is a strong general web search option." }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__links", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "a",
@@ -37071,11 +38131,223 @@ function App() {
         open: showSystemPromptModal && Boolean(settings),
         value: settings?.providers[settings.selectedProvider].systemPrompt ?? "",
         onChange: (v2) => {
-          setSettings((s) => s ? patchSystemPromptInSettings(s, v2) : s);
+          const s = settingsRef.current;
+          if (!s) return;
+          handleSettingsPanelChange(patchSystemPromptInSettings(s, v2));
         },
         onClose: () => setShowSystemPromptModal(false)
       }
     ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      WizardSetupModal,
+      {
+        onClose: () => setShowWizardSetup(false),
+        onCreate: createWizard,
+        onListModels: listModelsForWizardSetup,
+        onPersistWizardProjectsParentFolder: persistWizardProjectsParentFolder,
+        open: showWizardSetup,
+        settings
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Cancel",
+        confirmLabel: "Delete Wizard",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizardDeleteTarget?.title ?? "this Wizard" }),
+          " from Mythra? This removes the Wizard entry and its conversation history, but does not delete its workspace folder yet."
+        ] }),
+        kicker: "Delete Wizard",
+        onCancel: () => setWizardDeleteTarget(null),
+        onConfirm: () => void confirmDeleteWizard(),
+        open: Boolean(wizardDeleteTarget),
+        title: "Are you sure?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Keep folder",
+        confirmLabel: "Delete folder",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Also delete ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: workspaceDeleteTarget?.wizardName ?? "this Wizard" }),
+          "'s workspace folder and all files inside it?",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: workspaceDeleteTarget?.workspaceRoot })
+        ] }),
+        kicker: "Wizard Workspace",
+        onCancel: () => setWorkspaceDeleteTarget(null),
+        onConfirm: () => {
+          const target = workspaceDeleteTarget;
+          setWorkspaceDeleteTarget(null);
+          if (!target) return;
+          void window.electronAPI.deleteWizardWorkspace(target.workspaceRoot).then(() => {
+            if (workspaceRootRef.current === target.workspaceRoot) {
+              setWorkspaceRoot(void 0);
+              setWorkspaceTree([]);
+              setWorkspaceChanges(null);
+              setBuffers({});
+              setActiveFilePath(void 0);
+            }
+          });
+        },
+        open: Boolean(workspaceDeleteTarget),
+        title: "Delete its workspace too?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Cancel",
+        confirmLabel: "Delete session",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizardSessionDeleteTarget?.title ?? "this session" }),
+          "? This only removes this conversation history. The Wizard, workspace, and core documents will stay."
+        ] }),
+        kicker: "Delete Session",
+        onCancel: () => setWizardSessionDeleteTarget(null),
+        onConfirm: () => {
+          const target = wizardSessionDeleteTarget;
+          setWizardSessionDeleteTarget(null);
+          if (target) void deleteWizardSession(target);
+        },
+        open: Boolean(wizardSessionDeleteTarget),
+        title: "Delete this Wizard session?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: wizardPromptApproval ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            "aria-modal": "true",
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "app-dialog wizard-prompt-approval",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-prompt-approval__intro", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Wizard System Prompt" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: wizardPromptApproval.title }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                  wizardPromptApproval.wizardName,
+                  " wants to replace its private system prompt. Review the change before allowing it."
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-prompt-approval__compare", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Original" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: wizardPromptDiff.left.map((line, index2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`, children: line.text || " " }, `${index2}-${line.kind}`)) })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-prompt-approval__arrow", "aria-hidden": true, children: "-->" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "New" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: wizardPromptDiff.right.map((line, index2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `wizard-prompt-approval__line wizard-prompt-approval__line--${line.kind}`, children: line.text || " " }, `${index2}-${line.kind}`)) })
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn btn--secondary",
+                    onClick: () => {
+                      const id2 = wizardPromptApproval.id;
+                      setWizardPromptApproval(null);
+                      void window.electronAPI.respondWizardPromptApproval(id2, false);
+                    },
+                    type: "button",
+                    children: "Deny"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn btn--primary",
+                    onClick: () => {
+                      const id2 = wizardPromptApproval.id;
+                      setWizardPromptApproval(null);
+                      void window.electronAPI.respondWizardPromptApproval(id2, true);
+                    },
+                    type: "button",
+                    children: "Approve"
+                  }
+                )
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: toolApprovalRequest ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            "aria-modal": "true",
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "app-dialog app-dialog--scrollable tool-approval-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Approval required" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: toolApprovalRequest.title }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "tool-approval-dialog__detail", children: toolApprovalRequest.detail }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn btn--secondary",
+                    onClick: () => {
+                      const id2 = toolApprovalRequest.id;
+                      setToolApprovalRequest(null);
+                      void window.electronAPI.respondToolApproval(id2, false);
+                    },
+                    type: "button",
+                    children: "Deny"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn btn--primary",
+                    onClick: () => {
+                      const id2 = toolApprovalRequest.id;
+                      setToolApprovalRequest(null);
+                      void window.electronAPI.respondToolApproval(id2, true);
+                    },
+                    type: "button",
+                    children: "Approve"
+                  }
+                )
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
       {
@@ -37100,7 +38372,7 @@ function App() {
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Connection" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "connection-help-title", children: "Need help?" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { id: "connection-help-desc", children: [
-                "OpenKiwi sends your chats to an LLM through either ",
+                "Mythra sends your chats to an LLM through either ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "OpenRouter" }),
                 " (many cloud models, one API key) or ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "LM Studio" }),
@@ -37109,7 +38381,7 @@ function App() {
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__section", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__section-title", children: "OpenRouter" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
-                  "OpenRouter is a service that routes requests to a large catalog of hosted models so you do not run the weights locally. In OpenKiwi, choose ",
+                  "OpenRouter is a service that routes requests to a large catalog of hosted models so you do not run the weights locally. In Mythra, choose ",
                   /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "OpenRouter" }),
                   " under Provider, paste an API key from your OpenRouter account (for example ",
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "sk-or-v1-…" }),
@@ -37123,7 +38395,7 @@ function App() {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "local server" }),
                   " (often on port ",
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "1234" }),
-                  "). In OpenKiwi, choose ",
+                  "). In Mythra, choose ",
                   /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "LM Studio" }),
                   ", confirm the base URL matches your server (the default is ",
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "http://127.0.0.1:1234/v1" }),
@@ -37183,33 +38455,90 @@ function App() {
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__badge", children: "OK" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand__title", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(OpenKiwiMark, {}),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "img",
-                    {
-                      alt: "",
-                      className: "sidebar-brand__logo",
-                      decoding: "async",
-                      height: 32,
-                      src: openkiwiLogo,
-                      width: 32
-                    }
-                  )
-                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__title", children: /* @__PURE__ */ jsxRuntimeExports.jsx(MythraMark, {}) }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__copy", children: "Local AI workspace" })
               ] })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-quick", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "sidebar-quick__btn sidebar-quick__btn--primary", onClick: startNewChat, type: "button", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 1v12M1 7h12", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" }) }),
-                "New Chat"
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sidebar-new ${showNewMenu ? "is-open" : ""}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "button",
+                  {
+                    className: "sidebar-quick__btn sidebar-quick__btn--primary",
+                    onClick: () => setShowNewMenu((v2) => !v2),
+                    type: "button",
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 1v12M1 7h12", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" }) }),
+                      "New"
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showNewMenu ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  motion.div,
+                  {
+                    animate: { opacity: 1, y: 0 },
+                    className: "sidebar-new__menu",
+                    exit: { opacity: 0, y: -4 },
+                    initial: { opacity: 0, y: -4 },
+                    transition: { duration: 0.15 },
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: startNewChat, type: "button", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Normal Chat" }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Regular chat with Chat and Agent modes." })
+                      ] }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                        "button",
+                        {
+                          onClick: () => {
+                            setShowNewMenu(false);
+                            setShowWizardSetup(true);
+                          },
+                          type: "button",
+                          children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Wizard" }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Named AI with its own model, memory, and local workspace." })
+                          ]
+                        }
+                      )
+                    ]
+                  }
+                ) : null })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "sidebar-quick__btn", onClick: chooseWorkspace, type: "button", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 4.5l5-3 5 3v6l-5 3-5-3v-6z", stroke: "currentColor", strokeWidth: "1.4", strokeLinejoin: "round" }) }),
-                workspaceRoot ? "Switch workspace" : "Open workspace"
-              ] }),
-              workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "sidebar-quick__btn",
+                  disabled: Boolean(activeWizard),
+                  onClick: chooseWorkspace,
+                  title: activeWizard ? "This Wizard uses its own private workspace." : void 0,
+                  type: "button",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 4.5l5-3 5 3v6l-5 3-5-3v-6z", stroke: "currentColor", strokeWidth: "1.4", strokeLinejoin: "round" }) }),
+                    activeWizard ? "Wizard workspace" : workspaceRoot ? "Switch workspace" : "Open workspace"
+                  ]
+                }
+              ),
+              workspaceRoot && activeWizard ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "sidebar-quick__btn",
+                  disabled: true,
+                  type: "button",
+                  title: "Wizard workspaces stay attached while their Wizard is selected",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M4 4l6 6M10 4l-6 6",
+                        stroke: "currentColor",
+                        strokeWidth: "1.4",
+                        strokeLinecap: "round"
+                      }
+                    ) }),
+                    "Clear workspace"
+                  ]
+                }
+              ) : workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
                   className: "sidebar-quick__btn",
@@ -37293,6 +38622,16 @@ function App() {
                   type: "button",
                   role: "tab",
                   children: "Chats"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `sidebar-tabs__tab ${sidebarTab === "wizards" ? "is-active" : ""}`,
+                  onClick: () => setSidebarTab("wizards"),
+                  type: "button",
+                  role: "tab",
+                  children: "Wizards"
                 }
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -37458,7 +38797,7 @@ function App() {
                       "override-body"
                     ) })
                   ] }) : null,
-                  chatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: chatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  normalChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: normalChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
                     "div",
                     {
                       className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
@@ -37531,7 +38870,7 @@ function App() {
                               className: "chat-list__delete",
                               onClick: (e) => {
                                 e.stopPropagation();
-                                deleteChat(chat.id);
+                                requestDeleteChat(chat);
                               },
                               onMouseDown: (e) => e.preventDefault(),
                               type: "button",
@@ -37556,6 +38895,154 @@ function App() {
                 ]
               },
               "chats"
+            ) : sidebarTab === "wizards" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              motion.div,
+              {
+                className: "sidebar-panel",
+                initial: { opacity: 0 },
+                animate: { opacity: 1 },
+                exit: { opacity: 0 },
+                transition: { duration: 0.15 },
+                children: wizardChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No Wizards yet. Create one from New to give it a model, memory, and workspace." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: wizardChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "div",
+                    {
+                      "aria-expanded": expandedWizardIds.has(chat.id),
+                      className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
+                      onClick: () => setExpandedWizardIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(chat.id)) next.delete(chat.id);
+                        else next.add(chat.id);
+                        return next;
+                      }),
+                      children: [
+                        editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                          "input",
+                          {
+                            autoFocus: true,
+                            className: "chat-list__title-input",
+                            onBlur: (e) => {
+                              void commitRenameChat(chat.id, e.target.value);
+                            },
+                            onChange: (e) => setEditingTitleDraft(e.target.value),
+                            onKeyDown: (e) => {
+                              e.stopPropagation();
+                              if (e.key === "Enter") {
+                                e.currentTarget.blur();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                skipNextRenameCommitRef.current = true;
+                                cancelRenameChat();
+                              }
+                            },
+                            value: editingTitleDraft
+                          }
+                        ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "svg",
+                              {
+                                className: `wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? "is-open" : ""}`,
+                                width: "12",
+                                height: "12",
+                                viewBox: "0 0 12 12",
+                                fill: "none",
+                                "aria-hidden": true,
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                              }
+                            ),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: chat.title, children: chat.title })
+                          ] }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
+                            "Wizard · ",
+                            (wizardSessionsByWizardId.get(chat.id) ?? []).length,
+                            " sessions"
+                          ] })
+                        ] }),
+                        editingTitleId === chat.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "button",
+                            {
+                              className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
+                              onClick: (e) => void togglePinChat(e, chat.id),
+                              type: "button",
+                              title: chat.pinned ? "Unpin" : "Pin to top",
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z", fill: chat.pinned ? "currentColor" : "none", stroke: "currentColor", strokeLinejoin: "round", strokeWidth: "1.1" }) })
+                            }
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__rename", onClick: (e) => beginRenameChat(e, chat.id, chat.title), type: "button", title: "Rename", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) }) }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__delete", onClick: (e) => {
+                            e.stopPropagation();
+                            requestDeleteChat(chat);
+                          }, onMouseDown: (e) => e.preventDefault(), type: "button", title: "Delete Wizard", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
+                        ] })
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    motion.div,
+                    {
+                      "aria-hidden": !expandedWizardIds.has(chat.id),
+                      className: "wizard-session-list-anim",
+                      initial: false,
+                      animate: {
+                        height: expandedWizardIds.has(chat.id) ? "auto" : 0
+                      },
+                      style: {
+                        overflow: "hidden",
+                        pointerEvents: expandedWizardIds.has(chat.id) ? "auto" : "none"
+                      },
+                      transition: {
+                        duration: 0.32,
+                        ease: [0.4, 0, 0.2, 1]
+                      },
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button", onClick: () => void createWizardSession(chat), type: "button", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
+                          "New session"
+                        ] }),
+                        (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                          "div",
+                          {
+                            className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
+                            onClick: () => void loadChat(session.id),
+                            role: "button",
+                            tabIndex: 0,
+                            onKeyDown: (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                void loadChat(session.id);
+                              }
+                            },
+                            children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "button",
+                                  {
+                                    "aria-label": `Delete ${session.title}`,
+                                    className: "wizard-session-row__delete",
+                                    onClick: (e) => {
+                                      e.stopPropagation();
+                                      requestDeleteChat(session);
+                                    },
+                                    title: "Delete session",
+                                    type: "button",
+                                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                  }
+                                )
+                              ] })
+                            ]
+                          },
+                          session.id
+                        ))
+                      ] })
+                    }
+                  )
+                ] }, chat.id)) }) })
+              },
+              "wizards"
             ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
               motion.div,
               {
@@ -37602,6 +39089,7 @@ function App() {
               contextLimit: resolvedContextLimit,
               input: chatInput,
               isStreaming: chatStreaming,
+              isWizard: isWizardActive,
               lastTokenUsage,
               sessionSubheading: chatSessionSubheading,
               timeline: chatTimeline,
@@ -37616,7 +39104,7 @@ function App() {
               webSearchDisabled: !settings,
               onWebSearchChange: handleWebSearchChange,
               onSessionModeToggle: handleSessionModeToggle,
-              sessionModeToggleDisabled: !settings,
+              sessionModeToggleDisabled: !settings || isWizardActive,
               sessionMode,
               selectedModel: effectiveHeaderModelId,
               selectedProviderLabel,
@@ -37705,22 +39193,63 @@ function App() {
                       workspaceRoot
                     }
                   ) : null,
-                  inspectorTab === "settings" && settings ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    SettingsPanel,
-                    {
-                      focusSearchSettingsKey: searchSettingsFocusKey,
-                      modelOptions: models,
-                      onChange: setSettings,
-                      onOpenConnectionHelp: () => setShowConnectionHelp(true),
-                      onOpenSystemPromptModal: () => setShowSystemPromptModal(true),
-                      onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
-                      onPresetPersist: persistAfterPresetAction,
-                      onRefreshModels: refreshModels,
-                      onSave: saveSettings,
-                      settings,
-                      statusMessage: settingsStatus
-                    }
-                  ) : null
+                  inspectorTab === "settings" && settings ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inspector-settings-wrap", children: [
+                    activeWizard ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inspector-settings-scope", role: "group", "aria-label": "Which settings to edit", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "session-mode-toggle", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          className: `session-mode-toggle__option ${settingsInspectorScope === "general" ? "is-active" : ""}`,
+                          onClick: () => setSettingsInspectorScope("general"),
+                          type: "button",
+                          children: "General"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          className: `session-mode-toggle__option ${settingsInspectorScope === "wizard" ? "is-active" : ""}`,
+                          onClick: () => setSettingsInspectorScope("wizard"),
+                          type: "button",
+                          children: "Wizard"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "span",
+                        {
+                          className: "session-mode-toggle__slider",
+                          style: {
+                            transform: settingsInspectorScope === "wizard" ? "translateX(100%)" : "translateX(0)"
+                          }
+                        }
+                      )
+                    ] }) }) : null,
+                    settingsInspectorScope === "wizard" && wizardDraft ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      WizardSettingsPanel,
+                      {
+                        modelOptions: overrideModels,
+                        onChange: handleWizardDraftChange,
+                        onOpenDocument: (path2) => void openFile(path2),
+                        onRefreshModels: refreshWizardModels,
+                        settings,
+                        statusMessage: settingsStatus,
+                        wizard: wizardDraft
+                      }
+                    ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      SettingsPanel,
+                      {
+                        focusSearchSettingsKey: searchSettingsFocusKey,
+                        modelOptions: models,
+                        onChange: handleSettingsPanelChange,
+                        onOpenConnectionHelp: () => setShowConnectionHelp(true),
+                        onOpenSystemPromptModal: () => setShowSystemPromptModal(true),
+                        onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
+                        onPresetPersist: persistAfterPresetAction,
+                        onRefreshModels: refreshModels,
+                        settings,
+                        statusMessage: settingsStatus
+                      }
+                    )
+                  ] }) : null
                 ]
               },
               inspectorTab

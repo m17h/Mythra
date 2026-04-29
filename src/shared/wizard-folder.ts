@@ -7,5 +7,5 @@ export function sanitizeWizardFolderSegment(name: string): string {
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
     .replace(/\s+/g, ' ')
     .slice(0, 80)
-    .trim() || 'OpenKiwi Wizard';
+    .trim() || 'Mythra Wizard';
 }

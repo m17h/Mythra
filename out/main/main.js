@@ -12,9 +12,9 @@ import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
-const appIconPath = join(__dirname, "./chunks/openkiwi_icon-COisAVPz.png");
-const CHATS_DIR = "openkiwi-chats";
-const LEGACY_CHATS_DIR = "pixel-forge-chats";
+const appIconPath = join(__dirname, "./chunks/mythra_icon-COisAVPz.png");
+const CHATS_DIR = "mythra-chats";
+const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 const assertSafeChatId = (id) => {
   if (!CHAT_ID_RE.test(id)) {
@@ -24,7 +24,6 @@ const assertSafeChatId = (id) => {
 class ChatStore {
   userData = app.getPath("userData");
   dir = join$1(this.userData, CHATS_DIR);
-  legacyDir = join$1(this.userData, LEGACY_CHATS_DIR);
   legacyMigrated = false;
   async migrateLegacyChatsIfNeeded() {
     if (this.legacyMigrated) return;
@@ -32,13 +31,17 @@ class ChatStore {
     try {
       const newHas = existsSync(this.dir) && (await readdir(this.dir)).some((f) => f.endsWith(".json"));
       if (newHas) return;
-      if (!existsSync(this.legacyDir)) return;
-      const files = (await readdir(this.legacyDir)).filter((f) => f.endsWith(".json"));
-      if (files.length === 0) return;
-      await mkdir(this.dir, { recursive: true });
-      for (const f of files) {
-        const dst = join$1(this.dir, f);
-        if (!existsSync(dst)) await copyFile(join$1(this.legacyDir, f), dst);
+      for (const legacyName of LEGACY_CHAT_DIRS) {
+        const legacyDir = join$1(this.userData, legacyName);
+        if (!existsSync(legacyDir)) continue;
+        const files = (await readdir(legacyDir)).filter((f) => f.endsWith(".json"));
+        if (files.length === 0) continue;
+        await mkdir(this.dir, { recursive: true });
+        for (const f of files) {
+          const dst = join$1(this.dir, f);
+          if (!existsSync(dst)) await copyFile(join$1(legacyDir, f), dst);
+        }
+        break;
       }
     } catch {
     }
@@ -223,8 +226,8 @@ class CommandService {
     return true;
   }
 }
-const OPENKIWI_SESSION_MODE_TOGGLE = "[[OPENKIWI_SESSION_MODE_TOGGLE]]";
-const OPENKIWI_WEB_SEARCH_TOGGLE = "[[OPENKIWI_WEB_SEARCH_TOGGLE]]";
+const MYTHRA_SESSION_MODE_TOGGLE = "[[MYTHRA_SESSION_MODE_TOGGLE]]";
+const MYTHRA_WEB_SEARCH_TOGGLE = "[[MYTHRA_WEB_SEARCH_TOGGLE]]";
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
   { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
@@ -847,7 +850,7 @@ async function searchDuckDuckGo(q) {
   let data;
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "OpenKiwi/0.1 (https://github.com) desktop assistant" }
+      headers: { "User-Agent": "Mythra/0.1 (https://github.com) desktop assistant" }
     });
     if (!res.ok) {
       return `Web search request failed (HTTP ${res.status}). You can try again or share a direct link.`;
@@ -968,7 +971,7 @@ async function tryOpenMeteoWeatherSupplement(q) {
   const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=3&language=en`;
   let geo;
   try {
-    const res = await fetch(geoUrl, { headers: { "User-Agent": "OpenKiwi/0.1 (desktop; Open-Meteo geocoding)" } });
+    const res = await fetch(geoUrl, { headers: { "User-Agent": "Mythra/0.1 (desktop; Open-Meteo geocoding)" } });
     if (!res.ok) return null;
     geo = await res.json();
   } catch {
@@ -989,7 +992,7 @@ async function tryOpenMeteoWeatherSupplement(q) {
   fcUrl.searchParams.set("timezone", "auto");
   let data;
   try {
-    const res = await fetch(fcUrl.toString(), { headers: { "User-Agent": "OpenKiwi/0.1 (Open-Meteo forecast)" } });
+    const res = await fetch(fcUrl.toString(), { headers: { "User-Agent": "Mythra/0.1 (Open-Meteo forecast)" } });
     if (!res.ok) return null;
     data = await res.json();
   } catch {
@@ -1045,7 +1048,7 @@ const createClient = (settings, kind = settings.selectedProvider) => {
   const provider = settings.providers[kind];
   const headers = kind === "openrouter" ? {
     "HTTP-Referer": provider.appUrl || "https://example.local",
-    "X-OpenRouter-Title": provider.appName || "OpenKiwi"
+    "X-OpenRouter-Title": provider.appName || "Mythra"
   } : void 0;
   return new OpenAI({
     baseURL: normalizeBaseUrl(kind, provider.baseUrl),
@@ -1068,16 +1071,16 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
-const openkiwiSessionModeEmbedInstruction = `OpenKiwi inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
-const openkiwiWebSearchEmbedInstruction = `OpenKiwi inline Web toggle token ${OPENKIWI_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
-const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${OPENKIWI_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${OPENKIWI_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
+const mythraSessionModeEmbedInstruction = `Mythra inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${MYTHRA_SESSION_MODE_TOGGLE}`;
+const mythraWebSearchEmbedInstruction = `Mythra inline Web toggle token ${MYTHRA_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
+const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${MYTHRA_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${MYTHRA_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
 const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice." : "UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.";
-const openkiwiWebSearchToolRoutingHint = `web_search: OpenKiwi uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
-const openkiwiThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${OPENKIWI_SESSION_MODE_TOGGLE}`;
-const openkiwiSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
-const openkiwiModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
-const openkiwiToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
-const openkiwiCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.";
+const mythraWebSearchToolRoutingHint = `web_search: Mythra uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
+const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
+const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
+const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
+const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
+const mythraCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -1141,8 +1144,10 @@ const toApiMessage = (message) => {
 };
 function wizardPromptLooksLikeInjectedRouting(text) {
   const markers = [
-    ["[OpenKiwi model routing", "OpenKiwi routing header"],
-    ["[OpenKiwi] Thread id:", "thread routing line"],
+    ["[Mythra model routing", "Mythra routing header"],
+    ["[OpenKiwi model routing", "legacy routing header"],
+    ["[Mythra] Thread id:", "thread routing line"],
+    ["[OpenKiwi] Thread id:", "legacy thread routing line"],
     ["Non-Wizard Tool access lines elsewhere in this prompt", "routing reminder copied from this message"]
   ];
   for (const [needle, label] of markers) {
@@ -1155,21 +1160,22 @@ function agentModeSystemPromptInstructions(settings, runtime) {
     const label = runtime.wizardName?.trim() || "this Wizard";
     return [
       `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global LLM provider preset in Settings.`,
-      "To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. OpenKiwi opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.",
+      "To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. Mythra opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.",
       "`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global LLM provider** preset in Settings—do not confuse the two.",
-      "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). OpenKiwi also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit soul.md and adjust `set_wizard_system_prompt` so identity text matches.",
+      "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). Mythra also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit soul.md and adjust `set_wizard_system_prompt` so identity text matches.",
       "Non-Wizard Tool access lines elsewhere in this prompt still apply to files, workspace search, and commands; Wizard prompt edits bypass the “AI can change system prompt” toggle.",
-      "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[OpenKiwi model routing`, `[OpenKiwi] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on soul.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
-      "The app already appends an “OpenKiwi Wizard runtime” reminder at send time; you usually should not duplicate long runtime explanations inside `system_prompt` unless the user explicitly asks."
+      "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[Mythra model routing`, `[Mythra] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on soul.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
+      "Personality and durable memory belong in soul.md and memory.md. When the user revises how they want you to behave or what to remember, update those files with `write_file` so they stay authoritative.",
+      "The app already appends a “Mythra Wizard runtime” reminder at send time; you usually should not duplicate long runtime explanations inside `system_prompt` unless the user explicitly asks."
     ];
   }
   return [
-    openkiwiModelSystemPromptInstruction,
+    mythraModelSystemPromptInstruction,
     settings.tools.allowModelSystemPrompt ? "set_system_prompt is enabled in Settings → you may update the system prompt when the user asks." : "set_system_prompt is disabled; the user can enable “AI can change system prompt” under Tool access. You can still call get_system_prompt anytime in Agent mode to read the stored prompt."
   ];
 }
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, persistWizardDisplayName, requestWizardPromptApproval2) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, persistWizardDisplayName, requestWizardPromptApproval2, requestToolApprovalUi) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
@@ -1180,6 +1186,7 @@ class ModelService {
     this.persistWizardSystemPrompt = persistWizardSystemPrompt;
     this.persistWizardDisplayName = persistWizardDisplayName;
     this.requestWizardPromptApproval = requestWizardPromptApproval2;
+    this.requestToolApprovalUi = requestToolApprovalUi;
   }
   workspaceService;
   commandService;
@@ -1191,6 +1198,7 @@ class ModelService {
   persistWizardSystemPrompt;
   persistWizardDisplayName;
   requestWizardPromptApproval;
+  requestToolApprovalUi;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -1465,7 +1473,7 @@ class ModelService {
       type: "function",
       function: {
         name: "set_app_theme",
-        description: `Change the OpenKiwi preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(", ")}. Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.`,
+        description: `Change the Mythra preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(", ")}. Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.`,
         parameters: {
           type: "object",
           properties: {
@@ -1486,7 +1494,7 @@ class ModelService {
       type: "function",
       function: {
         name: "get_app_theme",
-        description: "Return the currently applied OpenKiwi theme (id and display name) and, if available, the previous theme before the last change (so you can answer what theme is active or whether the user can revert). Agent mode only.",
+        description: "Return the currently applied Mythra theme (id and display name) and, if available, the previous theme before the last change (so you can answer what theme is active or whether the user can revert). Agent mode only.",
         parameters: {
           type: "object",
           properties: {},
@@ -1528,7 +1536,7 @@ class ModelService {
       type: "function",
       function: {
         name: "get_wizard_system_prompt",
-        description: "Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not OpenKiwi’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global LLM provider preset in Settings. Long prompts may be truncated.",
+        description: "Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not Mythra’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global LLM provider preset in Settings. Long prompts may be truncated.",
         parameters: {
           type: "object",
           properties: {},
@@ -1673,13 +1681,13 @@ class ModelService {
         type: "function",
         function: {
           name: "set_wizard_system_prompt",
-          description: "Replace this Wizard’s private system prompt only—not the global LLM provider preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. OpenKiwi shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste OpenKiwi Agent routing text from this chat into system_prompt—only persona/editor-style instructions.",
+          description: "Replace this Wizard’s private system prompt only—not the global LLM provider preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. Mythra shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste Mythra Agent routing text from this chat into system_prompt—only persona/editor-style instructions.",
           parameters: {
             type: "object",
             properties: {
               system_prompt: {
                 type: "string",
-                description: "Full new Wizard-only prompt text (persona / instructions like in the Wizard settings editor). Must not include hidden `[OpenKiwi model routing` blocks, `[OpenKiwi] Thread id` lines, tool/workspace listings from Agent routing, or other pasted system-injection text—only user-facing Wizard instructions."
+                description: "Full new Wizard-only prompt text (persona / instructions like in the Wizard settings editor). Must not include hidden `[Mythra model routing` blocks, `[Mythra] Thread id` lines, tool/workspace listings from Agent routing, or other pasted system-injection text—only user-facing Wizard instructions."
               }
             },
             required: ["system_prompt"],
@@ -1691,7 +1699,7 @@ class ModelService {
         type: "function",
         function: {
           name: "set_wizard_display_name",
-          description: "Change this Wizard’s **display name** in OpenKiwi (sidebar list, chat subtitle, Inspector Wizard settings header). Does not edit soul.md or the stored system prompt—after renaming here, update soul.md (identity heading/text) and use `set_wizard_system_prompt` if your instructions still mention the old name so everything stays consistent.",
+          description: "Change this Wizard’s **display name** in Mythra (sidebar list, chat subtitle, Inspector Wizard settings header). Does not edit soul.md or the stored system prompt—after renaming here, update soul.md (identity heading/text) and use `set_wizard_system_prompt` if your instructions still mention the old name so everything stays consistent.",
           parameters: {
             type: "object",
             properties: {
@@ -1880,7 +1888,7 @@ class ModelService {
               properties: {
                 command: {
                   type: "string",
-                  description: "Test/check/build command to run, e.g. npm run check. If omitted, OpenKiwi tries npm test."
+                  description: "Test/check/build command to run, e.g. npm run check. If omitted, Mythra tries npm test."
                 }
               },
               additionalProperties: false
@@ -1948,7 +1956,7 @@ class ModelService {
     const id = runtime.conversationId?.trim();
     if (!id) return "";
     return [
-      `[OpenKiwi] Thread id: ${id}. The messages in this request are the only history you see for this turn—other saved chats in the app are not included.`,
+      `[Mythra] Thread id: ${id}. The messages in this request are the only history you see for this turn—other saved chats in the app are not included.`,
       "If the user just started a new chat, this thread is a fresh session; there are no prior turns in this list unless the user (or you in this thread) put them there.",
       ""
     ].join("\n");
@@ -1957,15 +1965,15 @@ class ModelService {
     if (settings.ui.sessionMode === "talk") {
       const toolLine = settings.ui.webSearch ? 'Chat mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Chat mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
       return this.threadPreamble(runtime) + [
-        '[OpenKiwi model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
+        '[Mythra model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
         sessionModeUiStateLine(settings.ui.sessionMode),
         toolLine,
         webHeaderUiStateLine(settings.ui.webSearch),
-        ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
+        ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
         "For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.",
-        openkiwiSessionModeEmbedInstruction,
-        openkiwiWebSearchEmbedInstruction,
-        openkiwiThemeInChatModeInstruction,
+        mythraSessionModeEmbedInstruction,
+        mythraWebSearchEmbedInstruction,
+        mythraThemeInChatModeInstruction,
         "Reply in normal prose. Do not begin with TASK_COMPLETE or NEEDS_INPUT.",
         "The first system message is the user’s preset; follow it except where this block defines tool and mode behavior."
       ].join("\n");
@@ -1976,18 +1984,18 @@ class ModelService {
     if (!runtime.workspaceRoot) {
       const webLine = settings.ui.webSearch ? 'The `web_search` tool is available for public web lookup (the user enabled "Web" in the chat header).' : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
       return [
-        "[OpenKiwi model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]",
+        "[Mythra model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]",
         sessionModeUiStateLine(settings.ui.sessionMode),
         "No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.",
         "If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.",
-        openkiwiSessionModeEmbedInstruction,
-        openkiwiWebSearchEmbedInstruction,
-        openkiwiSetAppThemeAgentInstruction,
-        openkiwiToolAccessReadInstruction,
+        mythraSessionModeEmbedInstruction,
+        mythraWebSearchEmbedInstruction,
+        mythraSetAppThemeAgentInstruction,
+        mythraToolAccessReadInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
-        ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : []
+        ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : []
       ].join("\n");
     }
     const files = await this.workspaceService.listFiles(runtime.workspaceRoot);
@@ -2010,26 +2018,26 @@ class ModelService {
       runtime.wizardId ? "get_wizard_system_prompt, set_wizard_system_prompt, set_wizard_display_name" : null
     ].filter(Boolean).join(", ");
     return [
-      "[OpenKiwi model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
+      "[Mythra model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
       sessionModeUiStateLine(settings.ui.sessionMode),
       "Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.",
       "Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.",
       "If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.",
-      openkiwiSessionModeEmbedInstruction,
-      openkiwiWebSearchEmbedInstruction,
+      mythraSessionModeEmbedInstruction,
+      mythraWebSearchEmbedInstruction,
       webHeaderUiStateLine(settings.ui.webSearch),
-      openkiwiSetAppThemeAgentInstruction,
-      openkiwiToolAccessReadInstruction,
+      mythraSetAppThemeAgentInstruction,
+      mythraToolAccessReadInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
-      openkiwiCodingToolInstruction,
+      mythraCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
       `Active file: ${runtime.activeFilePath ? relative(runtime.workspaceRoot, runtime.activeFilePath) : "none"}`,
       `Enabled tools: ${enabledTools || "none"}`,
-      `Approval: ${settings.agent.fullAccess ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
+      `Approval: ${this.effectiveFullAccess(settings, runtime) ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
       runtime.wizardId ? "Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access." : "",
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
-      ...settings.ui.webSearch ? [openkiwiWebSearchToolRoutingHint] : [],
+      ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
       "Visible workspace entries (truncated):",
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
@@ -2242,6 +2250,7 @@ class ModelService {
         window,
         requestId,
         settings,
+        runtime,
         "Approve system prompt change",
         `The model wants to replace the **${providerKind}** system prompt (${system_prompt.length} characters).
 
@@ -2292,7 +2301,7 @@ ${truncate(system_prompt, 900)}`
       const leaked = wizardPromptLooksLikeInjectedRouting(system_prompt);
       if (leaked) {
         throw new Error(
-          `set_wizard_system_prompt contained pasted OpenKiwi routing text (${leaked}). Put only this Wizard’s authored instructions—use read_file on soul.md or workspace docs for facts, then edit minimally. Remove any blocks matching hidden Agent routing (e.g. lines beginning with “[OpenKiwi model routing” or “[OpenKiwi] Thread id”).`
+          `set_wizard_system_prompt contained pasted Mythra routing text (${leaked}). Put only this Wizard’s authored instructions—use read_file on soul.md or workspace docs for facts, then edit minimally. Remove any blocks matching hidden Agent routing (e.g. lines beginning with “[Mythra model routing” or “[Mythra] Thread id”).`
         );
       }
       const before = runtime.wizardSystemPrompt ?? "";
@@ -2361,7 +2370,7 @@ ${truncate(system_prompt, 900)}`
           ok: true,
           wizardId: runtime.wizardId,
           display_name,
-          message: "Wizard display name saved for the sidebar and Wizard settings. OpenKiwi renames the workspace folder when needed so it matches your name. Update soul.md and call set_wizard_system_prompt if needed so your identity text matches."
+          message: "Wizard display name saved for the sidebar and Wizard settings. Mythra renames the workspace folder when needed so it matches your name. Update soul.md and call set_wizard_system_prompt if needed so your identity text matches."
         },
         null,
         2
@@ -2425,15 +2434,29 @@ ${truncate(system_prompt, 900)}`
         if (!path) {
           throw new Error("write_file requires a path.");
         }
+        let textDiff;
+        try {
+          const existing = await this.workspaceService.openFile(workspaceRoot, path);
+          if (!existing.imagePreview) {
+            textDiff = { before: existing.content, after: content };
+          }
+        } catch {
+          textDiff = { before: "", after: content };
+        }
         await this.requestApprovalIfNeeded(
           window,
           requestId,
           settings,
+          runtime,
           "Approve file write",
-          `The model wants to write:
+          textDiff ? `The model wants to create or overwrite this path:
 ${path}
 
-This will create or overwrite the file inside the current workspace.`
+Compare the previous file (left) to the proposed text (right).` : `The model wants to write (binary image or unreadable):
+${path}
+
+This will create or overwrite the file.`,
+          textDiff
         );
         const file = await this.workspaceService.saveFile(workspaceRoot, path, content);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: file.path });
@@ -2459,6 +2482,7 @@ This will create or overwrite the file inside the current workspace.`
           window,
           requestId,
           settings,
+          runtime,
           "Approve patch",
           `The model wants to apply a patch inside:
 ${workspaceRoot}
@@ -2479,19 +2503,36 @@ ${truncate(patch, 2500)}`
         const replacement = String(args.replacement ?? "");
         const replaceAll = Boolean(args.replace_all);
         if (!path) throw new Error("replace_in_file requires a path.");
+        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        let textDiff;
+        if (!file.imagePreview) {
+          const before = file.content;
+          if (!search) {
+            throw new Error("Search text cannot be empty.");
+          }
+          const occurrences = before.split(search).length - 1;
+          if (occurrences === 0) {
+            throw new Error("Search text was not found.");
+          }
+          const after = replaceAll ? before.split(search).join(replacement) : before.replace(search, replacement);
+          textDiff = { before, after };
+        }
         await this.requestApprovalIfNeeded(
           window,
           requestId,
           settings,
+          runtime,
           "Approve file edit",
-          `The model wants to replace text in:
+          textDiff ? `The model wants to replace text in:
+${path}` : `The model wants to replace text in:
 ${path}
 
 Search:
 ${truncate(search, 1200)}
 
 Replacement:
-${truncate(replacement, 1200)}`
+${truncate(replacement, 1200)}`,
+          textDiff
         );
         const result = await this.workspaceService.replaceInFile(workspaceRoot, path, search, replacement, replaceAll);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
@@ -2509,19 +2550,37 @@ ${truncate(replacement, 1200)}`
         const anchor = String(args.anchor ?? "");
         const text = String(args.text ?? "");
         if (!path) throw new Error("insert_after requires a path.");
+        if (!anchor) {
+          throw new Error("Anchor text cannot be empty.");
+        }
+        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        let textDiff;
+        if (!file.imagePreview) {
+          const beforeContent = file.content;
+          const index = beforeContent.indexOf(anchor);
+          if (index < 0) {
+            throw new Error("Anchor text was not found.");
+          }
+          const at = index + anchor.length;
+          const afterContent = `${beforeContent.slice(0, at)}${text}${beforeContent.slice(at)}`;
+          textDiff = { before: beforeContent, after: afterContent };
+        }
         await this.requestApprovalIfNeeded(
           window,
           requestId,
           settings,
+          runtime,
           "Approve file insertion",
-          `The model wants to insert text in:
+          textDiff ? `The model wants to insert text in:
+${path}` : `The model wants to insert text in:
 ${path}
 
 After:
 ${truncate(anchor, 1200)}
 
 Insert:
-${truncate(text, 1200)}`
+${truncate(text, 1200)}`,
+          textDiff
         );
         const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
@@ -2538,6 +2597,7 @@ ${truncate(text, 1200)}`
           window,
           requestId,
           settings,
+          runtime,
           "Approve rename",
           `The model wants to rename:
 ${from}
@@ -2565,6 +2625,7 @@ ${to}`
           window,
           requestId,
           settings,
+          runtime,
           "Approve delete",
           `The model wants to delete:
 ${path}
@@ -2616,6 +2677,7 @@ This cannot be undone from the app.`
           window,
           requestId,
           settings,
+          runtime,
           "Approve command execution",
           `The model wants to run:
 ${path}
@@ -2636,6 +2698,7 @@ ${workspaceRoot}`
           window,
           requestId,
           settings,
+          runtime,
           "Approve test command",
           `The model wants to run:
 ${command}
@@ -2664,27 +2727,24 @@ ${workspaceRoot}`
     } catch {
     }
   }
-  async requestApprovalIfNeeded(window, requestId, windowSettings, title, detail) {
-    if (windowSettings.agent.fullAccess) {
+  effectiveFullAccess(settings, runtime) {
+    if (runtime.wizardId != null) {
+      return Boolean(runtime.wizardFullAccess);
+    }
+    return settings.agent.fullAccess;
+  }
+  async requestApprovalIfNeeded(window, requestId, settings, runtime, title, detail, textDiff) {
+    if (this.effectiveFullAccess(settings, runtime)) {
       return;
     }
     this.emitActivity(window, requestId, "approval", `${title}: waiting for user approval.`);
-    await this.requestApproval(window, title, detail);
+    await this.requestApproval(window, title, detail, textDiff);
   }
-  async requestApproval(window, title, detail) {
-    const result = await dialog.showMessageBox(window, {
-      type: "question",
-      buttons: ["Approve", "Deny"],
-      defaultId: 0,
-      cancelId: 1,
-      title,
-      message: title,
-      detail,
-      noLink: true
-    });
-    if (result.response !== 0) {
-      throw new Error(`${title} was denied by the user.`);
+  async requestApproval(window, title, detail, textDiff) {
+    if (!this.requestToolApprovalUi) {
+      throw new Error("Tool approval UI is not wired.");
     }
+    await this.requestToolApprovalUi(window, title, detail, textDiff);
   }
   assertNotStopped(requestId) {
     const active = this.activeRequests.get(requestId);
@@ -2715,7 +2775,7 @@ const defaultSettings = {
       systemPrompt: "",
       activePromptPresetId: null,
       promptPresets: [],
-      appName: "OpenKiwi",
+      appName: "Mythra",
       appUrl: "https://example.local"
     },
     openrouter: {
@@ -2726,7 +2786,7 @@ const defaultSettings = {
       systemPrompt: "",
       activePromptPresetId: null,
       promptPresets: [],
-      appName: "OpenKiwi",
+      appName: "Mythra",
       appUrl: "https://example.local"
     }
   },
@@ -2803,8 +2863,8 @@ function normalizeProviderProfile(defaults, saved) {
     appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl
   };
 }
-const SETTINGS_FILE = "openkiwi-settings.json";
-const LEGACY_SETTINGS_FILE = "pixel-forge-settings.json";
+const SETTINGS_FILE = "mythra-settings.json";
+const LEGACY_SETTINGS_FILES = ["openkiwi-settings.json", "pixel-forge-settings.json"];
 const mergeSettings = (saved) => ({
   ...defaultSettings,
   ...saved,
@@ -2847,18 +2907,20 @@ const mergeSettings = (saved) => ({
 class SettingsStore {
   userData = app.getPath("userData");
   path = join$1(this.userData, SETTINGS_FILE);
-  legacyPath = join$1(this.userData, LEGACY_SETTINGS_FILE);
   async load() {
-    if (!existsSync(this.path) && existsSync(this.legacyPath)) {
+    const pathsToTry = [this.path, ...LEGACY_SETTINGS_FILES.map((f) => join$1(this.userData, f))];
+    for (const tryPath of pathsToTry) {
       try {
-        await copyFile(this.legacyPath, this.path);
-      } catch {
-      }
-    }
-    for (const p of [this.path, this.legacyPath]) {
-      try {
-        const raw = await readFile(p, "utf8");
-        return mergeSettings(JSON.parse(raw));
+        const raw = await readFile(tryPath, "utf8");
+        const merged = mergeSettings(JSON.parse(raw));
+        if (tryPath !== this.path && !existsSync(this.path)) {
+          try {
+            await mkdir(dirname(this.path), { recursive: true });
+            await writeFile(this.path, JSON.stringify(merged, null, 2), "utf8");
+          } catch {
+          }
+        }
+        return merged;
       } catch {
       }
     }
@@ -2871,7 +2933,7 @@ class SettingsStore {
   }
 }
 function sanitizeWizardFolderSegment(name) {
-  return name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "OpenKiwi Wizard";
+  return name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "Mythra Wizard";
 }
 const IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "out", "build", "coverage"]);
 const MAX_TREE_DEPTH = 10;
@@ -2905,6 +2967,26 @@ Durable notes this Wizard should remember across sessions.
 User corrections, mistakes to avoid, and lessons learned.
 `
 };
+function soulMarkdownForWizard(name, personality) {
+  const trimmed = personality?.trim();
+  if (trimmed) {
+    return `# ${name}
+
+${trimmed}
+`;
+  }
+  return WIZARD_DEFAULT_CONTENT["soul.md"](name);
+}
+function memoryMarkdownForWizard(memory) {
+  const trimmed = memory?.trim();
+  if (trimmed) {
+    return `# Memory
+
+${trimmed}
+`;
+  }
+  return WIZARD_DEFAULT_CONTENT["memory.md"]("");
+}
 const normalizeDocName = (name) => {
   const base = name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/^\.+/, "").slice(0, 80).trim();
   if (!base) return null;
@@ -3119,8 +3201,9 @@ class WorkspaceService {
     const documents = [];
     for (const [file, label] of WIZARD_CORE_DOCS) {
       const target = join$1(root, file);
+      const initialBody = file === "soul.md" ? soulMarkdownForWizard(name, request.wizardPersonality) : file === "memory.md" ? memoryMarkdownForWizard(request.wizardMemory) : WIZARD_DEFAULT_CONTENT[file](name);
       try {
-        await writeFile(target, WIZARD_DEFAULT_CONTENT[file](name), { encoding: "utf8", flag: "wx" });
+        await writeFile(target, initialBody, { encoding: "utf8", flag: "wx" });
       } catch (error) {
         if (error.code !== "EEXIST") throw error;
       }
@@ -3147,12 +3230,39 @@ class WorkspaceService {
       provider: request.provider,
       model: request.model,
       systemPrompt: request.systemPrompt,
-      documents
+      documents,
+      fullAccess: false
     };
     return {
       profile,
       tree: await this.getTree(root)
     };
+  }
+  /** Markdown files at the workspace root, core docs first — reflects creates/deletes without restarting. */
+  async listWizardWorkspaceDocuments(workspaceRoot) {
+    const resolved = resolve(workspaceRoot.trim());
+    try {
+      const st = await stat(resolved);
+      if (!st.isDirectory()) throw new Error("Not a directory");
+    } catch {
+      throw new Error("Wizard workspace is not available.");
+    }
+    const entries = await readdir(resolved, { withFileTypes: true });
+    const mdNames = entries.filter((e) => e.isFile() && /\.md$/i.test(e.name)).map((e) => e.name);
+    const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
+    const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
+    const orderedCore = coreOrder.map((low) => mdNames.find((m) => m.toLowerCase() === low)).filter((x) => Boolean(x));
+    const extras = mdNames.filter((m) => !coreMap.has(m.toLowerCase())).sort((a, b) => a.localeCompare(b));
+    const ordered = [...orderedCore, ...extras];
+    return ordered.map((name) => {
+      const lower = name.toLowerCase();
+      const label = coreMap.get(lower) ?? name.replace(/\.md$/i, "");
+      return {
+        path: join$1(resolved, name),
+        label,
+        core: coreMap.has(lower)
+      };
+    });
   }
   /**
    * Renames the wizard workspace directory when its basename does not match the sanitized display name.
@@ -3469,6 +3579,7 @@ const workspaceWatch = new WorkspaceWatchController(() => {
 let currentSettings = defaultSettings;
 let previousThemeId;
 const pendingWizardPromptApprovals = /* @__PURE__ */ new Map();
+const pendingToolApprovals = /* @__PURE__ */ new Map();
 const recordThemeTransition = (from, to) => {
   if (from !== to) {
     previousThemeId = from;
@@ -3626,6 +3737,22 @@ const requestWizardPromptApproval = async (window, wizardName, before, after) =>
     throw new Error("Wizard system prompt change was denied by the user.");
   }
 };
+const requestToolApproval = async (window, title, detail, diff) => {
+  const id = randomUUID();
+  const payload = {
+    id,
+    title,
+    detail,
+    ...diff ? { diffBefore: diff.before, diffAfter: diff.after } : {}
+  };
+  const approved = await new Promise((resolveApproval) => {
+    pendingToolApprovals.set(id, resolveApproval);
+    window.webContents.send("tool:approval-request", payload);
+  });
+  if (!approved) {
+    throw new Error(`${title} was denied by the user.`);
+  }
+};
 const modelService = new ModelService(
   workspaceService,
   commandService,
@@ -3689,7 +3816,8 @@ const modelService = new ModelService(
     mainWindow?.webContents.send("chats:updated");
     return wizard;
   },
-  requestWizardPromptApproval
+  requestWizardPromptApproval,
+  requestToolApproval
 );
 const assertActiveWorkspace = (root) => {
   if (!root) {
@@ -3708,7 +3836,8 @@ const sanitizeRuntime = (runtime) => {
     conversationId: runtime.conversationId,
     wizardId: typeof runtime.wizardId === "string" ? runtime.wizardId : void 0,
     wizardName: typeof runtime.wizardName === "string" ? runtime.wizardName : void 0,
-    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0
+    wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0,
+    wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0
   };
 };
 const sanitizeChatSettings = (requested) => ({
@@ -3732,7 +3861,7 @@ const createWindow = async () => {
     height: 980,
     minWidth: 1280,
     minHeight: 760,
-    title: "OpenKiwi",
+    title: "Mythra",
     titleBarStyle: "hiddenInset",
     backgroundColor: "#04111f",
     icon: windowIcon,
@@ -3916,6 +4045,13 @@ ipcMain.handle("wizard:prompt-approval-response", async (_event, id, approved) =
   pendingWizardPromptApprovals.delete(id);
   resolveApproval(Boolean(approved));
 });
+ipcMain.handle("tool:approval-response", async (_event, id, approved) => {
+  const resolveApproval = pendingToolApprovals.get(id);
+  if (!resolveApproval) return;
+  pendingToolApprovals.delete(id);
+  resolveApproval(Boolean(approved));
+});
+ipcMain.handle("wizard:list-documents", async (_event, root) => workspaceService.listWizardWorkspaceDocuments(root));
 ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") return;
   let parsed;

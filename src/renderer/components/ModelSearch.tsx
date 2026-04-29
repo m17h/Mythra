@@ -169,6 +169,7 @@ export function ModelSearch({
               {onToggleFavorite && (
                 <button
                   className="model-search__star"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -191,11 +192,16 @@ export function ModelSearch({
               )}
               <button
                 className="model-search__option"
+                onMouseDown={(e) => {
+                  // Keeps focus from returning to the input after click so onFocus doesn't reopen the list.
+                  e.preventDefault();
+                }}
                 onClick={() => {
                   hideHoverTooltip();
                   onChange(m.id);
                   setOpen(false);
                   setQuery('');
+                  inputRef.current?.blur();
                 }}
                 onMouseEnter={(e) => scheduleHoverTooltip(e.currentTarget, m.id)}
                 onMouseLeave={hideHoverTooltip}

@@ -17,12 +17,19 @@ const electronAPI = {
   chooseWizardProjectsFolder: (preferredDefaultPath) => ipcRenderer.invoke("wizard:choose-projects-folder", preferredDefaultPath),
   setupWizard: (request) => ipcRenderer.invoke("wizard:setup", request),
   syncWizardWorkspaceFolder: (profile) => ipcRenderer.invoke("wizard:sync-workspace-folder", profile),
+  listWizardDocuments: (workspaceRoot) => ipcRenderer.invoke("wizard:list-documents", workspaceRoot),
   deleteWizardWorkspace: (root) => ipcRenderer.invoke("wizard:delete-workspace", root),
   respondWizardPromptApproval: (id, approved) => ipcRenderer.invoke("wizard:prompt-approval-response", id, approved),
+  respondToolApproval: (id, approved) => ipcRenderer.invoke("tool:approval-response", id, approved),
   onWizardPromptApprovalRequest: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("wizard:prompt-approval-request", listener);
     return () => ipcRenderer.removeListener("wizard:prompt-approval-request", listener);
+  },
+  onToolApprovalRequest: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("tool:approval-request", listener);
+    return () => ipcRenderer.removeListener("tool:approval-request", listener);
   },
   openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
   listModels: (settings, providerKind) => ipcRenderer.invoke("models:list", settings, providerKind),

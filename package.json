@@ -1,8 +1,8 @@
 {
-  "name": "openkiwi",
+  "name": "mythra",
   "version": "0.1.0",
-  "description": "OpenKiwi — a retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
-  "productName": "OpenKiwi",
+  "description": "Mythra — a retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
+  "productName": "Mythra",
   "main": "out/main/main.js",
   "type": "module",
   "scripts": {

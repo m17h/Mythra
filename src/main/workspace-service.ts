@@ -32,6 +32,22 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
     `# Corrections\n\nUser corrections, mistakes to avoid, and lessons learned.\n`
 };
 
+function soulMarkdownForWizard(name: string, personality?: string): string {
+  const trimmed = personality?.trim();
+  if (trimmed) {
+    return `# ${name}\n\n${trimmed}\n`;
+  }
+  return WIZARD_DEFAULT_CONTENT['soul.md'](name);
+}
+
+function memoryMarkdownForWizard(memory?: string): string {
+  const trimmed = memory?.trim();
+  if (trimmed) {
+    return `# Memory\n\n${trimmed}\n`;
+  }
+  return WIZARD_DEFAULT_CONTENT['memory.md']('');
+}
+
 const normalizeDocName = (name: string) => {
   const base = name
     .trim()
@@ -308,8 +324,14 @@ export class WorkspaceService {
     const documents: WizardDocument[] = [];
     for (const [file, label] of WIZARD_CORE_DOCS) {
       const target = join(root, file);
+      const initialBody =
+        file === 'soul.md'
+          ? soulMarkdownForWizard(name, request.wizardPersonality)
+          : file === 'memory.md'
+            ? memoryMarkdownForWizard(request.wizardMemory)
+            : WIZARD_DEFAULT_CONTENT[file](name);
       try {
-        await writeFile(target, WIZARD_DEFAULT_CONTENT[file](name), { encoding: 'utf8', flag: 'wx' });
+        await writeFile(target, initialBody, { encoding: 'utf8', flag: 'wx' });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
@@ -336,13 +358,43 @@ export class WorkspaceService {
       provider: request.provider,
       model: request.model,
       systemPrompt: request.systemPrompt,
-      documents
+      documents,
+      fullAccess: false
     };
 
     return {
       profile,
       tree: await this.getTree(root)
     };
+  }
+
+  /** Markdown files at the workspace root, core docs first — reflects creates/deletes without restarting. */
+  async listWizardWorkspaceDocuments(workspaceRoot: string): Promise<WizardDocument[]> {
+    const resolved = resolve(workspaceRoot.trim());
+    try {
+      const st = await stat(resolved);
+      if (!st.isDirectory()) throw new Error('Not a directory');
+    } catch {
+      throw new Error('Wizard workspace is not available.');
+    }
+    const entries = await readdir(resolved, { withFileTypes: true });
+    const mdNames = entries.filter((e) => e.isFile() && /\.md$/i.test(e.name)).map((e) => e.name);
+    const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
+    const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
+    const orderedCore = coreOrder
+      .map((low) => mdNames.find((m) => m.toLowerCase() === low))
+      .filter((x): x is string => Boolean(x));
+    const extras = mdNames.filter((m) => !coreMap.has(m.toLowerCase())).sort((a, b) => a.localeCompare(b));
+    const ordered = [...orderedCore, ...extras];
+    return ordered.map((name) => {
+      const lower = name.toLowerCase();
+      const label = coreMap.get(lower) ?? name.replace(/\.md$/i, '');
+      return {
+        path: join(resolved, name),
+        label,
+        core: coreMap.has(lower)
+      };
+    });
   }
 
   /**
