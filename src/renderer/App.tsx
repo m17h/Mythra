@@ -390,15 +390,6 @@ export function App() {
     () => (activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined),
     [activeChatId, chatList]
   );
-  const activeWizardMeta = useMemo(() => {
-    if (!activeChatMeta) return undefined;
-    if (activeChatMeta.kind === 'wizard') return activeChatMeta;
-    if (activeChatMeta.kind === 'wizard-session' && activeChatMeta.wizardId) {
-      return chatList.find((c) => c.id === activeChatMeta.wizardId && c.kind === 'wizard');
-    }
-    return undefined;
-  }, [activeChatMeta, chatList]);
-  const activeWizard = activeWizardMeta?.wizard ?? null;
   const normalChatList = useMemo(() => chatList.filter((c) => (c.kind ?? 'normal') === 'normal'), [chatList]);
   const wizardChatList = useMemo(() => chatList.filter((c) => c.kind === 'wizard'), [chatList]);
   const wizardSessionsByWizardId = useMemo(() => {
@@ -411,6 +402,28 @@ export function App() {
     }
     return map;
   }, [chatList]);
+
+  /** Wizard selected from sidebar (settings/workspace) without an active chat thread. */
+  const [sidebarFocusedWizardId, setSidebarFocusedWizardId] = useState<string | undefined>(undefined);
+
+  const sidebarWizardListMeta = useMemo(
+    () =>
+      sidebarFocusedWizardId
+        ? wizardChatList.find((c) => c.id === sidebarFocusedWizardId)
+        : undefined,
+    [sidebarFocusedWizardId, wizardChatList]
+  );
+
+  const activeWizardMeta = useMemo(() => {
+    if (activeChatMeta?.kind === 'wizard-session' && activeChatMeta.wizardId) {
+      return chatList.find((c) => c.id === activeChatMeta.wizardId && c.kind === 'wizard');
+    }
+    if (activeChatMeta?.kind === 'wizard') {
+      return activeChatMeta;
+    }
+    return sidebarWizardListMeta;
+  }, [activeChatMeta, chatList, sidebarWizardListMeta]);
+  const activeWizard = activeWizardMeta?.wizard ?? null;
 
   useEffect(() => {
     setWizardDraft(activeWizard);
@@ -446,9 +459,31 @@ export function App() {
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
 
+  const showWizardHubPlaceholder = useMemo(
+    () =>
+      sidebarTab === 'wizards' &&
+      !sidebarFocusedWizardId &&
+      activeChatMeta?.kind !== 'wizard-session',
+    [sidebarTab, sidebarFocusedWizardId, activeChatMeta?.kind]
+  );
+
   const chatSessionSubheading = useMemo(() => {
+    if (
+      sidebarTab === 'wizards' &&
+      !sidebarFocusedWizardId &&
+      activeChatMeta?.kind !== 'wizard-session'
+    ) {
+      return 'Select a Wizard to get started';
+    }
     if (activeWizard) {
-      const session = activeChatMeta?.kind === 'wizard-session' ? activeChatMeta.title : 'Home';
+      const session =
+        activeChatMeta?.kind === 'wizard-session'
+          ? activeChatMeta.title
+          : !activeChatId && sidebarFocusedWizardId && activeWizardMeta?.id === sidebarFocusedWizardId
+            ? 'New session on first send'
+            : activeChatMeta?.kind === 'wizard'
+              ? 'Home'
+              : 'Home';
       return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
     }
     if (chatMessages.length === 0) {
@@ -468,7 +503,18 @@ export function App() {
       }
     }
     return chatTitle(chatMessages);
-  }, [activeChatId, activeChatMeta, chatList, chatMessages, newChatModelOverride, pathLabel]);
+  }, [
+    activeChatId,
+    activeChatMeta,
+    activeWizard,
+    activeWizardMeta?.id,
+    chatList,
+    chatMessages,
+    newChatModelOverride,
+    pathLabel,
+    sidebarFocusedWizardId,
+    sidebarTab
+  ]);
 
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
@@ -832,7 +878,7 @@ export function App() {
     [wizardChatList]
   );
 
-  /** When leaving Wizard context, detach the Wizard folder rather than treating it as the normal sidebar workspace (avoids edits in the wrong tree). Optionally remount Settings → lastWorkspaceRoot when it is not a Wizard workspace. */
+  /** When leaving Wizard context, detach the Wizard folder rather than treating it as the normal sidebar workspace. Does not auto-open the last non-wizard workspace — the user does that with Open workspace. */
   const switchAwayFromWizardMountedWorkspace = useCallback(async () => {
     const root = workspaceRootRef.current;
     if (!root || !isWizardOwnedWorkspaceRoot(root)) return;
@@ -843,24 +889,7 @@ export function App() {
     setWorkspaceChanges(null);
     setBuffers({});
     setActiveFilePath(undefined);
-
-    const lastRoot = await window.electronAPI.getLastValidWorkspaceRoot();
-    if (lastRoot && !isWizardOwnedWorkspaceRoot(lastRoot)) {
-      try {
-        const result = await window.electronAPI.activateWorkspace(lastRoot);
-        setWorkspaceRoot(result.root);
-        setWorkspaceTree(result.tree);
-        setWorkspaceChanges(null);
-        setBuffers({});
-        setActiveFilePath(undefined);
-        void refreshWorkspaceChanges(result.root);
-      } catch (e) {
-        setSettingsStatus(
-          e instanceof Error ? e.message : 'Could not reopen your saved workspace folder. Use Open workspace in the sidebar.'
-        );
-      }
-    }
-  }, [isWizardOwnedWorkspaceRoot, refreshWorkspaceChanges]);
+  }, [isWizardOwnedWorkspaceRoot]);
 
   const openFile = async (target: string) => {
     if (!workspaceRoot) return;
@@ -1100,6 +1129,7 @@ export function App() {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    setSidebarFocusedWizardId(undefined);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -1119,13 +1149,25 @@ export function App() {
     setShowNewMenu(false);
   };
 
-  const loadChat = async (id: string) => {
+  const handleChatsTabClick = () => {
+    setSidebarTab('chats');
+    const meta = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
+    const comingFromWizardContext = Boolean(
+      sidebarFocusedWizardId || meta?.kind === 'wizard' || meta?.kind === 'wizard-session'
+    );
+    if (comingFromWizardContext) void startNewChat();
+  };
+
+  const loadChat = async (id: string, opts?: { expandWizardInSidebar?: boolean }) => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
     const chat = await window.electronAPI.loadChat(id);
     if (!chat) return;
+
+    /** Opening any saved conversation clears “wizard selected, no chat” sidebar focus. */
+    setSidebarFocusedWizardId(undefined);
     const parentWizard =
       chat.kind === 'wizard-session' && chat.wizardId
         ? await window.electronAPI.loadChat(chat.wizardId)
@@ -1139,7 +1181,12 @@ export function App() {
         setSettingsStatus(e instanceof Error ? e.message : 'Wizard workspace could not be opened.');
       }
       setSidebarTab('wizards');
-      setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
+      const expandInSidebar =
+        opts?.expandWizardInSidebar ??
+        chat.kind !== 'wizard' /* wizard-session (and similar) expands parent row in sidebar */;
+      if (expandInSidebar) {
+        setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
+      }
     } else {
       setSidebarTab('chats');
       await switchAwayFromWizardMountedWorkspace();
@@ -1160,6 +1207,72 @@ export function App() {
     setLastTokenUsage(null);
     setChatStreaming(Boolean(inFlight));
     setActiveRequestId(inFlight?.requestId);
+  };
+
+  const handleWizardSidebarRowActivate = async (chat: SavedChatMeta) => {
+    if (editingTitleId === chat.id || !chat.wizard?.workspaceRoot) return;
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
+    const sessionOpenForThisWizard = active?.kind === 'wizard-session' && active.wizardId === chat.id;
+    const toggleOnlySidebar =
+      (!activeChatId && sidebarFocusedWizardId === chat.id) || sessionOpenForThisWizard;
+
+    if (toggleOnlySidebar) {
+      setExpandedWizardIds((current) => {
+        const next = new Set(current);
+        if (next.has(chat.id)) next.delete(chat.id);
+        else next.add(chat.id);
+        return next;
+      });
+      return;
+    }
+
+    setExpandedWizardIds((current) => {
+      const next = new Set(current);
+      if (next.has(chat.id)) next.delete(chat.id);
+      else next.add(chat.id);
+      return next;
+    });
+
+    setSidebarFocusedWizardId(chat.id);
+    setInspectorTab('settings');
+    setSettingsInspectorScope('wizard');
+
+    lastContentFingerprintRef.current = null;
+    setChatMessages([]);
+    setChatTimeline([]);
+    setChatInput('');
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(undefined);
+    setActiveChatId(undefined);
+    activeChatIdRef.current = undefined;
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
+
+    try {
+      await activateWorkspace(chat.wizard.workspaceRoot);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : 'Wizard workspace could not be opened.');
+    }
+    setSidebarTab('wizards');
+
+    try {
+      const full = await window.electronAPI.loadChat(chat.id);
+      if (full?.kind === 'wizard' && full.wizard) {
+        setWizardDraft(full.wizard);
+        wizardDraftRef.current = full.wizard;
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   const deleteChat = async (id: string) => {
@@ -1194,6 +1307,7 @@ export function App() {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+    setSidebarFocusedWizardId(undefined);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -1279,13 +1393,17 @@ export function App() {
     }
   };
 
-  const createWizardSession = async (wizardMeta: SavedChatMeta) => {
-    const full = await window.electronAPI.loadChat(wizardMeta.id);
-    if (!full || full.kind !== 'wizard' || !full.wizard) return;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+  /** Persist a new wizard-session with the bootstrap assistant message (shared with Send auto-create). */
+  const createWizardSessionBootstrapOnDisk = async (
+    full: SavedChat
+  ): Promise<{
+    sessionId: string;
+    assistantMessage: ChatMessage;
+    timeline: ChatTimelineEntry[];
+    workspaceRoot: string;
+    wizardDiskId: string;
+  } | null> => {
+    if (!full?.wizard || full.kind !== 'wizard') return null;
     const now = Date.now();
     const assistantMessage: ChatMessage = {
       id: uid(),
@@ -1309,6 +1427,25 @@ export function App() {
       wizardId: full.id
     };
     await window.electronAPI.saveChat(session);
+    return {
+      sessionId,
+      assistantMessage,
+      timeline,
+      workspaceRoot: full.wizard.workspaceRoot,
+      wizardDiskId: full.id
+    };
+  };
+
+  const createWizardSession = async (wizardMeta: SavedChatMeta) => {
+    const full = await window.electronAPI.loadChat(wizardMeta.id);
+    if (!full || full.kind !== 'wizard' || !full.wizard) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const bootstrap = await createWizardSessionBootstrapOnDisk(full);
+    if (!bootstrap) return;
+    const { assistantMessage, timeline, sessionId } = bootstrap;
     lastContentFingerprintRef.current = chatFingerprint([assistantMessage], timeline);
     setChatMessages([assistantMessage]);
     setChatTimeline(timeline);
@@ -1324,7 +1461,8 @@ export function App() {
     setExpandedWizardIds((current) => new Set(current).add(full.id));
     setSidebarTab('wizards');
     await refreshChatList();
-    await activateWorkspace(full.wizard.workspaceRoot);
+    await activateWorkspace(bootstrap.workspaceRoot);
+    setSidebarFocusedWizardId(undefined);
   };
 
   const beginRenameChat = (e: MouseEvent, id: string, currentTitle: string) => {
@@ -1568,8 +1706,67 @@ export function App() {
 
   const sendChat = async () => {
     const sendSettings = settingsRef.current;
-    if (chatStreamingRef.current || !sendSettings || (chatInput.trim().length === 0 && chatAttachments.length === 0)) return;
-    const activeDiskChat = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+    const trimmedInput = chatInput.trim();
+    const attachmentsSnapshot = [...chatAttachments];
+    if (
+      chatStreamingRef.current ||
+      !sendSettings ||
+      (trimmedInput.length === 0 && attachmentsSnapshot.length === 0)
+    ) {
+      return;
+    }
+
+    let messagesForHistory = chatMessages;
+    let timelineForHistory = chatTimeline;
+    let disk: SavedChat | null = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+
+    if (activeWizard && activeWizardMeta?.id && (!disk || disk.kind === 'wizard')) {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const fullWizard = await window.electronAPI.loadChat(activeWizardMeta.id);
+      if (
+        !fullWizard ||
+        fullWizard.kind !== 'wizard' ||
+        !fullWizard.wizard
+      ) {
+        return;
+      }
+      const bootstrap = await createWizardSessionBootstrapOnDisk(fullWizard);
+      if (!bootstrap) return;
+      const {
+        assistantMessage,
+        timeline: bootstrapTimeline,
+        sessionId,
+        workspaceRoot: wsRoot,
+        wizardDiskId
+      } = bootstrap;
+      lastContentFingerprintRef.current = chatFingerprint([assistantMessage], bootstrapTimeline);
+      setActiveChatId(sessionId);
+      activeChatIdRef.current = sessionId;
+      setChatSessionId(sessionId);
+      chatSessionIdRef.current = sessionId;
+      setSidebarFocusedWizardId(undefined);
+      setExpandedWizardIds((current) => new Set(current).add(wizardDiskId));
+      await refreshChatList();
+      try {
+        await activateWorkspace(wsRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : 'Wizard workspace could not be opened.');
+        return;
+      }
+      disk = await window.electronAPI.loadChat(sessionId);
+      if (!disk || disk.kind !== 'wizard-session') return;
+      messagesForHistory = disk.messages;
+      timelineForHistory = disk.timeline;
+    }
+
+    const activeDiskChat = disk;
+    if (activeWizard && (!activeDiskChat || activeDiskChat.kind !== 'wizard-session')) {
+      setSettingsStatus('Wizard session could not be started.');
+      return;
+    }
     const parentWizardChat =
       activeDiskChat?.kind === 'wizard-session' && activeDiskChat.wizardId
         ? await window.electronAPI.loadChat(activeDiskChat.wizardId)
@@ -1595,32 +1792,32 @@ export function App() {
     const userMessage: ChatMessage = {
       id: uid(),
       role: 'user',
-      content: chatInput.trim().length > 0 ? chatInput : 'Please use the attached image(s) as context for this request.',
-      attachments: chatAttachments,
+      content: trimmedInput.length > 0 ? trimmedInput : 'Please use the attached image(s) as context for this request.',
+      attachments: attachmentsSnapshot,
       status: 'done'
     };
     const requestId = uid();
-    const assistantMessage: ChatMessage = {
+    const assistantStreaming: ChatMessage = {
       id: requestId,
       role: 'assistant',
       content: '',
       status: 'streaming',
       reasoning: sendSettings.ui.sessionMode === 'talk' && !wizardForStream ? '' : undefined
     };
-    const nextHistory = [...chatMessages, userMessage];
+    const nextHistory = [...messagesForHistory, userMessage];
     const nextTimeline: ChatTimelineEntry[] = [
-      ...chatTimeline,
+      ...timelineForHistory,
       { id: `message-${userMessage.id}`, type: 'message', message: userMessage },
-      { id: `message-${assistantMessage.id}`, type: 'message', message: assistantMessage }
+      { id: `message-${assistantStreaming.id}`, type: 'message', message: assistantStreaming }
     ];
-    setChatMessages([...nextHistory, assistantMessage]);
+    setChatMessages([...nextHistory, assistantStreaming]);
     setChatTimeline(nextTimeline);
     setChatInput('');
     setChatAttachments([]);
     setChatStreaming(true);
     setActiveRequestId(requestId);
 
-    const priorChatId = activeChatId;
+    const priorChatId = activeChatIdRef.current;
     let chatIdForStream = priorChatId;
     let overrideForStream: ChatModelOverride | null = null;
     if (!priorChatId) {
@@ -1635,9 +1832,9 @@ export function App() {
       setNewChatModelOverride(null);
       const chat: SavedChat = {
         id: newId,
-        title: chatTitle([...nextHistory, assistantMessage]),
+        title: chatTitle([...nextHistory, assistantStreaming]),
         titleOverride: null,
-        messages: [...nextHistory, assistantMessage],
+        messages: [...nextHistory, assistantStreaming],
         timeline: nextTimeline,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -1654,7 +1851,7 @@ export function App() {
     inFlightChatsRef.current.set(requestId, {
       chatId: chatIdForStream,
       requestId,
-      messages: [...nextHistory, assistantMessage],
+      messages: [...nextHistory, assistantStreaming],
       timeline: nextTimeline
     });
     const streamSettings = wizardForStream
@@ -1682,17 +1879,17 @@ export function App() {
 
     const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
     if (wizardForStream) {
-      const loaded = wizardDocsContext.loaded;
-      const okCount = loaded.filter((doc) => doc.ok).length;
+      const loadedDocs = wizardDocsContext.loaded;
+      const okCount = loadedDocs.filter((doc) => doc.ok).length;
       const checklist = [
         `Workspace active: ${wizardForStream.workspaceRoot}`,
-        ...loaded.map((doc) => `${doc.ok ? 'Loaded' : 'Missing'} ${doc.name}`),
-        `Injected ${okCount}/${loaded.length} core docs into this request.`
+        ...loadedDocs.map((doc) => `${doc.ok ? 'Loaded' : 'Missing'} ${doc.name}`),
+        `Injected ${okCount}/${loadedDocs.length} core docs into this request.`
       ].join('\n');
       const activity: ChatActivity = {
         id: uid(),
         requestId,
-        kind: okCount === loaded.length ? 'success' : 'warning',
+        kind: okCount === loadedDocs.length ? 'success' : 'warning',
         message: checklist
       };
       const activityEntry: ChatTimelineEntry = { id: `activity-${activity.id}`, type: 'activity', activity };
@@ -1742,6 +1939,7 @@ export function App() {
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
   const isWizardActive = Boolean(activeWizard);
+  const chatPanelIsWizard = Boolean(isWizardActive && !showWizardHubPlaceholder);
   /** Per-chat model override wins in the top bar and footer over the global default. */
   const effectiveHeaderModelId =
     activeWizard?.model ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? '';
@@ -2322,7 +2520,7 @@ export function App() {
             <div className="sidebar-tabs" role="tablist">
               <button
                 className={`sidebar-tabs__tab ${sidebarTab === 'chats' ? 'is-active' : ''}`}
-                onClick={() => setSidebarTab('chats')}
+                onClick={handleChatsTabClick}
                 type="button"
                 role="tab"
               >
@@ -2614,14 +2812,10 @@ export function App() {
                             <div
                               aria-expanded={expandedWizardIds.has(chat.id)}
                               className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
-                              onClick={() =>
-                                setExpandedWizardIds((current) => {
-                                  const next = new Set(current);
-                                  if (next.has(chat.id)) next.delete(chat.id);
-                                  else next.add(chat.id);
-                                  return next;
-                                })
-                              }
+                              onClick={() => {
+                                if (editingTitleId === chat.id) return;
+                                void handleWizardSidebarRowActivate(chat);
+                              }}
                             >
                               {editingTitleId === chat.id ? (
                                 <div className="chat-list__content chat-list__content--editing" onClick={(e) => e.stopPropagation()}>
@@ -2810,10 +3004,12 @@ export function App() {
             contextLimit={resolvedContextLimit}
             input={chatInput}
             isStreaming={chatStreaming}
-            isWizard={isWizardActive}
+            isWizard={chatPanelIsWizard}
             lastTokenUsage={lastTokenUsage}
             sessionSubheading={chatSessionSubheading}
             timeline={chatTimeline}
+            wizardHubPlaceholder={showWizardHubPlaceholder}
+            onOpenWizardCreator={() => setShowWizardSetup(true)}
             onAttachImages={addChatAttachments}
             onInputChange={setChatInput}
             onRemoveAttachment={(id) => setChatAttachments((c) => c.filter((a) => a.id !== id))}
@@ -2825,7 +3021,7 @@ export function App() {
             webSearchDisabled={!settings}
             onWebSearchChange={handleWebSearchChange}
             onSessionModeToggle={handleSessionModeToggle}
-            sessionModeToggleDisabled={!settings || isWizardActive}
+            sessionModeToggleDisabled={!settings || chatPanelIsWizard}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}

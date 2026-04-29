@@ -860,8 +860,33 @@ html[data-platform='darwin'] .app-shell {
 .wizard-title-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
+}
+
+.wizard-title-row__expand-hit {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 -1px 0 -3px;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.wizard-title-row__expand-hit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme='ice-station'] .wizard-title-row__expand-hit:hover,
+:root[data-theme='kiwi'] .wizard-title-row__expand-hit:hover,
+:root[data-theme='custom'][data-custom-light='true'] .wizard-title-row__expand-hit:hover {
+
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .wizard-title-row span {
@@ -880,7 +905,8 @@ html[data-platform='darwin'] .app-shell {
     color var(--transition-fast);
 }
 
-.chat-list__item--wizard:hover .wizard-title-row__chevron,
+.chat-list__item--wizard:hover .wizard-title-row__expand-hit .wizard-title-row__chevron,
+.wizard-title-row__expand-hit:hover .wizard-title-row__chevron,
 .wizard-title-row__chevron.is-open {
   color: var(--accent-light);
 }
@@ -1483,6 +1509,43 @@ html[data-platform='darwin'] .app-shell {
   color: var(--text-2);
   font-size: 0.86rem;
   line-height: 1.5;
+}
+
+.wizard-hub-scroll {
+  align-items: stretch;
+}
+
+.chat-scroll.wizard-hub-scroll .wizard-hub-scroll__inner {
+  min-height: 100%;
+}
+
+.wizard-hub-empty.chat-empty {
+  padding-top: min(72px, 12vh);
+  padding-bottom: min(96px, 18vh);
+}
+
+.chat-empty__icon--wizard-hat svg {
+  display: block;
+}
+
+.wizard-hub-desc__here {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-light, var(--accent));
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.wizard-hub-desc__here:hover {
+  opacity: 0.9;
 }
 
 /* Chat activity */

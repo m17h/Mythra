@@ -243,6 +243,9 @@ interface ChatPanelProps {
   terminalJobId?: string;
   onTerminalRun: (command: string) => void;
   onTerminalKill: () => void;
+  /** Wizards tab with no wizard/session selected: show hub copy + create action instead of the thread. */
+  wizardHubPlaceholder?: boolean;
+  onOpenWizardCreator?: () => void;
 }
 
 const activityLabelMap = {
@@ -434,7 +437,9 @@ export function ChatPanel({
   terminalLogs,
   terminalJobId,
   onTerminalRun,
-  onTerminalKill
+  onTerminalKill,
+  wizardHubPlaceholder = false,
+  onOpenWizardCreator
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -717,6 +722,41 @@ export function ChatPanel({
         </div>
       </div>
 
+      {wizardHubPlaceholder ? (
+        <div className="chat-scroll wizard-hub-scroll" onScroll={handleScroll} ref={scrollRef}>
+          <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
+            <div className="chat-empty wizard-hub-empty">
+              <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
+                <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                  <path
+                    d="M22 7L36 37H8L22 7z"
+                    stroke="currentColor"
+                    strokeWidth="1.45"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="22" cy="23" r="2.35" fill="currentColor" opacity={0.22} />
+                  <path
+                    d="M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8"
+                    stroke="currentColor"
+                    strokeWidth="1.35"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </div>
+              <h3 className="chat-empty__title">Select a wizard to get started</h3>
+              <p className="chat-empty__desc wizard-hub-desc">
+                Pick one from the list on the left, or{' '}
+                <button type="button" className="wizard-hub-desc__here" onClick={() => onOpenWizardCreator?.()}>
+                  create one here
+                </button>
+                .
+              </p>
+            </div>
+            <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
+          </div>
+        </div>
+      ) : (
+        <>
       <div className="chat-scroll" onScroll={handleScroll} ref={scrollRef}>
         <div className="chat-scroll__inner" ref={innerRef}>
         {timeline.length === 0 ? (
@@ -969,6 +1009,8 @@ export function ChatPanel({
           )}
         </div>
       </div>
+        </>
+      )}
     </section>
   );
 }
