@@ -10,8 +10,10 @@ import { FileTree } from './components/FileTree';
 import { ModelSearch } from './components/ModelSearch';
 import { MythraMark } from './components/MythraMark';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SystemPromptInfoDialog } from './components/SystemPromptInfoDialog';
 import { SystemPromptModal } from './components/SystemPromptModal';
 import { WizardSettingsPanel } from './components/WizardSettingsPanel';
+import { WizardExportDialog } from './components/WizardExportDialog';
 import { WizardSetupModal } from './components/WizardSetupModal';
 import {
   defaultSettings,
@@ -41,6 +43,16 @@ import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@share
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+
+/** POSIX relative path from workspace root when `absolutePath` is under it; otherwise basename. */
+function workspaceRelativeDisplay(workspaceRoot: string, absolutePath: string): string {
+  const root = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+  const abs = absolutePath.replace(/\\/g, '/');
+  const prefix = `${root}/`;
+  if (abs === root) return '';
+  if (abs.startsWith(prefix)) return abs.slice(prefix.length);
+  return pathLabel(absolutePath);
+}
 
 /** Loose match for comparing filesystem roots across slash variants. */
 const pathsEqual = (a: string, b: string) =>
@@ -73,18 +85,36 @@ const pickDefaultModel = (modelList: ModelInfo[], currentModel?: string) => {
   const preferred = modelList.find((m) => !isEmbeddingModel(m.id));
   return preferred?.id ?? modelList[0]?.id ?? '';
 };
+
+/** User stop/cancel excluded; detects typical fetch/socket errors when LM Studio (or upstream) disappears. */
+const looksLikeProviderTransportError = (raw: string) => {
+  if (raw === 'Request stopped.' || /\bstopped by user\b/i.test(raw)) return false;
+  const m = raw.toLowerCase();
+  return (
+    m.includes('econnrefused') ||
+    m.includes('econnreset') ||
+    m.includes('enotfound') ||
+    m.includes('enetunreach') ||
+    m.includes('etimedout') ||
+    m.includes('socket hang up') ||
+    m.includes('fetch failed') ||
+    m.includes('failed to fetch') ||
+    (m.includes('network') && m.includes('error')) ||
+    m.includes('load failed')
+  );
+};
+
+const LM_STUDIO_CATALOG_PROBE_MS = 35_000;
+
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
   { value: 'openrouter', label: 'OpenRouter' }
 ];
 const needsSearchApiKeyNotice = (settings: AppSettings) => {
-  if (settings.search.provider === 'tavily') {
-    return settings.search.tavilyApiKey.trim().length === 0;
-  }
-  if (settings.search.provider === 'brave') {
-    return settings.search.braveApiKey.trim().length === 0;
-  }
-  return true;
+  if (settings.search.provider === 'duckduckgo') return false;
+  const hasAny =
+    settings.search.tavilyApiKey.trim().length > 0 || settings.search.braveApiKey.trim().length > 0;
+  return !hasAny;
 };
 
 const chatTitle = (messages: ChatMessage[]) => {
@@ -107,14 +137,21 @@ const sessionTitle = (messages: ChatMessage[], fallback = 'New session') => {
   return text.length > 42 ? `${text.slice(0, 42)}...` : text || fallback;
 };
 
-const buildWizardSystemPrompt = (wizard: WizardProfile) => `${wizard.systemPrompt}
+const buildWizardSystemPrompt = (wizard: WizardProfile) => {
+  const outsideOn = Boolean(wizard.allowOutsideWorkspace);
+  const pathRules = outsideOn
+    ? `- Path-based file tools may read/write/delete/rename/outline targets outside this folder using ../ or absolute local paths when needed (cloud-sync folders stay blocked). list_files, workspace search, apply_patch, git diff, and shell commands still run only under: ${wizard.workspaceRoot}`
+    : `- Path-based file tools stay inside your workspace folder (${wizard.workspaceRoot}) unless the user enables **Allow paths outside workspace** in Inspector → Wizard settings. If they ask you to edit or read arbitrary paths or another Wizard’s folder, explain this limit and tell them they can turn that setting on—or copy files here, export/import a bundle, switch Wizards, or paste content.`;
+
+  return `${wizard.systemPrompt}
 
 Mythra Wizard runtime:
-- You are currently inside your private Wizard workspace: ${wizard.workspaceRoot}
-- Always use this workspace for file reads, memory, and edits unless the user explicitly tells you otherwise.
-- At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.
-- When asked about your identity, memory, tools, or corrections, read the matching Markdown file before answering.
+- You are currently associated with your private Wizard workspace: ${wizard.workspaceRoot}
+${pathRules}
+- At the start of every message in a session, Mythra injects the current contents of every \`.md\` file in your workspace (below your system prompt). Core docs are listed first; read or re-read specific files with tools if the user edits them mid-chat.
+- When asked about your identity, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
 - Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
+};
 
 interface WizardDocsContextResult {
   message: ChatMessage | null;
@@ -122,19 +159,28 @@ interface WizardDocsContextResult {
 }
 
 const buildWizardDocsContext = async (wizard: WizardProfile): Promise<WizardDocsContextResult> => {
-  const coreDocs = wizard.documents.filter((doc) => doc.core);
-  if (coreDocs.length === 0) return { message: null, loaded: [] };
+  let docs: WizardDocument[];
+  try {
+    docs = await window.electronAPI.listWizardDocuments(wizard.workspaceRoot);
+  } catch {
+    return { message: null, loaded: [] };
+  }
+
+  const mdDocs = docs.filter((doc) => /\.md$/i.test(doc.path));
+  if (mdDocs.length === 0) return { message: null, loaded: [] };
+
   const loaded: Array<{ name: string; ok: boolean }> = [];
   const parts = await Promise.all(
-    coreDocs.map(async (doc) => {
-      const name = doc.path.split(/[\\/]/).pop() ?? doc.label;
+    mdDocs.map(async (doc) => {
+      const displayPath =
+        workspaceRelativeDisplay(wizard.workspaceRoot, doc.path) || doc.label || pathLabel(doc.path);
       try {
         const file = await window.electronAPI.openFile(wizard.workspaceRoot, doc.path);
-        loaded.push({ name, ok: true });
-        return `## ${name}\n${file.content}`;
+        loaded.push({ name: displayPath, ok: true });
+        return `## ${displayPath}\n${file.content}`;
       } catch {
-        loaded.push({ name, ok: false });
-        return `## ${name}\n[Could not read this document.]`;
+        loaded.push({ name: displayPath, ok: false });
+        return `## ${displayPath}\n[Could not read this document.]`;
       }
     })
   );
@@ -144,7 +190,7 @@ const buildWizardDocsContext = async (wizard: WizardProfile): Promise<WizardDocs
       id: `wizard-docs-${Date.now()}`,
       role: 'system',
       content: [
-        'Wizard core workspace documents are injected below. Treat these as current private context for this Wizard session.',
+        'Wizard Markdown workspace documents are injected below (every .md file Mythra could find under this workspace). Treat them as current private context; use read_file if something may have changed since this injection.',
         ...parts
       ].join('\n\n'),
       status: 'done'
@@ -278,11 +324,13 @@ export function App() {
   const [showWizardSetup, setShowWizardSetup] = useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
+  const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
   const [wizardDraft, setWizardDraft] = useState<WizardProfile | null>(null);
+  const [wizardExportChat, setWizardExportChat] = useState<SavedChatMeta | null>(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{ wizardName: string; workspaceRoot: string } | null>(null);
@@ -330,6 +378,35 @@ export function App() {
     );
     showInFlightIfActive(snapshot);
     return snapshot;
+  };
+
+  /** Coalesce SSE chunks into one React refresh per animation frame — reduces Electron IPC/React churn vs per-token renders. */
+  const streamFlushRafRef = useRef<number | null>(null);
+  const streamPendingDeltaRef = useRef<Map<string, { text: string; reasoning: string }>>(new Map());
+  const flushStreamingDeltaBufferRef = useRef<() => void>(() => {});
+
+  flushStreamingDeltaBufferRef.current = () => {
+    const map = streamPendingDeltaRef.current;
+    if (map.size === 0) return;
+    const entries = [...map.entries()];
+    map.clear();
+    for (const [requestId, { text, reasoning }] of entries) {
+      if (!text && !reasoning) continue;
+      updateInFlightMessage(requestId, (m) => ({
+        ...m,
+        content: text ? `${m.content}${text}` : m.content,
+        reasoning: reasoning ? `${m.reasoning ?? ''}${reasoning}` : m.reasoning,
+        status: 'streaming' as const
+      }));
+    }
+  };
+
+  const cancelStreamDeltaFlushAndFlushNow = () => {
+    if (streamFlushRafRef.current != null) {
+      cancelAnimationFrame(streamFlushRafRef.current);
+      streamFlushRafRef.current = null;
+    }
+    flushStreamingDeltaBufferRef.current();
   };
 
   const appendActivity = (activity: ChatActivity) => {
@@ -614,11 +691,40 @@ export function App() {
   }, [settings]);
 
   const openRouterKeyForEffect = settings?.selectedProvider === 'openrouter' ? settings.providers.openrouter.apiKey : null;
+  const lmstudioBaseForCatalog =
+    settings?.selectedProvider === 'lmstudio' ? (settings.providers.lmstudio.baseUrl ?? '').trim() : null;
 
   useEffect(() => {
     if (!settings) return;
     void refreshModels(settings);
-  }, [settings?.selectedProvider, openRouterKeyForEffect]);
+  }, [settings?.selectedProvider, openRouterKeyForEffect, lmstudioBaseForCatalog]);
+
+  /**
+   * LM Studio has no long-lived connection — the UI “Connected” state comes from the last catalog fetch.
+   * Re-probe on focus, when the window becomes visible, and on an interval so turning the server off updates the status
+   * without switching providers.
+   */
+  useEffect(() => {
+    if (!settings || settings.selectedProvider !== 'lmstudio') return;
+
+    const poke = () => {
+      void refreshModelsRef.current();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') poke();
+    };
+
+    window.addEventListener('focus', poke);
+    document.addEventListener('visibilitychange', onVisibility);
+    const intervalId = window.setInterval(poke, LM_STUDIO_CATALOG_PROBE_MS);
+
+    return () => {
+      window.removeEventListener('focus', poke);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(intervalId);
+    };
+  }, [settings?.selectedProvider, lmstudioBaseForCatalog]);
 
   useEffect(() => {
     if (!settings) return;
@@ -657,14 +763,20 @@ export function App() {
       }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
-      updateInFlightMessage(requestId, (m) => ({
-        ...m,
-        content: delta ? `${m.content}${delta}` : m.content,
-        reasoning: reasoningDelta ? `${m.reasoning ?? ''}${reasoningDelta}` : m.reasoning,
-        status: 'streaming' as const
-      }));
+      const map = streamPendingDeltaRef.current;
+      const cur = map.get(requestId) ?? { text: '', reasoning: '' };
+      if (delta) cur.text += delta;
+      if (reasoningDelta) cur.reasoning += reasoningDelta;
+      map.set(requestId, cur);
+      if (streamFlushRafRef.current == null) {
+        streamFlushRafRef.current = window.requestAnimationFrame(() => {
+          streamFlushRafRef.current = null;
+          flushStreamingDeltaBufferRef.current();
+        });
+      }
     });
     const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, usage }) => {
+      cancelStreamDeltaFlushAndFlushNow();
       const snapshot = updateInFlightMessage(requestId, (m) => {
         const next: ChatMessage = { ...m, content, status: 'done' as const };
         if (reasoning !== undefined) next.reasoning = reasoning;
@@ -690,6 +802,12 @@ export function App() {
       setActiveRequestId(undefined);
     });
     const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      cancelStreamDeltaFlushAndFlushNow();
+      const s = settingsRef.current;
+      if (s?.selectedProvider === 'lmstudio' && looksLikeProviderTransportError(error)) {
+        void refreshModelsRef.current();
+      }
+
       const snapshot = updateInFlightMessage(requestId, (m) => ({
         ...m,
         content: error,
@@ -801,6 +919,7 @@ export function App() {
       }
     );
     return () => {
+      cancelStreamDeltaFlushAndFlushNow();
       offChunk();
       offDone();
       offDelta();
@@ -913,7 +1032,7 @@ export function App() {
   };
 
   const refreshModels = async (settingsOverride?: AppSettings) => {
-    const activeSettings = settingsOverride ?? settings;
+    const activeSettings = settingsOverride ?? settingsRef.current;
     if (!activeSettings) return;
 
     setModelCatalogSettled(false);
@@ -986,6 +1105,9 @@ export function App() {
       setModelCatalogSettled(true);
     }
   };
+
+  const refreshModelsRef = useRef(refreshModels);
+  refreshModelsRef.current = refreshModels;
 
   const persistSettingsToDisk = async (next: AppSettings) => {
     const saved = await window.electronAPI.saveSettings(next);
@@ -1210,7 +1332,7 @@ export function App() {
   };
 
   const handleWizardSidebarRowActivate = async (chat: SavedChatMeta) => {
-    if (editingTitleId === chat.id || !chat.wizard?.workspaceRoot) return;
+    if (!chat.wizard?.workspaceRoot) return;
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -1408,7 +1530,7 @@ export function App() {
     const assistantMessage: ChatMessage = {
       id: uid(),
       role: 'assistant',
-      content: `New session started for ${full.wizard.name}. I will use the injected core docs and check soul.md, tools.md, memory.md, and corrections.md before my first substantive response.`,
+      content: `New session started for ${full.wizard.name}. Each message loads every Markdown file in your workspace into context automatically—core docs first—so custom notes are included too.`,
       status: 'done'
     };
     const timeline: ChatTimelineEntry[] = [{ id: `message-${assistantMessage.id}`, type: 'message', message: assistantMessage }];
@@ -1463,6 +1585,12 @@ export function App() {
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
     setSidebarFocusedWizardId(undefined);
+  };
+
+  const beginWizardExport = (e: MouseEvent, chat: SavedChatMeta) => {
+    e.stopPropagation();
+    if (!chat.wizard) return;
+    setWizardExportChat(chat);
   };
 
   const beginRenameChat = (e: MouseEvent, id: string, currentTitle: string) => {
@@ -1884,7 +2012,7 @@ export function App() {
       const checklist = [
         `Workspace active: ${wizardForStream.workspaceRoot}`,
         ...loadedDocs.map((doc) => `${doc.ok ? 'Loaded' : 'Missing'} ${doc.name}`),
-        `Injected ${okCount}/${loadedDocs.length} core docs into this request.`
+        `Injected ${okCount}/${loadedDocs.length} Markdown workspace documents into this request.`
       ].join('\n');
       const activity: ChatActivity = {
         id: uid(),
@@ -1909,7 +2037,8 @@ export function App() {
       wizardId: parentWizardChat?.kind === 'wizard' ? parentWizardChat.id : undefined,
       wizardName: wizardForStream?.name,
       wizardSystemPrompt: wizardForStream?.systemPrompt,
-      wizardFullAccess: wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined
+      wizardFullAccess: wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined,
+      wizardAllowOutsideWorkspace: wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : undefined
     });
   };
 
@@ -2038,6 +2167,13 @@ export function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+      <SystemPromptInfoDialog onClose={() => setShowSystemPromptHelp(false)} open={showSystemPromptHelp} />
+      <WizardExportDialog
+        onClose={() => setWizardExportChat(null)}
+        onStatusMessage={(msg) => setSettingsStatus(msg)}
+        open={wizardExportChat !== null}
+        wizardChat={wizardExportChat}
+      />
       <SystemPromptModal
         open={showSystemPromptModal && Boolean(settings)}
         value={settings?.providers[settings.selectedProvider].systemPrompt ?? ''}
@@ -2379,11 +2515,8 @@ export function App() {
           <div className="sidebar-card">
             <div className="sidebar-brand">
               <div className="sidebar-brand__badge">OK</div>
-              <div>
-                <div className="sidebar-brand__title">
-                  <MythraMark />
-                </div>
-                <div className="sidebar-brand__copy">Local AI workspace</div>
+              <div className="sidebar-brand__title">
+                <MythraMark />
               </div>
             </div>
 
@@ -2813,76 +2946,60 @@ export function App() {
                               aria-expanded={expandedWizardIds.has(chat.id)}
                               className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
                               onClick={() => {
-                                if (editingTitleId === chat.id) return;
                                 void handleWizardSidebarRowActivate(chat);
                               }}
                             >
-                              {editingTitleId === chat.id ? (
-                                <div className="chat-list__content chat-list__content--editing" onClick={(e) => e.stopPropagation()}>
-                                  <input
-                                    autoFocus
-                                    className="chat-list__title-input"
-                                    onBlur={(e) => {
-                                      void commitRenameChat(chat.id, e.target.value);
-                                    }}
-                                    onChange={(e) => setEditingTitleDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      e.stopPropagation();
-                                      if (e.key === 'Enter') {
-                                        e.currentTarget.blur();
-                                      } else if (e.key === 'Escape') {
-                                        e.preventDefault();
-                                        skipNextRenameCommitRef.current = true;
-                                        cancelRenameChat();
-                                      }
-                                    }}
-                                    value={editingTitleDraft}
-                                  />
-                                </div>
-                              ) : (
-                                <div className="chat-list__content">
-                                  <div className="chat-list__title wizard-title-row">
-                                    <svg
-                                      className={`wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? 'is-open' : ''}`}
-                                      width="12"
-                                      height="12"
-                                      viewBox="0 0 12 12"
-                                      fill="none"
-                                      aria-hidden
-                                    >
-                                      <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                    <span title={chat.title}>{chat.title}</span>
-                                  </div>
-                                  <div className="chat-list__date">
-                                    Wizard · {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
-                                  </div>
-                                </div>
-                              )}
-                              {editingTitleId === chat.id ? null : (
-                                <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    className={`chat-list__pin ${chat.pinned ? 'is-active' : ''}`}
-                                    onClick={(e) => void togglePinChat(e, chat.id)}
-                                    type="button"
-                                    title={chat.pinned ? 'Unpin' : 'Pin to top'}
+                              <div className="chat-list__content">
+                                <div className="chat-list__title wizard-title-row">
+                                  <svg
+                                    className={`wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? 'is-open' : ''}`}
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 12 12"
+                                    fill="none"
+                                    aria-hidden
                                   >
-                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                                      <path d="M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z" fill={chat.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.1" />
-                                    </svg>
-                                  </button>
-                                  <button className="chat-list__rename" onClick={(e) => beginRenameChat(e, chat.id, chat.title)} type="button" title="Rename">
-                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                                      <path d="M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z" fill="currentColor" />
-                                    </svg>
-                                  </button>
-                                  <button className="chat-list__delete" onClick={(e) => { e.stopPropagation(); requestDeleteChat(chat); }} onMouseDown={(e) => e.preventDefault()} type="button" title="Delete Wizard">
-                                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                                      <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  </button>
+                                    <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  <span title={chat.title}>{chat.title}</span>
                                 </div>
-                              )}
+                                <div className="chat-list__date">
+                                  Wizard · {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
+                                </div>
+                              </div>
+                              <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  className={`chat-list__pin ${chat.pinned ? 'is-active' : ''}`}
+                                  onClick={(e) => void togglePinChat(e, chat.id)}
+                                  type="button"
+                                  title={chat.pinned ? 'Unpin' : 'Pin to top'}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                    <path d="M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z" fill={chat.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeLinejoin="round" strokeWidth="1.1" />
+                                  </svg>
+                                </button>
+                                <button
+                                  className="chat-list__export"
+                                  onClick={(e) => beginWizardExport(e, chat)}
+                                  type="button"
+                                  title="Export Wizard bundle"
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                    <path
+                                      d="M6 1v6m0 0l2.8-2.8M6 7L3.2 4.2M2 11h8"
+                                      stroke="currentColor"
+                                      strokeWidth="1.25"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </button>
+                                <button className="chat-list__delete" onClick={(e) => { e.stopPropagation(); requestDeleteChat(chat); }} onMouseDown={(e) => e.preventDefault()} type="button" title="Delete Wizard">
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                    <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                </button>
+                              </div>
                             </div>
                             <motion.div
                               aria-hidden={!expandedWizardIds.has(chat.id)}
@@ -3134,6 +3251,7 @@ export function App() {
                         modelOptions={overrideModels}
                         onChange={handleWizardDraftChange}
                         onOpenDocument={(path) => void openFile(path)}
+                        onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onPresetPersist={persistAfterPresetAction}
                         onRefreshModels={refreshWizardModels}
                         onSettingsChangeForFavorites={handleSettingsPanelChange}
@@ -3147,6 +3265,7 @@ export function App() {
                         modelOptions={models}
                         onChange={handleSettingsPanelChange}
                         onOpenConnectionHelp={() => setShowConnectionHelp(true)}
+                        onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
                         onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                         onPresetPersist={persistAfterPresetAction}

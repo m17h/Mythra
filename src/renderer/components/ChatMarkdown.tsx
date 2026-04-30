@@ -1,5 +1,6 @@
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 
 const markdownComponents: Components = {
@@ -22,7 +23,7 @@ interface ChatMarkdownProps {
 export function ChatMarkdown({ text }: ChatMarkdownProps) {
   return (
     <div className="chat-markdown">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks]}>
         {text}
       </ReactMarkdown>
     </div>

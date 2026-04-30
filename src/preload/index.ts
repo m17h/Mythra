@@ -19,6 +19,9 @@ import type {
   WizardDocument,
   WizardPromptApprovalRequest,
   WizardProfile,
+  WizardMythwizExportRequest,
+  WizardMythwizExportResult,
+  WizardMythwizPickImportResult,
   WizardSetupRequest,
   WizardSetupResult
 } from '@shared/types';
@@ -55,6 +58,12 @@ const electronAPI = {
     ipcRenderer.invoke('wizard:sync-workspace-folder', profile) as Promise<WizardProfile>,
   listWizardDocuments: (workspaceRoot: string) =>
     ipcRenderer.invoke('wizard:list-documents', workspaceRoot) as Promise<WizardDocument[]>,
+  listWizardExportFiles: (workspaceRoot: string) =>
+    ipcRenderer.invoke('wizard:list-export-files', workspaceRoot) as Promise<string[]>,
+  exportWizardMythwiz: (request: WizardMythwizExportRequest) =>
+    ipcRenderer.invoke('wizard:export-mythwiz', request) as Promise<WizardMythwizExportResult>,
+  chooseWizardImportMythwiz: () =>
+    ipcRenderer.invoke('wizard:choose-import-mythwiz') as Promise<WizardMythwizPickImportResult>,
   deleteWizardWorkspace: (root: string) =>
     ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
   respondWizardPromptApproval: (id: string, approved: boolean) =>
@@ -86,6 +95,7 @@ const electronAPI = {
       wizardName?: string;
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
+      wizardAllowOutsideWorkspace?: boolean;
     }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,

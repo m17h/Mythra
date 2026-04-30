@@ -14,6 +14,8 @@ interface WizardSettingsPanelProps {
   /** Update + persist favorites (same mechanism as Connection → Model in Settings). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onSettingsChangeForFavorites: (next: AppSettings) => void;
+  /** Opens the same system-prompt help as Settings → System Prompt (optional). */
+  onOpenSystemPromptInfo?: () => void;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
@@ -30,7 +32,8 @@ export function WizardSettingsPanel({
   onOpenDocument,
   onRefreshModels,
   onPresetPersist,
-  onSettingsChangeForFavorites
+  onSettingsChangeForFavorites,
+  onOpenSystemPromptInfo
 }: WizardSettingsPanelProps) {
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
 
@@ -104,6 +107,7 @@ export function WizardSettingsPanel({
                 favoriteIds={settings.ui.favoriteModels?.[wizard.provider] ?? defaultSettings.ui.favoriteModels[wizard.provider]}
                 models={localModels}
                 onChange={(model) => onChange({ ...wizard, model })}
+                portalDropdown
                 onToggleFavorite={(id) => {
                   const k = wizard.provider;
                   const baseFav =
@@ -146,10 +150,23 @@ export function WizardSettingsPanel({
             When on, this Wizard can write, delete files, and run commands without per-action approval — same idea as
             Settings → Agent autonomy → Full access for normal chats.
           </div>
+          <label className={`toggle-row toggle-row--warning ${wizard.allowOutsideWorkspace ? 'is-active' : ''}`}>
+            <span>Allow paths outside workspace</span>
+            <input
+              checked={Boolean(wizard.allowOutsideWorkspace)}
+              onChange={(e) => onChange({ ...wizard, allowOutsideWorkspace: e.target.checked })}
+              type="checkbox"
+            />
+          </label>
+          <div className="inline-hint inline-hint--warning">
+            When on, read/write/replace/rename/delete/outline tools may use ../ or absolute paths elsewhere on this Mac
+            (cloud-sync locations remain blocked). list_files, symbol search, apply_patch, git diff, and shell cwd stay
+            inside this Wizard folder—copy files here if they need listing or patching.
+          </div>
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">Core Documents</h4>
+          <h4 className="settings-section__title">Markdown documents</h4>
           <div className="wizard-doc-list">
             {wizard.documents.map((doc) => (
               <button className="wizard-doc-list__item" key={doc.path} onClick={() => onOpenDocument(doc.path)} type="button">
@@ -161,7 +178,23 @@ export function WizardSettingsPanel({
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">System Prompt</h4>
+          <div className="settings-section__title-cluster">
+            <h4 className="settings-section__title settings-section__title--cluster">System Prompt</h4>
+            {onOpenSystemPromptInfo ? (
+              <button
+                aria-label="About system prompts and presets"
+                className="settings-info-button"
+                onClick={onOpenSystemPromptInfo}
+                title="Tips for system prompts"
+                type="button"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
           <label className="field">
             <span>Prompt</span>
             <textarea onChange={(e) => onChange({ ...wizard, systemPrompt: e.target.value })} rows={10} value={wizard.systemPrompt} />

@@ -20,6 +20,8 @@ interface SettingsPanelProps {
   onOpenConnectionHelp?: () => void;
   /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
   onOpenWebSearchInfo?: () => void;
+  /** Opens guidance about writing system prompts and presets. */
+  onOpenSystemPromptInfo?: () => void;
   /** Opens the large system prompt editor (same dialog animation as Web Search info). */
   onOpenSystemPromptModal?: () => void;
   focusSearchSettingsKey?: number;
@@ -31,9 +33,9 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
 ];
 
 const searchProviderOptions: Array<{ value: SearchProvider; label: string }> = [
-  { value: 'duckduckgo', label: 'DuckDuckGo fallback' },
-  { value: 'tavily', label: 'Tavily' },
-  { value: 'brave', label: 'Brave Search' }
+  { value: 'duckduckgo', label: 'DuckDuckGo' },
+  { value: 'tavily_then_brave', label: 'Tavily, then Brave' },
+  { value: 'brave_then_tavily', label: 'Brave, then Tavily' }
 ];
 
 export function SettingsPanel({
@@ -45,6 +47,7 @@ export function SettingsPanel({
   onRefreshModels,
   onOpenConnectionHelp,
   onOpenWebSearchInfo,
+  onOpenSystemPromptInfo,
   onOpenSystemPromptModal,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
@@ -71,12 +74,8 @@ export function SettingsPanel({
   const isLmStudio = settings.selectedProvider === 'lmstudio';
   const isOpenRouter = settings.selectedProvider === 'openrouter';
   const activeSearchProvider = settings.search.provider;
-  const activeSearchHasKey =
-    activeSearchProvider === 'tavily'
-      ? Boolean(settings.search.tavilyApiKey.trim())
-      : activeSearchProvider === 'brave'
-        ? Boolean(settings.search.braveApiKey.trim())
-        : false;
+  const anyPremiumApiKeySaved =
+    Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
 
   const activeThemeLabel = getThemeName(settings.ui.themeId);
 
@@ -168,6 +167,7 @@ export function SettingsPanel({
                   favoriteIds={settings.ui.favoriteModels?.[settings.selectedProvider] ?? []}
                   models={modelOptions}
                   onChange={(id) => updateProvider({ model: id })}
+                  portalDropdown
                   onToggleFavorite={(id) => {
                     const k = settings.selectedProvider;
                     const baseFav =
@@ -210,7 +210,23 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">System Prompt</h4>
+          <div className="settings-section__title-cluster">
+            <h4 className="settings-section__title settings-section__title--cluster">System Prompt</h4>
+            {onOpenSystemPromptInfo ? (
+              <button
+                className="settings-info-button"
+                type="button"
+                aria-label="About system prompts and presets"
+                title="Tips for system prompts"
+                onClick={onOpenSystemPromptInfo}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
 
           <div className="field">
             <span>Preset</span>
@@ -285,8 +301,9 @@ export function SettingsPanel({
           </label>
 
           <div className="inline-hint">
-            DuckDuckGo works without a key, but it only returns instant answers and is often thin. Tavily is recommended
-            for AI-ready search. Brave Search is a strong general web-search option.
+            DuckDuckGo works without a key but only returns instant answers and is often thin. For the chained options,
+            Mythra uses each saved API key in order; if a step fails (quota, HTTP error) it tries the next, then falls back
+            to DuckDuckGo. Tavily is a strong pick for AI-ready snippets; Brave is a solid general web search.
           </div>
 
           <label className="field">
@@ -311,10 +328,10 @@ export function SettingsPanel({
             />
           </label>
 
-          {activeSearchProvider !== 'duckduckgo' && !activeSearchHasKey ? (
+          {activeSearchProvider !== 'duckduckgo' && !anyPremiumApiKeySaved ? (
             <div className="inline-hint inline-hint--warning">
-              Add and save an API key for {activeSearchProvider === 'tavily' ? 'Tavily' : 'Brave Search'}, or Mythra
-              will fall back to DuckDuckGo instant answers.
+              Add and save at least one Tavily or Brave Search API key, or Mythra will use DuckDuckGo instant answers
+              only under this provider choice.
             </div>
           ) : null}
         </div>

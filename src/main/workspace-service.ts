@@ -2,8 +2,19 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
+import JSZip from 'jszip';
 import { dialog } from 'electron';
-import type { OpenFile, WizardDocument, WizardProfile, WizardSetupRequest, WizardSetupResult, WorkspaceChanges, WorkspaceNode } from '@shared/types';
+import type {
+  OpenFile,
+  WizardDocument,
+  WizardMythwizExportRequest,
+  WizardMythwizImportedPayload,
+  WizardProfile,
+  WizardSetupRequest,
+  WizardSetupResult,
+  WorkspaceChanges,
+  WorkspaceNode
+} from '@shared/types';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', 'out', 'build', 'coverage']);
@@ -96,16 +107,41 @@ const spawnWithInput = (cmd: string, args: string[], cwd: string, input: string)
     child.stdin.end(input);
   });
 
-const ensureInsideRoot = (root: string, target: string) => {
-  const resolvedRoot = resolve(root);
-  const resolvedTarget = resolve(resolvedRoot, target);
-  const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
+const OUTSIDE_WORKSPACE_HINT =
+  'Target path is outside the active workspace. Use paths relative to this workspace, or enable “Allow paths outside workspace” for this Wizard in Wizard settings (Inspector).';
 
-  if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
-    throw new Error('Target path is outside the active workspace.');
+/** Resolve `target` against wizard/normal workspace root; optionally allow paths outside `root`. */
+function resolveWorkspaceTarget(root: string, target: string, allowOutsideWorkspace = false): string {
+  const resolvedRoot = resolve(root.trim());
+  const raw = target.trim();
+  if (!raw) {
+    throw new Error('Path cannot be empty.');
   }
 
+  const isAbsolute = raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw);
+  const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
+
+  if (!allowOutsideWorkspace) {
+    const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
+    if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
+      throw new Error(OUTSIDE_WORKSPACE_HINT);
+    }
+  }
+
+  assertLocalWorkspace(dirname(resolvedTarget));
+
   return resolvedTarget;
+}
+
+const ensureInsideRoot = (root: string, target: string) => resolveWorkspaceTarget(root, target, false);
+
+const normalizeWizardExportRelPath = (raw: string): string => {
+  const posix = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const segments = posix.split('/').filter((s) => s.length > 0 && s !== '.');
+  if (segments.some((s) => s === '..')) {
+    throw new Error(`Invalid export path: ${raw}`);
+  }
+  return segments.join('/');
 };
 
 const sortNodes = (nodes: WorkspaceNode[]) =>
@@ -321,8 +357,7 @@ export class WorkspaceService {
 
     await mkdir(root, { recursive: true });
 
-    const documents: WizardDocument[] = [];
-    for (const [file, label] of WIZARD_CORE_DOCS) {
+    for (const [file] of WIZARD_CORE_DOCS) {
       const target = join(root, file);
       const initialBody =
         file === 'soul.md'
@@ -335,7 +370,6 @@ export class WorkspaceService {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
-      documents.push({ path: target, label, core: true });
     }
 
     const seen = new Set(WIZARD_CORE_DOCS.map(([file]) => file.toLowerCase()));
@@ -349,8 +383,18 @@ export class WorkspaceService {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       }
-      documents.push({ path: target, label: file.replace(/\.md$/i, ''), core: false });
     }
+
+    if (request.mythwizWorkspaceFiles?.length) {
+      for (const { relativePath, content } of request.mythwizWorkspaceFiles) {
+        const safe = normalizeWizardExportRelPath(relativePath);
+        const abs = ensureInsideRoot(root, safe);
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content, 'utf8');
+      }
+    }
+
+    const documents = await this.listWizardWorkspaceDocuments(root);
 
     const profile: WizardProfile = {
       name,
@@ -368,7 +412,10 @@ export class WorkspaceService {
     };
   }
 
-  /** Markdown files at the workspace root, core docs first — reflects creates/deletes without restarting. */
+  /**
+   * All `.md` files under the Wizard workspace (recursive; skips ignored dirs like node_modules).
+   * Core scaffold filenames first (in fixed order), then every other Markdown path sorted lexically.
+   */
   async listWizardWorkspaceDocuments(workspaceRoot: string): Promise<WizardDocument[]> {
     const resolved = resolve(workspaceRoot.trim());
     try {
@@ -377,24 +424,163 @@ export class WorkspaceService {
     } catch {
       throw new Error('Wizard workspace is not available.');
     }
-    const entries = await readdir(resolved, { withFileTypes: true });
-    const mdNames = entries.filter((e) => e.isFile() && /\.md$/i.test(e.name)).map((e) => e.name);
+
+    const bucket: Array<{ path: string; type: WorkspaceNode['type'] }> = [];
+    await walkFiles(resolved, resolved, bucket);
+
     const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
     const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
-    const orderedCore = coreOrder
-      .map((low) => mdNames.find((m) => m.toLowerCase() === low))
-      .filter((x): x is string => Boolean(x));
-    const extras = mdNames.filter((m) => !coreMap.has(m.toLowerCase())).sort((a, b) => a.localeCompare(b));
-    const ordered = [...orderedCore, ...extras];
-    return ordered.map((name) => {
-      const lower = name.toLowerCase();
-      const label = coreMap.get(lower) ?? name.replace(/\.md$/i, '');
+
+    const mdRelPaths = bucket
+      .filter((x) => x.type === 'file' && /\.md$/i.test(x.path))
+      .map((x) => x.path.replace(/\\/g, '/'));
+
+    mdRelPaths.sort((a, b) => {
+      const ba = basename(a).toLowerCase();
+      const bb = basename(b).toLowerCase();
+      const ia = coreOrder.indexOf(ba);
+      const ib = coreOrder.indexOf(bb);
+      if (ia !== -1 || ib !== -1) {
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        if (ia !== ib) return ia - ib;
+        return a.localeCompare(b);
+      }
+      return a.localeCompare(b);
+    });
+
+    return mdRelPaths.map((rel) => {
+      const abs = resolve(resolved, rel);
+      const lower = basename(rel).toLowerCase();
+      const label = coreMap.get(lower) ?? rel.replace(/\.md$/i, '');
       return {
-        path: join(resolved, name),
+        path: abs,
         label,
         core: coreMap.has(lower)
       };
     });
+  }
+
+  /** Relative POSIX paths of files under this Wizard workspace (for export UI). Ignores dotfiles and heavy dirs like node_modules. */
+  async listWizardExportRelativeFiles(workspaceRoot: string): Promise<string[]> {
+    const resolved = resolve(workspaceRoot.trim());
+    assertLocalWorkspace(resolved);
+    await stat(resolved);
+    const bucket: Array<{ path: string; type: WorkspaceNode['type'] }> = [];
+    await walkFiles(resolved, resolved, bucket);
+    return bucket
+      .filter((x) => x.type === 'file')
+      .map((x) => (x.path === '.' ? '' : x.path.replace(/\\/g, '/')))
+      .filter((p) => p.length > 0)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  async buildWizardMythwizArchive(req: WizardMythwizExportRequest): Promise<Buffer> {
+    const root = resolve(req.workspaceRoot.trim());
+    assertLocalWorkspace(root);
+    await stat(root);
+
+    let normalizedPaths: string[];
+    try {
+      normalizedPaths = [...new Set(req.workspaceRelativePaths.map(normalizeWizardExportRelPath))];
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+
+    if (!req.includeSystemPromptFile && normalizedPaths.length === 0) {
+      throw new Error('Select at least one item to export.');
+    }
+
+    const zip = new JSZip();
+    const exportedAt = new Date().toISOString();
+    const missingFromDisk: string[] = [];
+    const workspaceWritten: string[] = [];
+
+    for (const rel of normalizedPaths) {
+      try {
+        const abs = ensureInsideRoot(root, rel);
+        await stat(abs);
+        const buf = await readFile(abs);
+        zip.file(`workspace/${rel}`, buf);
+        workspaceWritten.push(rel);
+      } catch {
+        missingFromDisk.push(rel);
+      }
+    }
+
+    if (missingFromDisk.length > 0) {
+      throw new Error(`Could not read on disk: ${missingFromDisk.join(', ')}`);
+    }
+
+    if (req.includeSystemPromptFile) {
+      zip.file('system_prompt.md', req.systemPrompt ?? '', { createFolders: false });
+    }
+
+    const manifest = {
+      format: 'mythwiz',
+      version: 1,
+      exportedAt,
+      wizardDisplayName: req.wizardDisplayName,
+      includesSystemPromptFile: Boolean(req.includeSystemPromptFile),
+      workspacePaths: workspaceWritten
+    };
+    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+    const nodeBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    return Buffer.from(nodeBuf);
+  }
+
+  /** Read a `.mythwiz` ZIP produced by Mythra export (manifest, optional system_prompt.md, and workspace/ files). */
+  async parseWizardMythwizBuffer(buffer: Buffer): Promise<WizardMythwizImportedPayload> {
+    const zip = await JSZip.loadAsync(buffer);
+    const manifestFile = zip.file('manifest.json');
+    if (!manifestFile) {
+      throw new Error('This file has no manifest.json — pick a Mythra .mythwiz export.');
+    }
+    let manifest: { format?: string; version?: number; wizardDisplayName?: string };
+    try {
+      manifest = JSON.parse(await manifestFile.async('string')) as typeof manifest;
+    } catch {
+      throw new Error('Could not parse manifest.json in this bundle.');
+    }
+    if (manifest.format !== 'mythwiz') {
+      throw new Error('This file is not a Mythra Wizard bundle.');
+    }
+    if (manifest.version !== 1) {
+      throw new Error(`Unsupported mythwiz format version (${String(manifest.version)}).`);
+    }
+
+    let systemPrompt = '';
+    const spFile = zip.file('system_prompt.md');
+    if (spFile) {
+      systemPrompt = await spFile.async('string');
+    }
+
+    const workspaceFiles: WizardMythwizImportedPayload['workspaceFiles'] = [];
+    const prefix = 'workspace/';
+    for (const [fullPath, entry] of Object.entries(zip.files)) {
+      if (entry.dir) continue;
+      const normalizedZipPath = fullPath.replace(/\\/g, '/');
+      if (!normalizedZipPath.startsWith(prefix)) continue;
+      const inner = normalizedZipPath.slice(prefix.length);
+      if (!inner) continue;
+      let safeInner: string;
+      try {
+        safeInner = normalizeWizardExportRelPath(inner);
+      } catch {
+        continue;
+      }
+      const text = await entry.async('string');
+      workspaceFiles.push({ relativePath: safeInner, content: text });
+    }
+
+    workspaceFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+    return {
+      wizardDisplayName: (manifest.wizardDisplayName ?? '').trim() || 'Imported Wizard',
+      systemPrompt,
+      workspaceFiles
+    };
   }
 
   /**
@@ -462,8 +648,8 @@ export class WorkspaceService {
     }
   }
 
-  async openFile(root: string, target: string): Promise<OpenFile> {
-    const safePath = ensureInsideRoot(root, target);
+  async openFile(root: string, target: string, allowOutsideWorkspace = false): Promise<OpenFile> {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
 
     if (ext === '.svg') {
@@ -491,18 +677,25 @@ export class WorkspaceService {
     return { path: safePath, content };
   }
 
-  async saveFile(root: string, target: string, content: string): Promise<OpenFile> {
-    const safePath = ensureInsideRoot(root, target);
+  async saveFile(root: string, target: string, content: string, allowOutsideWorkspace = false): Promise<OpenFile> {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await mkdir(dirname(safePath), { recursive: true });
     await writeFile(safePath, content, 'utf8');
-    return this.openFile(root, target);
+    return this.openFile(root, target, allowOutsideWorkspace);
   }
 
-  async replaceInFile(root: string, target: string, search: string, replacement: string, replaceAll: boolean) {
+  async replaceInFile(
+    root: string,
+    target: string,
+    search: string,
+    replacement: string,
+    replaceAll: boolean,
+    allowOutsideWorkspace = false
+  ) {
     if (!search) {
       throw new Error('Search text cannot be empty.');
     }
-    const safePath = ensureInsideRoot(root, target);
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const count = content.split(search).length - 1;
     if (count === 0) {
@@ -513,11 +706,11 @@ export class WorkspaceService {
     return { path: safePath, replacements: replaceAll ? count : 1 };
   }
 
-  async insertAfter(root: string, target: string, anchor: string, text: string) {
+  async insertAfter(root: string, target: string, anchor: string, text: string, allowOutsideWorkspace = false) {
     if (!anchor) {
       throw new Error('Anchor text cannot be empty.');
     }
-    const safePath = ensureInsideRoot(root, target);
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const index = content.indexOf(anchor);
     if (index < 0) {
@@ -529,16 +722,16 @@ export class WorkspaceService {
     return { path: safePath };
   }
 
-  async renamePath(root: string, from: string, to: string) {
-    const safeFrom = ensureInsideRoot(root, from);
-    const safeTo = ensureInsideRoot(root, to);
+  async renamePath(root: string, from: string, to: string, allowOutsideWorkspace = false) {
+    const safeFrom = resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
+    const safeTo = resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
     await mkdir(dirname(safeTo), { recursive: true });
     await rename(safeFrom, safeTo);
     return { from: safeFrom, to: safeTo };
   }
 
-  async deletePath(root: string, target: string): Promise<{ path: string }> {
-    const safePath = ensureInsideRoot(root, target);
+  async deletePath(root: string, target: string, allowOutsideWorkspace = false): Promise<{ path: string }> {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await rm(safePath, { recursive: true, force: false });
     return { path: safePath };
   }
@@ -615,8 +808,8 @@ export class WorkspaceService {
     return results;
   }
 
-  async getFileOutline(root: string, target: string) {
-    const safePath = ensureInsideRoot(root, target);
+  async getFileOutline(root: string, target: string, allowOutsideWorkspace = false) {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const ext = extname(safePath).toLowerCase();
     const lines = content.split(/\r?\n/);

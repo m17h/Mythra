@@ -18,6 +18,9 @@ import type {
   WorkspaceChanges,
   WorkspaceNode,
   WizardDocument,
+  WizardMythwizExportRequest,
+  WizardMythwizExportResult,
+  WizardMythwizPickImportResult,
   WizardPromptApprovalRequest,
   WizardSetupRequest,
   WizardSetupResult,
@@ -44,6 +47,9 @@ declare global {
       chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
       setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
       listWizardDocuments: (workspaceRoot: string) => Promise<WizardDocument[]>;
+      listWizardExportFiles: (workspaceRoot: string) => Promise<string[]>;
+      exportWizardMythwiz: (request: WizardMythwizExportRequest) => Promise<WizardMythwizExportResult>;
+      chooseWizardImportMythwiz: () => Promise<WizardMythwizPickImportResult>;
       syncWizardWorkspaceFolder: (profile: WizardProfile) => Promise<WizardProfile>;
       deleteWizardWorkspace: (root: string) => Promise<{ path: string }>;
       respondWizardPromptApproval: (id: string, approved: boolean) => Promise<void>;
@@ -64,6 +70,7 @@ declare global {
           wizardName?: string;
           wizardSystemPrompt?: string;
           wizardFullAccess?: boolean;
+          wizardAllowOutsideWorkspace?: boolean;
         }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;

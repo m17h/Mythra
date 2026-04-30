@@ -9,6 +9,23 @@ const SETTINGS_FILE = 'mythra-settings.json';
 /** Older installs before the Mythra rename. */
 const LEGACY_SETTINGS_FILES = ['openkiwi-settings.json', 'pixel-forge-settings.json'] as const;
 
+function normalizeMergedSearch(saved: Partial<AppSettings['search']> | undefined): AppSettings['search'] {
+  const base = { ...defaultSettings.search, ...saved };
+  let provider = typeof base.provider === 'string' ? base.provider : defaultSettings.search.provider;
+  /** Legacy single-provider enum before chain preferences. */
+  if (provider === 'tavily') provider = 'tavily_then_brave';
+  if (provider === 'brave') provider = 'brave_then_tavily';
+  if (provider !== 'duckduckgo' && provider !== 'tavily_then_brave' && provider !== 'brave_then_tavily') {
+    provider = defaultSettings.search.provider;
+  }
+
+  return {
+    provider,
+    tavilyApiKey: typeof base.tavilyApiKey === 'string' ? base.tavilyApiKey : '',
+    braveApiKey: typeof base.braveApiKey === 'string' ? base.braveApiKey : ''
+  };
+}
+
 const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => ({
   ...defaultSettings,
   ...saved,
@@ -26,10 +43,7 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       saved?.providers?.openrouter as Partial<Record<string, unknown>> | undefined
     )
   },
-  search: {
-    ...defaultSettings.search,
-    ...saved?.search
-  },
+  search: normalizeMergedSearch(saved?.search),
   tools: {
     ...defaultSettings.tools,
     ...saved?.tools

@@ -28,6 +28,11 @@ export interface WizardProfile {
    * for this Wizard’s sessions (same idea as Settings → Agent autonomy → Full access for normal chats).
    */
   fullAccess?: boolean;
+  /**
+   * When true, read/write/delete/rename tools may resolve paths outside `workspaceRoot` (local paths only:
+   * ../ escapes or absolute paths). Cloud-sync folders remain blocked; listing/search/git-patch scope unchanged.
+   */
+  allowOutsideWorkspace?: boolean;
 }
 
 export interface WizardSetupRequest {
@@ -47,12 +52,50 @@ export interface WizardSetupRequest {
   wizardPersonality?: string;
   /** Optional onboarding text merged into memory.md (durable facts to remember). */
   wizardMemory?: string;
+  /**
+   * When creating from an imported `.mythwiz` bundle: workspace-relative UTF-8 files to write after the standard scaffold.
+   * Import paths overwrite defaults (including core Markdown docs) where they collide.
+   */
+  mythwizWorkspaceFiles?: WizardMythwizImportFileEntry[];
 }
+
+/** Single workspace-relative file carried inside an imported `.mythwiz` ZIP or setup request. */
+export interface WizardMythwizImportFileEntry {
+  relativePath: string;
+  content: string;
+}
+
+/** Parsed `.mythwiz` bundle after choosing a file (renderer-only workflow state + IPC payload shape). */
+export interface WizardMythwizImportedPayload {
+  wizardDisplayName: string;
+  systemPrompt: string;
+  workspaceFiles: WizardMythwizImportFileEntry[];
+}
+
+export type WizardMythwizPickImportResult =
+  | { ok: true; data: WizardMythwizImportedPayload }
+  | { ok: false; cancelled: true }
+  | { ok: false; error: string };
 
 export interface WizardSetupResult {
   profile: WizardProfile;
   tree: WorkspaceNode[];
 }
+
+/** Renderer → main: build a single `.mythwiz` bundle (ZIP + manifest). */
+export interface WizardMythwizExportRequest {
+  workspaceRoot: string;
+  wizardDisplayName: string;
+  systemPrompt: string;
+  includeSystemPromptFile: boolean;
+  /** Paths relative to the Wizard workspace (POSIX slashes). */
+  workspaceRelativePaths: string[];
+}
+
+export type WizardMythwizExportResult =
+  | { ok: true; path: string }
+  | { ok: false; cancelled: true }
+  | { ok: false; error: string };
 
 export interface WizardPromptApprovalRequest {
   id: string;
@@ -106,7 +149,8 @@ export interface ToolPermissions {
 }
 
 export type SessionMode = 'agent' | 'talk';
-export type SearchProvider = 'duckduckgo' | 'tavily' | 'brave';
+/** DuckDuckGo only, or Tavily ↔ Brave chains (unused APIs in the chain are skipped when no key); ends on DuckDuckGo after failures. */
+export type SearchProvider = 'duckduckgo' | 'tavily_then_brave' | 'brave_then_tavily';
 
 export interface SearchSettings {
   provider: SearchProvider;

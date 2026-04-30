@@ -1,6 +1,13 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useMemo, useState } from 'react';
-import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type WizardSetupRequest } from '@shared/types';
+import {
+  defaultSettings,
+  type AppSettings,
+  type ModelInfo,
+  type ProviderKind,
+  type WizardMythwizImportedPayload,
+  type WizardSetupRequest
+} from '@shared/types';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
@@ -33,10 +40,11 @@ Use your private workspace as your long-term home base:
 - tools.md defines tool preferences, workflows, and project conventions.
 - memory.md stores durable facts the user wants you to remember.
 - corrections.md stores mistakes, corrections, and lessons learned.
+- File paths default to your workspace folder only; enable **Allow paths outside workspace** in Inspector → Wizard settings if cross-folder reads/writes are needed (local disks only).
 
 Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
 
-At the start of every new session, read soul.md, tools.md, memory.md, and corrections.md before giving your first substantive response.`;
+At the start of every message in a Wizard chat, Mythra injects every Markdown (.md) file from your workspace into context (core docs first). Keep extra guides or notes as additional .md files if you want them always loaded.`;
 
 function previewWizardWorkspacePath(platform: string, parentFolder: string, wizardDisplayName: string): string {
   const segment = sanitizeWizardFolderSegment(wizardDisplayName);
@@ -72,6 +80,7 @@ export function WizardSetupModal({
   const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [personalityNotes, setPersonalityNotes] = useState('');
   const [memoryNotes, setMemoryNotes] = useState('');
+  const [importedMythwiz, setImportedMythwiz] = useState<WizardMythwizImportedPayload | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +95,7 @@ export function WizardSetupModal({
     setSetupStep(1);
     setPersonalityNotes('');
     setMemoryNotes('');
+    setImportedMythwiz(null);
     setError('');
     void window.electronAPI.getLastValidWorkspaceRoot().then(setLastValidWorkspaceRoot);
     // Intentionally only when `open` toggles — avoid resetting the form when parent-folder preference saves mid-modal.
@@ -142,6 +152,31 @@ export function WizardSetupModal({
 
   const canCreate = Boolean(name.trim() && model.trim() && wizardProjectsParentFolder.trim());
 
+  const pickImportMythwiz = async () => {
+    setError('');
+    const result = await window.electronAPI.chooseWizardImportMythwiz();
+    if (!result.ok) {
+      if ('cancelled' in result && result.cancelled) return;
+      setError('error' in result ? result.error : 'Could not import bundle.');
+      return;
+    }
+    const data = result.data;
+    setImportedMythwiz(data);
+    setSetupStep(1);
+    const displayName = data.wizardDisplayName.trim();
+    setName(displayName);
+    const promptFromBundle = data.systemPrompt.trim();
+    if (promptFromBundle.length > 0) {
+      setPrompt(promptFromBundle);
+      setPromptDirty(true);
+    } else {
+      setPromptDirty(false);
+    }
+    setPersonalityNotes('');
+    setMemoryNotes('');
+    setCustomDocsRaw('');
+  };
+
   const chooseProjectsFolder = async () => {
     setError('');
     const hint = wizardProjectsParentFolder.trim() || lastValidWorkspaceRoot || undefined;
@@ -156,11 +191,18 @@ export function WizardSetupModal({
   };
 
   const submit = async () => {
-    if (setupStep !== 2 || !canCreate || creating) return;
+    const finishFromBasicsOnly = Boolean(importedMythwiz);
+    if ((!finishFromBasicsOnly && setupStep !== 2) || !canCreate || creating) return;
     setCreating(true);
     setError('');
-    const seeded = personalityNotes.trim().length > 0 || memoryNotes.trim().length > 0;
+    const seeded =
+      !importedMythwiz &&
+      (personalityNotes.trim().length > 0 || memoryNotes.trim().length > 0);
     const systemPromptFinal = seeded ? `${prompt.trimEnd()}${ONBOARDING_SYSTEM_TAIL}` : prompt;
+    const mythwizWorkspaceFiles =
+      importedMythwiz && importedMythwiz.workspaceFiles.length > 0
+        ? importedMythwiz.workspaceFiles
+        : undefined;
     try {
       await onCreate({
         name: name.trim(),
@@ -170,7 +212,8 @@ export function WizardSetupModal({
         workspaceRoot: wizardProjectsParentFolder.trim(),
         customDocuments,
         wizardPersonality: personalityNotes.trim() || undefined,
-        wizardMemory: memoryNotes.trim() || undefined
+        wizardMemory: memoryNotes.trim() || undefined,
+        mythwizWorkspaceFiles
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create Wizard.');
@@ -204,17 +247,50 @@ export function WizardSetupModal({
             role="dialog"
             transition={{ duration: 0.18, ease: 'easeOut' }}
           >
-            <div className="app-dialog__kicker">New Wizard</div>
-            <div className="wizard-setup__steps" role="tablist" aria-label="Wizard setup steps">
-              <span className={setupStep === 1 ? 'is-active' : ''}>1 Basics</span>
-              <span aria-hidden>→</span>
-              <span className={setupStep === 2 ? 'is-active' : ''}>2 Personality &amp; memory</span>
+            <div className="wizard-setup__topbar">
+              <div className="app-dialog__kicker">New Wizard</div>
+              <button
+                className="btn btn--secondary wizard-setup__import-btn"
+                disabled={creating}
+                onClick={() => void pickImportMythwiz()}
+                type="button"
+              >
+                Import Wizard
+              </button>
             </div>
+            {importedMythwiz ? null : (
+              <div className="wizard-setup__steps" role="tablist" aria-label="Wizard setup steps">
+                <span className={setupStep === 1 ? 'is-active' : ''}>1 Basics</span>
+                <span aria-hidden>→</span>
+                <span className={setupStep === 2 ? 'is-active' : ''}>2 Personality &amp; memory</span>
+              </div>
+            )}
+
+            {importedMythwiz ? (
+              <div className="wizard-setup__import-note">
+                Bundle loaded from disk.
+                {importedMythwiz.workspaceFiles.length > 0 ? (
+                  <>
+                    {' '}
+                    {importedMythwiz.workspaceFiles.length} workspace file(s) will overwrite matching paths after the usual
+                    scaffold is created.
+                  </>
+                ) : (
+                  <> Only the system prompt was imported from this bundle (if present). Mythra still creates default core Markdown docs.</>
+                )}{' '}
+                Personality and memory come from the imported workspace files — edit those docs later if you want changes.
+                Adjust name, provider, and model here, then create.
+              </div>
+            ) : null}
 
             {setupStep === 1 ? (
               <>
-                <h3>Create a Wizard</h3>
-                <p>A Wizard is a named AI with its own model, local workspace, memory documents, and system prompt.</p>
+                <h3>{importedMythwiz ? 'Finish importing Wizard' : 'Create a Wizard'}</h3>
+                <p>
+                  {importedMythwiz
+                    ? 'Pick provider, model, and where to store this Wizard’s workspace. Imported bundle content is applied when you create.'
+                    : 'A Wizard is a named AI with its own model, local workspace, memory documents, and system prompt.'}
+                </p>
 
                 <div className="wizard-setup__grid">
                   <label className="field">
@@ -349,9 +425,20 @@ export function WizardSetupModal({
                 Cancel
               </button>
               {setupStep === 1 ? (
-                <button className="btn btn--primary" disabled={!canCreate || creating} onClick={goToPersonalityStep} type="button">
-                  Next
-                </button>
+                importedMythwiz ? (
+                  <button
+                    className="btn btn--primary"
+                    disabled={!canCreate || creating}
+                    onClick={() => void submit()}
+                    type="button"
+                  >
+                    {creating ? 'Creating...' : 'Create Wizard'}
+                  </button>
+                ) : (
+                  <button className="btn btn--primary" disabled={!canCreate || creating} onClick={goToPersonalityStep} type="button">
+                    Next
+                  </button>
+                )
               ) : (
                 <>
                   <button className="btn btn--secondary" disabled={creating} onClick={() => setSetupStep(1)} type="button">

@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
-import { stat } from 'node:fs/promises';
-import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron';
-import appIconPath from './mythra_icon.png?asset';
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
+/** Project-root asset (capital M): single source for window + dock icon. */
+import appIconPath from '../../Mythra_icon.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
@@ -33,10 +34,12 @@ import {
   type ChatMessage,
   type SavedChat,
   type ToolApprovalRequest,
+  type WizardMythwizExportRequest,
   type WizardProfile,
   type WizardPromptApprovalRequest,
   type WizardSetupRequest
 } from '@shared/types';
+import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
@@ -366,6 +369,7 @@ const sanitizeRuntime = (runtime: {
   wizardName?: string;
   wizardSystemPrompt?: string;
   wizardFullAccess?: boolean;
+  wizardAllowOutsideWorkspace?: boolean;
 }) => {
   const workspaceRoot =
     runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot)
@@ -384,7 +388,9 @@ const sanitizeRuntime = (runtime: {
     wizardId: typeof runtime.wizardId === 'string' ? runtime.wizardId : undefined,
     wizardName: typeof runtime.wizardName === 'string' ? runtime.wizardName : undefined,
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined,
-    wizardFullAccess: typeof runtime.wizardFullAccess === 'boolean' ? runtime.wizardFullAccess : undefined
+    wizardFullAccess: typeof runtime.wizardFullAccess === 'boolean' ? runtime.wizardFullAccess : undefined,
+    wizardAllowOutsideWorkspace:
+      typeof runtime.wizardAllowOutsideWorkspace === 'boolean' ? runtime.wizardAllowOutsideWorkspace : undefined
   };
 };
 
@@ -627,6 +633,59 @@ ipcMain.handle('tool:approval-response', async (_event, id: string, approved: bo
 
 ipcMain.handle('wizard:list-documents', async (_event, root: string) => workspaceService.listWizardWorkspaceDocuments(root));
 
+ipcMain.handle('wizard:list-export-files', async (_event, root: string) =>
+  workspaceService.listWizardExportRelativeFiles(root)
+);
+
+ipcMain.handle('wizard:export-mythwiz', async (event, req: WizardMythwizExportRequest) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const baseName = sanitizeWizardFolderSegment(req.wizardDisplayName.trim() || 'wizard');
+  const opts = {
+    title: 'Export Wizard',
+    defaultPath: `${baseName}.mythwiz`,
+    filters: [{ name: 'Mythra Wizard bundle', extensions: ['mythwiz'] }]
+  };
+  const { canceled, filePath } =
+    winSafe && !winSafe.isDestroyed()
+      ? await dialog.showSaveDialog(winSafe, opts)
+      : await dialog.showSaveDialog(opts);
+  if (canceled || !filePath) {
+    return { ok: false as const, cancelled: true };
+  }
+  try {
+    const buf = await workspaceService.buildWizardMythwizArchive(req);
+    await writeFile(filePath, buf);
+    return { ok: true as const, path: filePath };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false as const, error: message };
+  }
+});
+
+ipcMain.handle('wizard:choose-import-mythwiz', async (event) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const opts = {
+    title: 'Import Wizard bundle',
+    properties: ['openFile'] as const,
+    filters: [{ name: 'Mythra Wizard bundle', extensions: ['mythwiz'] }]
+  };
+  const pick =
+    winSafe && !winSafe.isDestroyed()
+      ? await dialog.showOpenDialog(winSafe, opts)
+      : await dialog.showOpenDialog(opts);
+  if (pick.canceled || pick.filePaths.length === 0) {
+    return { ok: false as const, cancelled: true };
+  }
+  try {
+    const buf = await readFile(pick.filePaths[0]);
+    const data = await workspaceService.parseWizardMythwizBuffer(buf);
+    return { ok: true as const, data };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false as const, error: message };
+  }
+});
+
 ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
   if (typeof rawUrl !== 'string') return;
   let parsed: URL;
@@ -658,6 +717,7 @@ ipcMain.handle(
       wizardName?: string;
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
+      wizardAllowOutsideWorkspace?: boolean;
     }
   ) => {
     if (!mainWindow) {

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { join as join$1, relative, resolve, sep, dirname, extname, basename } from "node:path";
+import { join as join$1, relative, resolve, sep, dirname, basename, extname } from "node:path";
 import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
@@ -8,11 +8,12 @@ import { existsSync, watch } from "node:fs";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
 import { promisify } from "node:util";
+import JSZip from "jszip";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
-const appIconPath = join(__dirname, "./chunks/mythra_icon-COisAVPz.png");
+const appIconPath = join(__dirname, "./chunks/Mythra_icon-KE-2iURq.png");
 const CHATS_DIR = "mythra-chats";
 const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -727,9 +728,26 @@ const pushUnique = (acc, line) => {
   const t = line.trim();
   if (t) acc.push(t);
 };
-const fallbackNotice = (provider, reason) => `${provider} search failed (${reason}). Falling back to DuckDuckGo instant answers.
+const fallbackNoticeDdg = (summary) => `${summary}
 
 `;
+function premiumSearchUsesApiChain(provider) {
+  return provider === "tavily_then_brave" || provider === "brave_then_tavily";
+}
+function premiumSearchTryOrder(settings) {
+  if (!premiumSearchUsesApiChain(settings.provider)) return [];
+  const hasT = settings.tavilyApiKey.trim().length > 0;
+  const hasB = settings.braveApiKey.trim().length > 0;
+  const seq = settings.provider === "tavily_then_brave" ? ["tavily", "brave"] : ["brave", "tavily"];
+  return seq.filter((k) => k === "tavily" ? hasT : hasB);
+}
+function paidLabel(kind) {
+  return kind === "tavily" ? "Tavily" : "Brave Search";
+}
+async function searchPaid(kind, query, settings) {
+  const q = query.trim();
+  return kind === "tavily" ? await searchTavily(q, settings.tavilyApiKey.trim()) : await searchBrave(q, settings.braveApiKey.trim());
+}
 const stripTags = (value) => value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 const formatSearchResults = (provider, query, results) => {
   if (results.length === 0) {
@@ -827,23 +845,32 @@ async function searchWeb(query, settings) {
   if (!q) {
     return "Error: empty search query.";
   }
-  if (settings?.provider === "tavily" && settings.tavilyApiKey.trim()) {
+  const s = settings;
+  const usePaid = s != null && premiumSearchUsesApiChain(s.provider);
+  const chain = usePaid && s ? premiumSearchTryOrder(s) : [];
+  if (!s || !usePaid || chain.length === 0) {
+    return searchDuckDuckGo(q);
+  }
+  let prefix = "";
+  for (let i = 0; i < chain.length; i += 1) {
+    const kind = chain[i];
     try {
-      return await searchTavily(q, settings.tavilyApiKey.trim());
+      const body = await searchPaid(kind, q, s);
+      return prefix ? `${prefix}${body}` : body;
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      return `${fallbackNotice("Tavily", reason)}${await searchDuckDuckGo(q)}`;
+      const label = paidLabel(kind);
+      if (i < chain.length - 1) {
+        const nextLabel = paidLabel(chain[i + 1]);
+        prefix += `${label} search failed (${reason}). Trying ${nextLabel} instead.
+
+`;
+      } else {
+        prefix += `${label} search failed (${reason}). ` + fallbackNoticeDdg("Falling back to DuckDuckGo instant answers.");
+      }
     }
   }
-  if (settings?.provider === "brave" && settings.braveApiKey.trim()) {
-    try {
-      return await searchBrave(q, settings.braveApiKey.trim());
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      return `${fallbackNotice("Brave", reason)}${await searchDuckDuckGo(q)}`;
-    }
-  }
-  return searchDuckDuckGo(q);
+  return `${prefix}${await searchDuckDuckGo(q)}`;
 }
 async function searchDuckDuckGo(q) {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`;
@@ -1018,6 +1045,172 @@ async function tryOpenMeteoWeatherSupplement(q) {
   lines.push("Source: Open-Meteo (open-meteo.com). Not a replacement for official alerts or forecasts.");
   return lines.join("\n");
 }
+function tryParseArgs(raw) {
+  if (raw == null || !raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function ss(v) {
+  return typeof v === "string" ? v : "";
+}
+function displayFile(path) {
+  const raw = ss(path).replace(/\\/g, "/").trim();
+  if (!raw) return "file";
+  const parts = raw.split("/").filter(Boolean);
+  const base = parts.length ? parts[parts.length - 1] : raw;
+  return base ?? raw;
+}
+function truncateSnippet(text, max) {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+function webSearchProviderLabel(search) {
+  const head = premiumSearchTryOrder(search)[0];
+  if (head === "tavily") return "Tavily";
+  if (head === "brave") return "Brave Search";
+  return "DuckDuckGo";
+}
+function humanFallback(toolName) {
+  return toolName.replace(/_/g, " ");
+}
+function formatToolActivityStart(toolName, rawArguments, settings) {
+  const args = tryParseArgs(rawArguments);
+  if (args === null) {
+    return `Using ${humanFallback(toolName)}`;
+  }
+  switch (toolName) {
+    case "web_search": {
+      const q = truncateSnippet(ss(args.query), 100);
+      if (!q) return "Searching the web";
+      const who = webSearchProviderLabel(settings.search);
+      return `Searching with ${who} for "${q}"`;
+    }
+    case "read_file":
+      return `Reading ${displayFile(args.path)}`;
+    case "write_file":
+      return `Writing ${displayFile(args.path)}`;
+    case "replace_in_file":
+      return `Editing ${displayFile(args.path)}`;
+    case "insert_after":
+      return `Inserting into ${displayFile(args.path)}`;
+    case "apply_patch":
+      return "Applying a patch";
+    case "rename_file": {
+      const from = displayFile(args.from);
+      const to = displayFile(args.to);
+      return `Renaming ${from} → ${to}`;
+    }
+    case "delete_path":
+      return `Deleting ${displayFile(args.path)}`;
+    case "list_files":
+      return "Listing workspace files";
+    case "search_symbols": {
+      const q = truncateSnippet(ss(args.query), 80);
+      return q ? `Searching code for "${q}"` : "Searching project code";
+    }
+    case "get_file_outline":
+      return `Showing outline of ${displayFile(args.path)}`;
+    case "get_git_diff":
+      return "Checking workspace changes";
+    case "run_command": {
+      const cmd = truncateSnippet(ss(args.command), 70);
+      return cmd ? `Running: ${cmd}` : "Running a command";
+    }
+    case "run_tests": {
+      const cmd = truncateSnippet(ss(args.command) || "npm test", 70);
+      return `Running tests: ${cmd}`;
+    }
+    case "set_app_theme": {
+      const id = truncateSnippet(ss(args.theme_id), 48);
+      return id ? `Switching theme to ${id}` : "Changing app theme";
+    }
+    case "merge_custom_theme_tokens":
+      return "Updating custom theme colors";
+    case "set_custom_theme":
+      return "Applying a custom theme";
+    case "get_app_theme":
+      return "Reading current theme";
+    case "get_tool_access":
+      return "Reading tool permissions";
+    case "get_system_prompt":
+      return "Reading AI instructions (system prompt)";
+    case "get_wizard_system_prompt":
+      return "Reading Wizard instructions";
+    case "set_system_prompt":
+      return "Updating system prompt";
+    case "set_wizard_system_prompt":
+      return "Updating Wizard instructions";
+    case "set_wizard_display_name": {
+      const name = truncateSnippet(ss(args.display_name), 64);
+      return name ? `Renaming Wizard to “${name}”` : "Renaming Wizard";
+    }
+    case "revert_app_theme":
+      return "Reverting theme";
+    default:
+      return `Using ${humanFallback(toolName)}`;
+  }
+}
+function formatToolActivityDone(toolName, rawArguments) {
+  const args = tryParseArgs(rawArguments);
+  if (args === null) {
+    return `Finished (${humanFallback(toolName)})`;
+  }
+  switch (toolName) {
+    case "web_search":
+      return "Search finished";
+    case "read_file":
+      return `Read ${displayFile(args.path)}`;
+    case "write_file":
+      return `Wrote ${displayFile(args.path)}`;
+    case "replace_in_file":
+      return `Updated ${displayFile(args.path)}`;
+    case "insert_after":
+      return `Inserted into ${displayFile(args.path)}`;
+    case "apply_patch":
+      return "Patch applied";
+    case "rename_file":
+      return `Renamed ${displayFile(args.from)} → ${displayFile(args.to)}`;
+    case "delete_path":
+      return `Deleted ${displayFile(args.path)}`;
+    case "list_files":
+      return "Listed files";
+    case "search_symbols":
+      return "Code search finished";
+    case "get_file_outline":
+      return `Outlined ${displayFile(args.path)}`;
+    case "get_git_diff":
+      return "Change check finished";
+    case "run_command":
+      return "Command finished";
+    case "run_tests":
+      return "Tests finished";
+    case "set_app_theme":
+      return "Theme updated";
+    case "merge_custom_theme_tokens":
+    case "set_custom_theme":
+      return "Theme updated";
+    case "get_app_theme":
+      return "Theme details loaded";
+    case "get_tool_access":
+      return "Permissions loaded";
+    case "get_system_prompt":
+    case "get_wizard_system_prompt":
+      return "Instructions loaded";
+    case "set_system_prompt":
+    case "set_wizard_system_prompt":
+      return "Instructions saved";
+    case "set_wizard_display_name":
+      return "Wizard name saved";
+    case "revert_app_theme":
+      return "Theme reverted";
+    default:
+      return "Done";
+  }
+}
 function mapCompletionUsage(u) {
   if (!u) return void 0;
   const pt = u.prompt_tokens ?? 0;
@@ -1075,7 +1268,7 @@ const mythraSessionModeEmbedInstruction = `Mythra inline control: you may place 
 const mythraWebSearchEmbedInstruction = `Mythra inline Web toggle token ${MYTHRA_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
 const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${MYTHRA_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${MYTHRA_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
 const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice." : "UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.";
-const mythraWebSearchToolRoutingHint = `web_search: Mythra uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
+const mythraWebSearchToolRoutingHint = `web_search: Mythra follows your Web Search provider choice (Settings): DuckDuckGo only, or Tavily-then-Brave / Brave-then-Tavily for whichever API keys are saved—each failure (including quota) skips to the next step, ending on DuckDuckGo instant answers. Failed steps appear in the tool result. DuckDuckGo only returns short blurbs and links, not full pages. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
@@ -1314,11 +1507,12 @@ class ModelService {
             if (toolCall.type !== "function") {
               continue;
             }
+            const rawArgs = toolCall.function.arguments ?? "";
             this.emitActivity(
               window,
               requestId,
               toolCall.function.name === "run_command" ? "command" : "tool",
-              `Requested ${toolCall.function.name}${toolCall.function.arguments ? ` with ${truncate(toolCall.function.arguments, 180)}` : ""}.`
+              formatToolActivityStart(toolCall.function.name, rawArgs, settings)
             );
             const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
             this.assertNotStopped(requestId);
@@ -1327,7 +1521,7 @@ class ModelService {
               tool_call_id: toolCall.id,
               content: truncate(toolResult, 18e3)
             });
-            this.emitActivity(window, requestId, "success", `${toolCall.function.name} completed.`);
+            this.emitActivity(window, requestId, "success", formatToolActivityDone(toolCall.function.name, rawArgs));
           }
           continue;
         }
@@ -1717,12 +1911,21 @@ class ModelService {
     if (!runtime.workspaceRoot) {
       return tools;
     }
+    const wizardOutsideOn = Boolean(runtime.wizardId && runtime.wizardAllowOutsideWorkspace);
+    const wizardOutsideOff = Boolean(runtime.wizardId && !runtime.wizardAllowOutsideWorkspace);
+    const toolPathPropDesc = wizardOutsideOn ? "Relative workspace path, ../ segment, or absolute local path (Wizard “Allow paths outside workspace” is on). Cloud-sync folders are blocked." : wizardOutsideOff ? "Relative path inside this Wizard workspace. For files elsewhere, ask the user to enable **Allow paths outside workspace** in Wizard settings." : "Relative path inside the workspace.";
+    const readFileToolDesc = wizardOutsideOn ? "Read UTF-8 text; paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths." : wizardOutsideOff ? "Read UTF-8 text using a path relative to this Wizard workspace only. If the user needs another Wizard’s folder or arbitrary paths, tell them to enable **Allow paths outside workspace** in Wizard settings (Inspector)." : "Read a UTF-8 text file using a path relative to the current workspace root.";
+    const writeFileToolDesc = wizardOutsideOn ? "Create or overwrite UTF-8 text (creates parent folders). Paths may escape the workspace folder when this Wizard setting allows it—local disks only." : wizardOutsideOff ? "Create or overwrite UTF-8 inside this Wizard workspace. For targets outside it, ask the user to enable **Allow paths outside workspace**." : "Create or overwrite UTF-8 inside the workspace (creates parent folders).";
+    const replaceInFileToolDesc = wizardOutsideOn ? "Replace exact text inside one UTF-8 file. Use after read_file. Paths may use ../ or absolute local targets when allowed (cloud-sync blocked). Set replace_all only when every occurrence should change." : wizardOutsideOff ? "Replace exact text inside one UTF-8 file under this Wizard workspace unless the user enables **Allow paths outside workspace**. Use after read_file." : "Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.";
+    const insertAfterToolDesc = wizardOutsideOn ? "Insert text immediately after an exact anchor string in one UTF-8 file (paths may escape workspace when allowed)." : wizardOutsideOff ? "Insert text after an anchor in one UTF-8 file under this Wizard workspace unless **Allow paths outside workspace** is enabled." : "Insert text immediately after an exact anchor string in one UTF-8 file.";
+    const renameFileToolDesc = wizardOutsideOn ? "Move or rename a local file or folder; from/to paths follow write_file rules." : wizardOutsideOff ? "Move or rename inside this Wizard workspace unless the user enables **Allow paths outside workspace**." : "Move or rename a file or folder inside the current workspace.";
+    const deletePathToolDesc = wizardOutsideOn ? "Delete a local file or folder; path follows write_file rules." : wizardOutsideOff ? "Delete inside this Wizard workspace unless **Allow paths outside workspace** is enabled." : "Delete a file or folder inside the current workspace.";
     if (settings.tools.workspaceSearch) {
       tools.push({
         type: "function",
         function: {
           name: "list_files",
-          description: "List the files and directories inside the current workspace.",
+          description: "List files and directories under the current workspace root only. Does not include other folders on disk or other Wizards’ workspaces.",
           parameters: {
             type: "object",
             properties: {},
@@ -1736,13 +1939,13 @@ class ModelService {
         type: "function",
         function: {
           name: "read_file",
-          description: "Read a UTF-8 text file from the current workspace using a relative path.",
+          description: readFileToolDesc,
           parameters: {
             type: "object",
             properties: {
               path: {
                 type: "string",
-                description: "Relative path to the file inside the current workspace."
+                description: toolPathPropDesc
               }
             },
             required: ["path"],
@@ -1775,13 +1978,13 @@ class ModelService {
           type: "function",
           function: {
             name: "write_file",
-            description: "Create or overwrite a UTF-8 text file inside the current workspace. Creates parent folders when needed.",
+            description: writeFileToolDesc,
             parameters: {
               type: "object",
               properties: {
                 path: {
                   type: "string",
-                  description: "Relative path to the file inside the current workspace."
+                  description: toolPathPropDesc
                 },
                 content: {
                   type: "string",
@@ -1797,11 +2000,11 @@ class ModelService {
           type: "function",
           function: {
             name: "replace_in_file",
-            description: "Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.",
+            description: replaceInFileToolDesc,
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "Relative path inside the workspace." },
+                path: { type: "string", description: toolPathPropDesc },
                 search: { type: "string", description: "Exact text to find." },
                 replacement: { type: "string", description: "Replacement text." },
                 replace_all: { type: "boolean", description: "Replace every occurrence instead of just the first." }
@@ -1815,11 +2018,11 @@ class ModelService {
           type: "function",
           function: {
             name: "insert_after",
-            description: "Insert text immediately after an exact anchor string in one UTF-8 file.",
+            description: insertAfterToolDesc,
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "Relative path inside the workspace." },
+                path: { type: "string", description: toolPathPropDesc },
                 anchor: { type: "string", description: "Exact text to insert after." },
                 text: { type: "string", description: "Text to insert." }
               },
@@ -1832,12 +2035,12 @@ class ModelService {
           type: "function",
           function: {
             name: "rename_file",
-            description: "Move or rename a file or folder inside the current workspace.",
+            description: renameFileToolDesc,
             parameters: {
               type: "object",
               properties: {
-                from: { type: "string", description: "Existing relative path." },
-                to: { type: "string", description: "New relative path." }
+                from: { type: "string", description: toolPathPropDesc },
+                to: { type: "string", description: toolPathPropDesc }
               },
               required: ["from", "to"],
               additionalProperties: false
@@ -1848,13 +2051,13 @@ class ModelService {
           type: "function",
           function: {
             name: "delete_path",
-            description: "Delete a file or folder inside the current workspace.",
+            description: deletePathToolDesc,
             parameters: {
               type: "object",
               properties: {
                 path: {
                   type: "string",
-                  description: "Relative path to the file or folder inside the current workspace."
+                  description: toolPathPropDesc
                 }
               },
               required: ["path"],
@@ -1937,11 +2140,11 @@ class ModelService {
           type: "function",
           function: {
             name: "get_file_outline",
-            description: "Return top-level functions/classes/types/constants for a source file.",
+            description: "Return top-level functions/classes/types/constants for a source file (path rules match read_file for this session).",
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "Relative path to a source file." }
+                path: { type: "string", description: toolPathPropDesc }
               },
               required: ["path"],
               additionalProperties: false
@@ -2035,6 +2238,7 @@ class ModelService {
       `Enabled tools: ${enabledTools || "none"}`,
       `Approval: ${this.effectiveFullAccess(settings, runtime) ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
       runtime.wizardId ? "Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access." : "",
+      runtime.wizardId ? runtime.wizardAllowOutsideWorkspace ? "Wizard **Allow paths outside workspace** is ON: read/write/replace/insert/rename/delete/get_file_outline may target ../ segments or absolute local paths (cloud-sync folders remain blocked). list_files, search_symbols, apply_patch, get_git_diff, run_tests, and run_command stay scoped to this Wizard’s workspace folder only." : "Wizard path-based file tools default to this workspace folder only. If the user wants reads/writes elsewhere on disk (another Wizard folder, home directory, etc.), tell them to enable **Allow paths outside workspace** for this Wizard in Inspector → Wizard settings. Until then Mythra rejects paths outside the workspace—even with approval. To reuse another Wizard’s docs without that setting, suggest copying files here or opening that Wizard’s session." : "",
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
@@ -2379,6 +2583,7 @@ ${truncate(system_prompt, 900)}`
     if (!workspaceRoot) {
       throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
     }
+    const wizardAllowOutside = Boolean(runtime.wizardAllowOutsideWorkspace);
     switch (toolCall.function.name) {
       case "list_files": {
         if (!settings.tools.workspaceSearch) {
@@ -2403,7 +2608,7 @@ ${truncate(system_prompt, 900)}`
         if (!path) {
           throw new Error("read_file requires a path.");
         }
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         if (file.imagePreview && !file.content) {
           return JSON.stringify(
             {
@@ -2436,7 +2641,7 @@ ${truncate(system_prompt, 900)}`
         }
         let textDiff;
         try {
-          const existing = await this.workspaceService.openFile(workspaceRoot, path);
+          const existing = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
           if (!existing.imagePreview) {
             textDiff = { before: existing.content, after: content };
           }
@@ -2458,7 +2663,7 @@ ${path}
 This will create or overwrite the file.`,
           textDiff
         );
-        const file = await this.workspaceService.saveFile(workspaceRoot, path, content);
+        const file = await this.workspaceService.saveFile(workspaceRoot, path, content, wizardAllowOutside);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: file.path });
         return JSON.stringify(
           {
@@ -2503,7 +2708,7 @@ ${truncate(patch, 2500)}`
         const replacement = String(args.replacement ?? "");
         const replaceAll = Boolean(args.replace_all);
         if (!path) throw new Error("replace_in_file requires a path.");
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         let textDiff;
         if (!file.imagePreview) {
           const before = file.content;
@@ -2534,7 +2739,14 @@ Replacement:
 ${truncate(replacement, 1200)}`,
           textDiff
         );
-        const result = await this.workspaceService.replaceInFile(workspaceRoot, path, search, replacement, replaceAll);
+        const result = await this.workspaceService.replaceInFile(
+          workspaceRoot,
+          path,
+          search,
+          replacement,
+          replaceAll,
+          wizardAllowOutside
+        );
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
         return JSON.stringify(
           { ok: true, path: relative(workspaceRoot, result.path), replacements: result.replacements },
@@ -2553,7 +2765,7 @@ ${truncate(replacement, 1200)}`,
         if (!anchor) {
           throw new Error("Anchor text cannot be empty.");
         }
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         let textDiff;
         if (!file.imagePreview) {
           const beforeContent = file.content;
@@ -2582,7 +2794,7 @@ Insert:
 ${truncate(text, 1200)}`,
           textDiff
         );
-        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text);
+        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text, wizardAllowOutside);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: result.path });
         return JSON.stringify({ ok: true, path: relative(workspaceRoot, result.path) }, null, 2);
       }
@@ -2605,7 +2817,7 @@ ${from}
 to:
 ${to}`
         );
-        const result = await this.workspaceService.renamePath(workspaceRoot, from, to);
+        const result = await this.workspaceService.renamePath(workspaceRoot, from, to, wizardAllowOutside);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileDeleted: result.from, fileWritten: result.to });
         return JSON.stringify(
           { ok: true, from: relative(workspaceRoot, result.from), to: relative(workspaceRoot, result.to) },
@@ -2632,7 +2844,7 @@ ${path}
 
 This cannot be undone from the app.`
         );
-        const deleted = await this.workspaceService.deletePath(workspaceRoot, path);
+        const deleted = await this.workspaceService.deletePath(workspaceRoot, path, wizardAllowOutside);
         window.webContents.send("workspace:changed", { root: workspaceRoot, fileDeleted: deleted.path });
         return JSON.stringify(
           {
@@ -2663,7 +2875,11 @@ This cannot be undone from the app.`
         }
         const path = String(args.path ?? "");
         if (!path) throw new Error("get_file_outline requires a path.");
-        return JSON.stringify({ ok: true, ...await this.workspaceService.getFileOutline(workspaceRoot, path) }, null, 2);
+        return JSON.stringify(
+          { ok: true, ...await this.workspaceService.getFileOutline(workspaceRoot, path, wizardAllowOutside) },
+          null,
+          2
+        );
       }
       case "run_command": {
         if (!settings.tools.commandDeck) {
@@ -2865,6 +3081,20 @@ function normalizeProviderProfile(defaults, saved) {
 }
 const SETTINGS_FILE = "mythra-settings.json";
 const LEGACY_SETTINGS_FILES = ["openkiwi-settings.json", "pixel-forge-settings.json"];
+function normalizeMergedSearch(saved) {
+  const base = { ...defaultSettings.search, ...saved };
+  let provider = typeof base.provider === "string" ? base.provider : defaultSettings.search.provider;
+  if (provider === "tavily") provider = "tavily_then_brave";
+  if (provider === "brave") provider = "brave_then_tavily";
+  if (provider !== "duckduckgo" && provider !== "tavily_then_brave" && provider !== "brave_then_tavily") {
+    provider = defaultSettings.search.provider;
+  }
+  return {
+    provider,
+    tavilyApiKey: typeof base.tavilyApiKey === "string" ? base.tavilyApiKey : "",
+    braveApiKey: typeof base.braveApiKey === "string" ? base.braveApiKey : ""
+  };
+}
 const mergeSettings = (saved) => ({
   ...defaultSettings,
   ...saved,
@@ -2879,10 +3109,7 @@ const mergeSettings = (saved) => ({
       saved?.providers?.openrouter
     )
   },
-  search: {
-    ...defaultSettings.search,
-    ...saved?.search
-  },
+  search: normalizeMergedSearch(saved?.search),
   tools: {
     ...defaultSettings.tools,
     ...saved?.tools
@@ -3017,14 +3244,32 @@ const spawnWithInput = (cmd, args, cwd, input) => new Promise((resolvePromise, r
   });
   child.stdin.end(input);
 });
-const ensureInsideRoot = (root, target) => {
-  const resolvedRoot = resolve(root);
-  const resolvedTarget = resolve(resolvedRoot, target);
-  const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
-  if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
-    throw new Error("Target path is outside the active workspace.");
+const OUTSIDE_WORKSPACE_HINT = "Target path is outside the active workspace. Use paths relative to this workspace, or enable “Allow paths outside workspace” for this Wizard in Wizard settings (Inspector).";
+function resolveWorkspaceTarget(root, target, allowOutsideWorkspace = false) {
+  const resolvedRoot = resolve(root.trim());
+  const raw = target.trim();
+  if (!raw) {
+    throw new Error("Path cannot be empty.");
   }
+  const isAbsolute = raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw);
+  const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
+  if (!allowOutsideWorkspace) {
+    const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
+    if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
+      throw new Error(OUTSIDE_WORKSPACE_HINT);
+    }
+  }
+  assertLocalWorkspace(dirname(resolvedTarget));
   return resolvedTarget;
+}
+const ensureInsideRoot = (root, target) => resolveWorkspaceTarget(root, target, false);
+const normalizeWizardExportRelPath = (raw) => {
+  const posix = raw.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  const segments = posix.split("/").filter((s) => s.length > 0 && s !== ".");
+  if (segments.some((s) => s === "..")) {
+    throw new Error(`Invalid export path: ${raw}`);
+  }
+  return segments.join("/");
 };
 const sortNodes = (nodes) => nodes.sort((a, b) => {
   if (a.type !== b.type) {
@@ -3198,8 +3443,7 @@ class WorkspaceService {
       if (error.code !== "ENOENT") throw error;
     }
     await mkdir(root, { recursive: true });
-    const documents = [];
-    for (const [file, label] of WIZARD_CORE_DOCS) {
+    for (const [file] of WIZARD_CORE_DOCS) {
       const target = join$1(root, file);
       const initialBody = file === "soul.md" ? soulMarkdownForWizard(name, request.wizardPersonality) : file === "memory.md" ? memoryMarkdownForWizard(request.wizardMemory) : WIZARD_DEFAULT_CONTENT[file](name);
       try {
@@ -3207,7 +3451,6 @@ class WorkspaceService {
       } catch (error) {
         if (error.code !== "EEXIST") throw error;
       }
-      documents.push({ path: target, label, core: true });
     }
     const seen = new Set(WIZARD_CORE_DOCS.map(([file]) => file.toLowerCase()));
     for (const raw of request.customDocuments ?? []) {
@@ -3222,8 +3465,16 @@ class WorkspaceService {
       } catch (error) {
         if (error.code !== "EEXIST") throw error;
       }
-      documents.push({ path: target, label: file.replace(/\.md$/i, ""), core: false });
     }
+    if (request.mythwizWorkspaceFiles?.length) {
+      for (const { relativePath, content } of request.mythwizWorkspaceFiles) {
+        const safe = normalizeWizardExportRelPath(relativePath);
+        const abs = ensureInsideRoot(root, safe);
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content, "utf8");
+      }
+    }
+    const documents = await this.listWizardWorkspaceDocuments(root);
     const profile = {
       name,
       workspaceRoot: root,
@@ -3238,7 +3489,10 @@ class WorkspaceService {
       tree: await this.getTree(root)
     };
   }
-  /** Markdown files at the workspace root, core docs first — reflects creates/deletes without restarting. */
+  /**
+   * All `.md` files under the Wizard workspace (recursive; skips ignored dirs like node_modules).
+   * Core scaffold filenames first (in fixed order), then every other Markdown path sorted lexically.
+   */
   async listWizardWorkspaceDocuments(workspaceRoot) {
     const resolved = resolve(workspaceRoot.trim());
     try {
@@ -3247,22 +3501,137 @@ class WorkspaceService {
     } catch {
       throw new Error("Wizard workspace is not available.");
     }
-    const entries = await readdir(resolved, { withFileTypes: true });
-    const mdNames = entries.filter((e) => e.isFile() && /\.md$/i.test(e.name)).map((e) => e.name);
+    const bucket = [];
+    await walkFiles(resolved, resolved, bucket);
     const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
     const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
-    const orderedCore = coreOrder.map((low) => mdNames.find((m) => m.toLowerCase() === low)).filter((x) => Boolean(x));
-    const extras = mdNames.filter((m) => !coreMap.has(m.toLowerCase())).sort((a, b) => a.localeCompare(b));
-    const ordered = [...orderedCore, ...extras];
-    return ordered.map((name) => {
-      const lower = name.toLowerCase();
-      const label = coreMap.get(lower) ?? name.replace(/\.md$/i, "");
+    const mdRelPaths = bucket.filter((x) => x.type === "file" && /\.md$/i.test(x.path)).map((x) => x.path.replace(/\\/g, "/"));
+    mdRelPaths.sort((a, b) => {
+      const ba = basename(a).toLowerCase();
+      const bb = basename(b).toLowerCase();
+      const ia = coreOrder.indexOf(ba);
+      const ib = coreOrder.indexOf(bb);
+      if (ia !== -1 || ib !== -1) {
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        if (ia !== ib) return ia - ib;
+        return a.localeCompare(b);
+      }
+      return a.localeCompare(b);
+    });
+    return mdRelPaths.map((rel) => {
+      const abs = resolve(resolved, rel);
+      const lower = basename(rel).toLowerCase();
+      const label = coreMap.get(lower) ?? rel.replace(/\.md$/i, "");
       return {
-        path: join$1(resolved, name),
+        path: abs,
         label,
         core: coreMap.has(lower)
       };
     });
+  }
+  /** Relative POSIX paths of files under this Wizard workspace (for export UI). Ignores dotfiles and heavy dirs like node_modules. */
+  async listWizardExportRelativeFiles(workspaceRoot) {
+    const resolved = resolve(workspaceRoot.trim());
+    assertLocalWorkspace(resolved);
+    await stat(resolved);
+    const bucket = [];
+    await walkFiles(resolved, resolved, bucket);
+    return bucket.filter((x) => x.type === "file").map((x) => x.path === "." ? "" : x.path.replace(/\\/g, "/")).filter((p) => p.length > 0).sort((a, b) => a.localeCompare(b));
+  }
+  async buildWizardMythwizArchive(req) {
+    const root = resolve(req.workspaceRoot.trim());
+    assertLocalWorkspace(root);
+    await stat(root);
+    let normalizedPaths;
+    try {
+      normalizedPaths = [...new Set(req.workspaceRelativePaths.map(normalizeWizardExportRelPath))];
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+    if (!req.includeSystemPromptFile && normalizedPaths.length === 0) {
+      throw new Error("Select at least one item to export.");
+    }
+    const zip = new JSZip();
+    const exportedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const missingFromDisk = [];
+    const workspaceWritten = [];
+    for (const rel of normalizedPaths) {
+      try {
+        const abs = ensureInsideRoot(root, rel);
+        await stat(abs);
+        const buf = await readFile(abs);
+        zip.file(`workspace/${rel}`, buf);
+        workspaceWritten.push(rel);
+      } catch {
+        missingFromDisk.push(rel);
+      }
+    }
+    if (missingFromDisk.length > 0) {
+      throw new Error(`Could not read on disk: ${missingFromDisk.join(", ")}`);
+    }
+    if (req.includeSystemPromptFile) {
+      zip.file("system_prompt.md", req.systemPrompt ?? "", { createFolders: false });
+    }
+    const manifest = {
+      format: "mythwiz",
+      version: 1,
+      exportedAt,
+      wizardDisplayName: req.wizardDisplayName,
+      includesSystemPromptFile: Boolean(req.includeSystemPromptFile),
+      workspacePaths: workspaceWritten
+    };
+    zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+    const nodeBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    return Buffer.from(nodeBuf);
+  }
+  /** Read a `.mythwiz` ZIP produced by Mythra export (manifest, optional system_prompt.md, and workspace/ files). */
+  async parseWizardMythwizBuffer(buffer) {
+    const zip = await JSZip.loadAsync(buffer);
+    const manifestFile = zip.file("manifest.json");
+    if (!manifestFile) {
+      throw new Error("This file has no manifest.json — pick a Mythra .mythwiz export.");
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(await manifestFile.async("string"));
+    } catch {
+      throw new Error("Could not parse manifest.json in this bundle.");
+    }
+    if (manifest.format !== "mythwiz") {
+      throw new Error("This file is not a Mythra Wizard bundle.");
+    }
+    if (manifest.version !== 1) {
+      throw new Error(`Unsupported mythwiz format version (${String(manifest.version)}).`);
+    }
+    let systemPrompt = "";
+    const spFile = zip.file("system_prompt.md");
+    if (spFile) {
+      systemPrompt = await spFile.async("string");
+    }
+    const workspaceFiles = [];
+    const prefix = "workspace/";
+    for (const [fullPath, entry] of Object.entries(zip.files)) {
+      if (entry.dir) continue;
+      const normalizedZipPath = fullPath.replace(/\\/g, "/");
+      if (!normalizedZipPath.startsWith(prefix)) continue;
+      const inner = normalizedZipPath.slice(prefix.length);
+      if (!inner) continue;
+      let safeInner;
+      try {
+        safeInner = normalizeWizardExportRelPath(inner);
+      } catch {
+        continue;
+      }
+      const text = await entry.async("string");
+      workspaceFiles.push({ relativePath: safeInner, content: text });
+    }
+    workspaceFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    return {
+      wizardDisplayName: (manifest.wizardDisplayName ?? "").trim() || "Imported Wizard",
+      systemPrompt,
+      workspaceFiles
+    };
   }
   /**
    * Renames the wizard workspace directory when its basename does not match the sanitized display name.
@@ -3321,8 +3690,8 @@ class WorkspaceService {
       return false;
     }
   }
-  async openFile(root, target) {
-    const safePath = ensureInsideRoot(root, target);
+  async openFile(root, target, allowOutsideWorkspace = false) {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
     if (ext === ".svg") {
       const content2 = await readFile(safePath, "utf8");
@@ -3346,17 +3715,17 @@ class WorkspaceService {
     const content = await readFile(safePath, "utf8");
     return { path: safePath, content };
   }
-  async saveFile(root, target, content) {
-    const safePath = ensureInsideRoot(root, target);
+  async saveFile(root, target, content, allowOutsideWorkspace = false) {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await mkdir(dirname(safePath), { recursive: true });
     await writeFile(safePath, content, "utf8");
-    return this.openFile(root, target);
+    return this.openFile(root, target, allowOutsideWorkspace);
   }
-  async replaceInFile(root, target, search, replacement, replaceAll) {
+  async replaceInFile(root, target, search, replacement, replaceAll, allowOutsideWorkspace = false) {
     if (!search) {
       throw new Error("Search text cannot be empty.");
     }
-    const safePath = ensureInsideRoot(root, target);
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const count = content.split(search).length - 1;
     if (count === 0) {
@@ -3366,11 +3735,11 @@ class WorkspaceService {
     await writeFile(safePath, next, "utf8");
     return { path: safePath, replacements: replaceAll ? count : 1 };
   }
-  async insertAfter(root, target, anchor, text) {
+  async insertAfter(root, target, anchor, text, allowOutsideWorkspace = false) {
     if (!anchor) {
       throw new Error("Anchor text cannot be empty.");
     }
-    const safePath = ensureInsideRoot(root, target);
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const index = content.indexOf(anchor);
     if (index < 0) {
@@ -3381,15 +3750,15 @@ class WorkspaceService {
     await writeFile(safePath, next, "utf8");
     return { path: safePath };
   }
-  async renamePath(root, from, to) {
-    const safeFrom = ensureInsideRoot(root, from);
-    const safeTo = ensureInsideRoot(root, to);
+  async renamePath(root, from, to, allowOutsideWorkspace = false) {
+    const safeFrom = resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
+    const safeTo = resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
     await mkdir(dirname(safeTo), { recursive: true });
     await rename(safeFrom, safeTo);
     return { from: safeFrom, to: safeTo };
   }
-  async deletePath(root, target) {
-    const safePath = ensureInsideRoot(root, target);
+  async deletePath(root, target, allowOutsideWorkspace = false) {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await rm(safePath, { recursive: true, force: false });
     return { path: safePath };
   }
@@ -3457,8 +3826,8 @@ class WorkspaceService {
     }
     return results;
   }
-  async getFileOutline(root, target) {
-    const safePath = ensureInsideRoot(root, target);
+  async getFileOutline(root, target, allowOutsideWorkspace = false) {
+    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const ext = extname(safePath).toLowerCase();
     const lines = content.split(/\r?\n/);
@@ -3837,7 +4206,8 @@ const sanitizeRuntime = (runtime) => {
     wizardId: typeof runtime.wizardId === "string" ? runtime.wizardId : void 0,
     wizardName: typeof runtime.wizardName === "string" ? runtime.wizardName : void 0,
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0,
-    wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0
+    wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0,
+    wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0
   };
 };
 const sanitizeChatSettings = (requested) => ({
@@ -4052,6 +4422,51 @@ ipcMain.handle("tool:approval-response", async (_event, id, approved) => {
   resolveApproval(Boolean(approved));
 });
 ipcMain.handle("wizard:list-documents", async (_event, root) => workspaceService.listWizardWorkspaceDocuments(root));
+ipcMain.handle(
+  "wizard:list-export-files",
+  async (_event, root) => workspaceService.listWizardExportRelativeFiles(root)
+);
+ipcMain.handle("wizard:export-mythwiz", async (event, req) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const baseName = sanitizeWizardFolderSegment(req.wizardDisplayName.trim() || "wizard");
+  const opts = {
+    title: "Export Wizard",
+    defaultPath: `${baseName}.mythwiz`,
+    filters: [{ name: "Mythra Wizard bundle", extensions: ["mythwiz"] }]
+  };
+  const { canceled, filePath } = winSafe && !winSafe.isDestroyed() ? await dialog.showSaveDialog(winSafe, opts) : await dialog.showSaveDialog(opts);
+  if (canceled || !filePath) {
+    return { ok: false, cancelled: true };
+  }
+  try {
+    const buf = await workspaceService.buildWizardMythwizArchive(req);
+    await writeFile(filePath, buf);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+});
+ipcMain.handle("wizard:choose-import-mythwiz", async (event) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const opts = {
+    title: "Import Wizard bundle",
+    properties: ["openFile"],
+    filters: [{ name: "Mythra Wizard bundle", extensions: ["mythwiz"] }]
+  };
+  const pick = winSafe && !winSafe.isDestroyed() ? await dialog.showOpenDialog(winSafe, opts) : await dialog.showOpenDialog(opts);
+  if (pick.canceled || pick.filePaths.length === 0) {
+    return { ok: false, cancelled: true };
+  }
+  try {
+    const buf = await readFile(pick.filePaths[0]);
+    const data = await workspaceService.parseWizardMythwizBuffer(buf);
+    return { ok: true, data };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+});
 ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") return;
   let parsed;

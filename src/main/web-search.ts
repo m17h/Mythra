@@ -1,4 +1,4 @@
-import type { SearchSettings } from '@shared/types';
+import type { SearchProvider, SearchSettings } from '@shared/types';
 
 /**
  * Public web search via DuckDuckGo’s instant-answer API (no API key; best-effort).
@@ -12,8 +12,35 @@ const pushUnique = (acc: string[], line: string) => {
   if (t) acc.push(t);
 };
 
-const fallbackNotice = (provider: string, reason: string) =>
-  `${provider} search failed (${reason}). Falling back to DuckDuckGo instant answers.\n\n`;
+const fallbackNoticeDdg = (summary: string) => `${summary}\n\n`;
+
+type PaidSearchKind = 'tavily' | 'brave';
+
+export function premiumSearchUsesApiChain(provider: SearchProvider): boolean {
+  return provider === 'tavily_then_brave' || provider === 'brave_then_tavily';
+}
+
+/** First premium APIs to try when keys exist; order follows `provider`. Empty → DuckDuckGo only for this preference. */
+export function premiumSearchTryOrder(settings: SearchSettings): PaidSearchKind[] {
+  if (!premiumSearchUsesApiChain(settings.provider)) return [];
+
+  const hasT = settings.tavilyApiKey.trim().length > 0;
+  const hasB = settings.braveApiKey.trim().length > 0;
+  const seq: PaidSearchKind[] =
+    settings.provider === 'tavily_then_brave' ? ['tavily', 'brave'] : ['brave', 'tavily'];
+  return seq.filter((k) => (k === 'tavily' ? hasT : hasB));
+}
+
+function paidLabel(kind: PaidSearchKind): string {
+  return kind === 'tavily' ? 'Tavily' : 'Brave Search';
+}
+
+async function searchPaid(kind: PaidSearchKind, query: string, settings: SearchSettings): Promise<string> {
+  const q = query.trim();
+  return kind === 'tavily'
+    ? await searchTavily(q, settings.tavilyApiKey.trim())
+    : await searchBrave(q, settings.braveApiKey.trim());
+}
 
 const stripTags = (value: string) => value.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
@@ -136,25 +163,33 @@ export async function searchWeb(query: string, settings?: SearchSettings): Promi
     return 'Error: empty search query.';
   }
 
-  if (settings?.provider === 'tavily' && settings.tavilyApiKey.trim()) {
+  const s = settings;
+  const usePaid = s != null && premiumSearchUsesApiChain(s.provider);
+  const chain = usePaid && s ? premiumSearchTryOrder(s) : [];
+
+  if (!s || !usePaid || chain.length === 0) {
+    return searchDuckDuckGo(q);
+  }
+
+  let prefix = '';
+  for (let i = 0; i < chain.length; i += 1) {
+    const kind = chain[i]!;
     try {
-      return await searchTavily(q, settings.tavilyApiKey.trim());
+      const body = await searchPaid(kind, q, s);
+      return prefix ? `${prefix}${body}` : body;
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      return `${fallbackNotice('Tavily', reason)}${await searchDuckDuckGo(q)}`;
+      const label = paidLabel(kind);
+      if (i < chain.length - 1) {
+        const nextLabel = paidLabel(chain[i + 1]!);
+        prefix += `${label} search failed (${reason}). Trying ${nextLabel} instead.\n\n`;
+      } else {
+        prefix += `${label} search failed (${reason}). ` + fallbackNoticeDdg('Falling back to DuckDuckGo instant answers.');
+      }
     }
   }
 
-  if (settings?.provider === 'brave' && settings.braveApiKey.trim()) {
-    try {
-      return await searchBrave(q, settings.braveApiKey.trim());
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      return `${fallbackNotice('Brave', reason)}${await searchDuckDuckGo(q)}`;
-    }
-  }
-
-  return searchDuckDuckGo(q);
+  return `${prefix}${await searchDuckDuckGo(q)}`;
 }
 
 async function searchDuckDuckGo(q: string): Promise<string> {

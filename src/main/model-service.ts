@@ -31,6 +31,7 @@ import {
   SEMANTIC_CUSTOM_THEME_PALETTE_IDS
 } from '@shared/themes';
 import { CommandService } from './command-service';
+import { formatToolActivityDone, formatToolActivityStart } from './tool-activity-phrases';
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
 
@@ -127,7 +128,7 @@ const sessionModeUiStateLine = (mode: SessionMode) =>
     : 'UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.';
 
 /** Shown when web_search is enabled; DuckDuckGo instant answers are not full search pages. */
-const mythraWebSearchToolRoutingHint = `web_search: Mythra uses DuckDuckGo’s instant-answer endpoint—you receive short blurbs, definitions, and sometimes a few web links, not full article text. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions for that place (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
+const mythraWebSearchToolRoutingHint = `web_search: Mythra follows your Web Search provider choice (Settings): DuckDuckGo only, or Tavily-then-Brave / Brave-then-Tavily for whichever API keys are saved—each failure (including quota) skips to the next step, ending on DuckDuckGo instant answers. Failed steps appear in the tool result. DuckDuckGo only returns short blurbs and links, not full pages. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 
 const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 
@@ -231,6 +232,8 @@ interface ChatRuntimeContext {
   wizardSystemPrompt?: string;
   /** Per-Wizard Full access; when present (wizard sessions), gates approvals instead of global Settings.agent.fullAccess. */
   wizardFullAccess?: boolean;
+  /** Per-Wizard: file tools may resolve paths outside workspaceRoot (local paths only). */
+  wizardAllowOutsideWorkspace?: boolean;
 }
 
 /** Hidden Agent routing tokens that must never be pasted into `set_wizard_system_prompt`. */
@@ -451,11 +454,12 @@ export class ModelService {
               continue;
             }
 
+            const rawArgs = toolCall.function.arguments ?? '';
             this.emitActivity(
               window,
               requestId,
               toolCall.function.name === 'run_command' ? 'command' : 'tool',
-              `Requested ${toolCall.function.name}${toolCall.function.arguments ? ` with ${truncate(toolCall.function.arguments, 180)}` : ''}.`
+              formatToolActivityStart(toolCall.function.name, rawArgs, settings)
             );
 
             const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
@@ -467,7 +471,7 @@ export class ModelService {
               content: truncate(toolResult, 18_000)
             });
 
-            this.emitActivity(window, requestId, 'success', `${toolCall.function.name} completed.`);
+            this.emitActivity(window, requestId, 'success', formatToolActivityDone(toolCall.function.name, rawArgs));
           }
 
           continue;
@@ -939,12 +943,58 @@ export class ModelService {
       return tools;
     }
 
+    const wizardOutsideOn = Boolean(runtime.wizardId && runtime.wizardAllowOutsideWorkspace);
+    const wizardOutsideOff = Boolean(runtime.wizardId && !runtime.wizardAllowOutsideWorkspace);
+
+    const toolPathPropDesc = wizardOutsideOn
+      ? 'Relative workspace path, ../ segment, or absolute local path (Wizard “Allow paths outside workspace” is on). Cloud-sync folders are blocked.'
+      : wizardOutsideOff
+        ? 'Relative path inside this Wizard workspace. For files elsewhere, ask the user to enable **Allow paths outside workspace** in Wizard settings.'
+        : 'Relative path inside the workspace.';
+
+    const readFileToolDesc = wizardOutsideOn
+      ? 'Read UTF-8 text; paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths.'
+      : wizardOutsideOff
+        ? 'Read UTF-8 text using a path relative to this Wizard workspace only. If the user needs another Wizard’s folder or arbitrary paths, tell them to enable **Allow paths outside workspace** in Wizard settings (Inspector).'
+        : 'Read a UTF-8 text file using a path relative to the current workspace root.';
+
+    const writeFileToolDesc = wizardOutsideOn
+      ? 'Create or overwrite UTF-8 text (creates parent folders). Paths may escape the workspace folder when this Wizard setting allows it—local disks only.'
+      : wizardOutsideOff
+        ? 'Create or overwrite UTF-8 inside this Wizard workspace. For targets outside it, ask the user to enable **Allow paths outside workspace**.'
+        : 'Create or overwrite UTF-8 inside the workspace (creates parent folders).';
+
+    const replaceInFileToolDesc = wizardOutsideOn
+      ? 'Replace exact text inside one UTF-8 file. Use after read_file. Paths may use ../ or absolute local targets when allowed (cloud-sync blocked). Set replace_all only when every occurrence should change.'
+      : wizardOutsideOff
+        ? 'Replace exact text inside one UTF-8 file under this Wizard workspace unless the user enables **Allow paths outside workspace**. Use after read_file.'
+        : 'Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.';
+
+    const insertAfterToolDesc = wizardOutsideOn
+      ? 'Insert text immediately after an exact anchor string in one UTF-8 file (paths may escape workspace when allowed).'
+      : wizardOutsideOff
+        ? 'Insert text after an anchor in one UTF-8 file under this Wizard workspace unless **Allow paths outside workspace** is enabled.'
+        : 'Insert text immediately after an exact anchor string in one UTF-8 file.';
+
+    const renameFileToolDesc = wizardOutsideOn
+      ? 'Move or rename a local file or folder; from/to paths follow write_file rules.'
+      : wizardOutsideOff
+        ? 'Move or rename inside this Wizard workspace unless the user enables **Allow paths outside workspace**.'
+        : 'Move or rename a file or folder inside the current workspace.';
+
+    const deletePathToolDesc = wizardOutsideOn
+      ? 'Delete a local file or folder; path follows write_file rules.'
+      : wizardOutsideOff
+        ? 'Delete inside this Wizard workspace unless **Allow paths outside workspace** is enabled.'
+        : 'Delete a file or folder inside the current workspace.';
+
     if (settings.tools.workspaceSearch) {
       tools.push({
         type: 'function',
         function: {
           name: 'list_files',
-          description: 'List the files and directories inside the current workspace.',
+          description:
+            'List files and directories under the current workspace root only. Does not include other folders on disk or other Wizards’ workspaces.',
           parameters: {
             type: 'object',
             properties: {},
@@ -959,13 +1009,13 @@ export class ModelService {
         type: 'function',
         function: {
           name: 'read_file',
-          description: 'Read a UTF-8 text file from the current workspace using a relative path.',
+          description: readFileToolDesc,
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Relative path to the file inside the current workspace.'
+                description: toolPathPropDesc
               }
             },
             required: ['path'],
@@ -1000,14 +1050,13 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'write_file',
-            description:
-              'Create or overwrite a UTF-8 text file inside the current workspace. Creates parent folders when needed.',
+            description: writeFileToolDesc,
             parameters: {
               type: 'object',
               properties: {
                 path: {
                   type: 'string',
-                  description: 'Relative path to the file inside the current workspace.'
+                  description: toolPathPropDesc
                 },
                 content: {
                   type: 'string',
@@ -1023,12 +1072,11 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'replace_in_file',
-            description:
-              'Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.',
+            description: replaceInFileToolDesc,
             parameters: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: 'Relative path inside the workspace.' },
+                path: { type: 'string', description: toolPathPropDesc },
                 search: { type: 'string', description: 'Exact text to find.' },
                 replacement: { type: 'string', description: 'Replacement text.' },
                 replace_all: { type: 'boolean', description: 'Replace every occurrence instead of just the first.' }
@@ -1042,11 +1090,11 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'insert_after',
-            description: 'Insert text immediately after an exact anchor string in one UTF-8 file.',
+            description: insertAfterToolDesc,
             parameters: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: 'Relative path inside the workspace.' },
+                path: { type: 'string', description: toolPathPropDesc },
                 anchor: { type: 'string', description: 'Exact text to insert after.' },
                 text: { type: 'string', description: 'Text to insert.' }
               },
@@ -1059,12 +1107,12 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'rename_file',
-            description: 'Move or rename a file or folder inside the current workspace.',
+            description: renameFileToolDesc,
             parameters: {
               type: 'object',
               properties: {
-                from: { type: 'string', description: 'Existing relative path.' },
-                to: { type: 'string', description: 'New relative path.' }
+                from: { type: 'string', description: toolPathPropDesc },
+                to: { type: 'string', description: toolPathPropDesc }
               },
               required: ['from', 'to'],
               additionalProperties: false
@@ -1075,13 +1123,13 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'delete_path',
-            description: 'Delete a file or folder inside the current workspace.',
+            description: deletePathToolDesc,
             parameters: {
               type: 'object',
               properties: {
                 path: {
                   type: 'string',
-                  description: 'Relative path to the file or folder inside the current workspace.'
+                  description: toolPathPropDesc
                 }
               },
               required: ['path'],
@@ -1169,11 +1217,12 @@ export class ModelService {
           type: 'function',
           function: {
             name: 'get_file_outline',
-            description: 'Return top-level functions/classes/types/constants for a source file.',
+            description:
+              'Return top-level functions/classes/types/constants for a source file (path rules match read_file for this session).',
             parameters: {
               type: 'object',
               properties: {
-                path: { type: 'string', description: 'Relative path to a source file.' }
+                path: { type: 'string', description: toolPathPropDesc }
               },
               required: ['path'],
               additionalProperties: false
@@ -1289,6 +1338,11 @@ export class ModelService {
       `Approval: ${this.effectiveFullAccess(settings, runtime) ? 'writes/commands/system prompt runs without per-action approval' : 'user approval may be required for some writes, deletes, commands, and system prompt changes'}.`,
       runtime.wizardId
         ? 'Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access.'
+        : '',
+      runtime.wizardId
+        ? runtime.wizardAllowOutsideWorkspace
+          ? 'Wizard **Allow paths outside workspace** is ON: read/write/replace/insert/rename/delete/get_file_outline may target ../ segments or absolute local paths (cloud-sync folders remain blocked). list_files, search_symbols, apply_patch, get_git_diff, run_tests, and run_command stay scoped to this Wizard’s workspace folder only.'
+          : 'Wizard path-based file tools default to this workspace folder only. If the user wants reads/writes elsewhere on disk (another Wizard folder, home directory, etc.), tell them to enable **Allow paths outside workspace** for this Wizard in Inspector → Wizard settings. Until then Mythra rejects paths outside the workspace—even with approval. To reuse another Wizard’s docs without that setting, suggest copying files here or opening that Wizard’s session.'
         : '',
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
@@ -1656,6 +1710,8 @@ export class ModelService {
       throw new Error(`Tool ${toolCall.function.name} was requested, but no workspace is attached.`);
     }
 
+    const wizardAllowOutside = Boolean(runtime.wizardAllowOutsideWorkspace);
+
     switch (toolCall.function.name) {
       case 'list_files': {
         if (!settings.tools.workspaceSearch) {
@@ -1684,7 +1740,7 @@ export class ModelService {
           throw new Error('read_file requires a path.');
         }
 
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         if (file.imagePreview && !file.content) {
           return JSON.stringify(
             {
@@ -1720,7 +1776,7 @@ export class ModelService {
 
         let textDiff: { before: string; after: string } | undefined;
         try {
-          const existing = await this.workspaceService.openFile(workspaceRoot, path);
+          const existing = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
           if (!existing.imagePreview) {
             textDiff = { before: existing.content, after: content };
           }
@@ -1740,7 +1796,7 @@ export class ModelService {
           textDiff
         );
 
-        const file = await this.workspaceService.saveFile(workspaceRoot, path, content);
+        const file = await this.workspaceService.saveFile(workspaceRoot, path, content, wizardAllowOutside);
         window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: file.path });
         return JSON.stringify(
           {
@@ -1787,7 +1843,7 @@ export class ModelService {
         const replaceAll = Boolean(args.replace_all);
         if (!path) throw new Error('replace_in_file requires a path.');
 
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         let textDiff: { before: string; after: string } | undefined;
         if (!file.imagePreview) {
           const before = file.content;
@@ -1814,7 +1870,14 @@ export class ModelService {
           textDiff
         );
 
-        const result = await this.workspaceService.replaceInFile(workspaceRoot, path, search, replacement, replaceAll);
+        const result = await this.workspaceService.replaceInFile(
+          workspaceRoot,
+          path,
+          search,
+          replacement,
+          replaceAll,
+          wizardAllowOutside
+        );
         window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: result.path });
         return JSON.stringify(
           { ok: true, path: relative(workspaceRoot, result.path), replacements: result.replacements },
@@ -1835,7 +1898,7 @@ export class ModelService {
           throw new Error('Anchor text cannot be empty.');
         }
 
-        const file = await this.workspaceService.openFile(workspaceRoot, path);
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         let textDiff: { before: string; after: string } | undefined;
         if (!file.imagePreview) {
           const beforeContent = file.content;
@@ -1860,7 +1923,7 @@ export class ModelService {
           textDiff
         );
 
-        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text);
+        const result = await this.workspaceService.insertAfter(workspaceRoot, path, anchor, text, wizardAllowOutside);
         window.webContents.send('workspace:changed', { root: workspaceRoot, fileWritten: result.path });
         return JSON.stringify({ ok: true, path: relative(workspaceRoot, result.path) }, null, 2);
       }
@@ -1882,7 +1945,7 @@ export class ModelService {
           `The model wants to rename:\n${from}\n\nto:\n${to}`
         );
 
-        const result = await this.workspaceService.renamePath(workspaceRoot, from, to);
+        const result = await this.workspaceService.renamePath(workspaceRoot, from, to, wizardAllowOutside);
         window.webContents.send('workspace:changed', { root: workspaceRoot, fileDeleted: result.from, fileWritten: result.to });
         return JSON.stringify(
           { ok: true, from: relative(workspaceRoot, result.from), to: relative(workspaceRoot, result.to) },
@@ -1910,7 +1973,7 @@ export class ModelService {
           `The model wants to delete:\n${path}\n\nThis cannot be undone from the app.`
         );
 
-        const deleted = await this.workspaceService.deletePath(workspaceRoot, path);
+        const deleted = await this.workspaceService.deletePath(workspaceRoot, path, wizardAllowOutside);
         window.webContents.send('workspace:changed', { root: workspaceRoot, fileDeleted: deleted.path });
         return JSON.stringify(
           {
@@ -1944,7 +2007,11 @@ export class ModelService {
         }
         const path = String(args.path ?? '');
         if (!path) throw new Error('get_file_outline requires a path.');
-        return JSON.stringify({ ok: true, ...(await this.workspaceService.getFileOutline(workspaceRoot, path)) }, null, 2);
+        return JSON.stringify(
+          { ok: true, ...(await this.workspaceService.getFileOutline(workspaceRoot, path, wizardAllowOutside)) },
+          null,
+          2
+        );
       }
 
       case 'run_command': {

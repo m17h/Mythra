@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import type {
@@ -17,6 +17,18 @@ import {
 import { ALL_EMBED_STRIP_STRINGS } from '@shared/mythra-embeds';
 import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
+
+/** How close to the true bottom counts as “pinned” for auto-follow while the model streams. */
+const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+
+function distanceFromChatBottom(node: HTMLElement): number {
+  const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+  return maxScroll - node.scrollTop;
+}
+
+function getChatScrollMax(node: HTMLElement): number {
+  return Math.max(0, node.scrollHeight - node.clientHeight);
+}
 
 function getCopyableMessageText(content: string): string {
   let s = content;
@@ -376,14 +388,64 @@ function ToolActivityGroup({ items, onDetailsToggle }: { items: ActivityTimeline
   );
 }
 
+/** Match ThinkingBlock motion.transition duration (+ small buffer). */
+const THINKING_LAYOUT_MS = 240;
+
+/** `data-thinking-layout-lock-until` on `.chat-scroll` blocks ResizeObserver auto-clamp mid-animation (prevents jitter). */
 function ThinkingBlock({ reasoning }: { reasoning: string }) {
   const [open, setOpen] = useState(false);
+  const summaryRef = useRef<HTMLButtonElement>(null);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    },
+    []
+  );
+
+  const handleToggleThinking = () => {
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+    const summary = summaryRef.current;
+    const scrollEl = summary?.closest('.chat-scroll') as HTMLElement | null;
+    let beforeSummaryTop: number | undefined;
+
+    const lockUntil = Date.now() + THINKING_LAYOUT_MS + 120;
+    if (scrollEl) {
+      scrollEl.dataset.thinkingLayoutLockUntil = String(lockUntil);
+    }
+
+    if (summary && scrollEl) {
+      beforeSummaryTop = summary.getBoundingClientRect().top;
+    }
+
+    setOpen((v) => !v);
+
+    if (beforeSummaryTop !== undefined && scrollEl) {
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        const s = summaryRef.current;
+        if (!s?.isConnected || !scrollEl.isConnected) {
+          delete scrollEl.dataset.thinkingLayoutLockUntil;
+          return;
+        }
+        const afterSummaryTop = s.getBoundingClientRect().top;
+        scrollEl.scrollTop += afterSummaryTop - beforeSummaryTop;
+        delete scrollEl.dataset.thinkingLayoutLockUntil;
+      }, THINKING_LAYOUT_MS + 40);
+    }
+  };
+
   return (
     <div className={`chat-thinking ${open ? 'is-open' : ''}`}>
       <button
+        ref={summaryRef}
         className="chat-thinking__summary"
         onClick={() => {
-          setOpen((v) => !v);
+          handleToggleThinking();
         }}
         type="button"
       >
@@ -456,28 +518,44 @@ export function ChatPanel({
     if (lastTokenUsage == null) return rough;
     return Math.max(rough, lastTokenUsage.totalTokens);
   }, [attachments, chatMessages, input, lastTokenUsage]);
-  /** User is within this many px of the bottom, or we just forced scroll (e.g. new content). */
-  const userNearBottomRef = useRef(true);
+  /** When true and the model grows the thread height, snap scroll only if still within epsilon of bottom. */
+  const userPinnedToBottomRef = useRef(true);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottomHard = useCallback(() => {
     const node = scrollRef.current;
-    const bottom = bottomRef.current;
-    if (!node || !bottom) return;
-    bottom.scrollIntoView({ block: 'end' });
-    node.scrollTop = node.scrollHeight;
+    if (!node) return;
+    node.scrollTop = getChatScrollMax(node);
+    userPinnedToBottomRef.current = true;
   }, []);
+
+  const clampOverscroll = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const maxScroll = getChatScrollMax(node);
+    if (node.scrollTop > maxScroll) {
+      node.scrollTop = maxScroll;
+    }
+  }, []);
+
+  const maybeStickStreamingToBottom = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    clampOverscroll();
+    if (!userPinnedToBottomRef.current) return;
+    const target = getChatScrollMax(node);
+    if (Math.abs(node.scrollTop - target) > 1) {
+      node.scrollTop = target;
+    }
+  }, [clampOverscroll]);
 
   const clampAndMaybeStickToBottom = useCallback(() => {
     const node = scrollRef.current;
     if (!node) return;
-    const max = Math.max(0, node.scrollHeight - node.clientHeight);
-    if (node.scrollTop > max) {
-      node.scrollTop = max;
+    clampOverscroll();
+    if (userPinnedToBottomRef.current) {
+      scrollToBottomHard();
     }
-    if (userNearBottomRef.current) {
-      scrollToBottom();
-    }
-  }, [scrollToBottom]);
+  }, [clampOverscroll, scrollToBottomHard]);
 
   const afterScrollLayout = useCallback(() => {
     requestAnimationFrame(() => {
@@ -495,8 +573,14 @@ export function ChatPanel({
   const handleScroll = useCallback(() => {
     const n = scrollRef.current;
     if (!n) return;
-    const nearBottom = n.scrollHeight - n.clientHeight - n.scrollTop < 120;
-    userNearBottomRef.current = nearBottom;
+    userPinnedToBottomRef.current = distanceFromChatBottom(n) <= CHAT_BOTTOM_STICK_EPSILON_PX;
+  }, []);
+
+  /** Stop chasing the stream the instant the user scrolls upward (wheel / trackpad), before scrollTop updates. */
+  const handleWheelCapture = useCallback((e: WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) {
+      userPinnedToBottomRef.current = false;
+    }
   }, []);
 
   const handleCopyMessage = useCallback(async (messageId: string, rawContent: string) => {
@@ -521,55 +605,88 @@ export function ChatPanel({
     };
   }, []);
 
+  /** Stable keys so streaming token updates don't re-trigger layout scroll logic. */
+  const threadHeadKey = timeline.length === 0 ? '__empty__' : timeline[0]!.id;
+  const timelineTailKey =
+    timeline.length === 0 ? '__empty__' : `${timeline[timeline.length - 1]!.type}:${timeline[timeline.length - 1]!.id}`;
+  const threadHeadKeyPrevRef = useRef<string | null>(null);
+  const timelineTailKeyPrevRef = useRef<string | null>(null);
+
   useLayoutEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
-    requestAnimationFrame(() => {
+
+    if (threadHeadKeyPrevRef.current !== threadHeadKey) {
+      threadHeadKeyPrevRef.current = threadHeadKey;
+      timelineTailKeyPrevRef.current = timelineTailKey;
       requestAnimationFrame(() => {
-        scrollToBottom();
-        userNearBottomRef.current = true;
+        requestAnimationFrame(() => {
+          scrollToBottomHard();
+        });
       });
-    });
-  }, [scrollToBottom, timeline, isStreaming]);
+      return;
+    }
+
+    const prevTail = timelineTailKeyPrevRef.current;
+    timelineTailKeyPrevRef.current = timelineTailKey;
+
+    if (
+      timelineTailKey !== '__empty__' &&
+      prevTail !== null &&
+      timelineTailKey !== prevTail &&
+      userPinnedToBottomRef.current
+    ) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToBottomHard();
+        });
+      });
+    }
+  }, [scrollToBottomHard, threadHeadKey, timelineTailKey]);
 
   useEffect(() => {
     const inner = innerRef.current;
     const scroll = scrollRef.current;
     if (!inner || !scroll) return;
-    /** Batched scroll fix: avoid pinning “to bottom” on every sub-frame of a height animation (e.g. Thinking collapse) — that fight causes the bubble to shudder. */
+
     let raf = 0;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     const scheduleClamp = () => {
+      const lockUntilRaw = scroll.dataset.thinkingLayoutLockUntil;
+      if (lockUntilRaw != null && lockUntilRaw !== '' && Number(lockUntilRaw) > Date.now()) {
+        return;
+      }
+
       if (isStreaming) {
         cancelAnimationFrame(raf);
         raf = requestAnimationFrame(() => {
           raf = 0;
-          clampAndMaybeStickToBottom();
+          maybeStickStreamingToBottom();
         });
         return;
       }
+
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(
-        () => {
-          debounce = undefined;
-          requestAnimationFrame(() => {
-            clampAndMaybeStickToBottom();
-          });
-        },
-        100
-      );
+      debounce = setTimeout(() => {
+        debounce = undefined;
+        requestAnimationFrame(() => {
+          clampAndMaybeStickToBottom();
+        });
+      }, 100);
     };
+
     const ro = new ResizeObserver(() => {
       scheduleClamp();
     });
     ro.observe(inner);
     ro.observe(scroll);
+
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
       if (debounce) clearTimeout(debounce);
     };
-  }, [clampAndMaybeStickToBottom, isStreaming, timeline.length]);
+  }, [clampAndMaybeStickToBottom, isStreaming, maybeStickStreamingToBottom]);
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -723,7 +840,12 @@ export function ChatPanel({
       </div>
 
       {wizardHubPlaceholder ? (
-        <div className="chat-scroll wizard-hub-scroll" onScroll={handleScroll} ref={scrollRef}>
+        <div
+          className="chat-scroll wizard-hub-scroll"
+          onScroll={handleScroll}
+          onWheelCapture={handleWheelCapture}
+          ref={scrollRef}
+        >
           <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
             <div className="chat-empty wizard-hub-empty">
               <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
@@ -745,9 +867,11 @@ export function ChatPanel({
               </div>
               <h3 className="chat-empty__title">Select a wizard to get started</h3>
               <p className="chat-empty__desc wizard-hub-desc">
-                Pick one from the list on the left, or{' '}
+                Pick one from the list on the left,
+                <br />
+                or create one{' '}
                 <button type="button" className="wizard-hub-desc__here" onClick={() => onOpenWizardCreator?.()}>
-                  create one here
+                  here
                 </button>
                 .
               </p>
@@ -757,10 +881,10 @@ export function ChatPanel({
         </div>
       ) : (
         <>
-      <div className="chat-scroll" onScroll={handleScroll} ref={scrollRef}>
+      <div className="chat-scroll" onScroll={handleScroll} onWheelCapture={handleWheelCapture} ref={scrollRef}>
         <div className="chat-scroll__inner" ref={innerRef}>
         {timeline.length === 0 ? (
-          <div className="chat-empty">
+          <div className="chat-empty chat-empty--thread-start">
             <div className="chat-empty__icon">
               <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                 <rect x="4" y="6" width="24" height="18" rx="4" stroke="currentColor" strokeWidth="1.5"/>

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Monomaniac+One&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Quicksand:wght@500;600;700&display=swap');
 
 /* ───────────────── Design Tokens ───────────────── */
 
@@ -24,6 +24,8 @@
   --danger: #f87171;
   --danger-subtle: rgba(248, 113, 113, 0.1);
   --warning: #fbbf24;
+  /** Tool/command success rails — fixed green (not theme accent-2) */
+  --chat-activity-success-border: #22c55e;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -365,8 +367,12 @@ html[data-platform='darwin'] .app-shell {
   letter-spacing: 0.02em;
 }
 
-.app-dialog__section p {
-  margin: 0;
+.app-dialog__section p + p {
+  margin-top: 10px;
+}
+
+.app-dialog__section .app-dialog__snippet + p {
+  margin-top: 10px;
 }
 
 .app-dialog__code {
@@ -382,6 +388,128 @@ html[data-platform='darwin'] .app-shell {
 :root[data-theme='kiwi'] .app-dialog__code,
 :root[data-theme='custom'][data-custom-light='true'] .app-dialog__code {
   background: rgba(0, 0, 0, 0.06);
+}
+
+.wizard-export-dialog__muted {
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: 0.86rem;
+}
+
+.wizard-export-dialog__error {
+  margin: 10px 0 0;
+  color: var(--danger);
+  font-size: 0.86rem;
+}
+
+.wizard-export-dialog__check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 0;
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: var(--text-1);
+}
+
+.wizard-export-dialog__check-row input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.wizard-export-dialog__hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+
+.wizard-export-dialog__subhead {
+  margin: 14px 0 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.wizard-export-dialog__subhead--toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wizard-export-dialog__toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.wizard-export-dialog__linkish {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-light);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wizard-export-dialog__linkish:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.wizard-export-dialog__sep {
+  color: var(--text-2);
+  font-size: 0.76rem;
+}
+
+.wizard-export-dialog__file-scroll {
+  max-height: min(260px, 44vh);
+  overflow-y: auto;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme='ice-station'] .wizard-export-dialog__file-scroll,
+:root[data-theme='kiwi'] .wizard-export-dialog__file-scroll ,
+:root[data-theme='custom'][data-custom-light='true'] .wizard-export-dialog__file-scroll {
+
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/** Multiline excerpt inside help dialogs (e.g. sample system prompt text). */
+.app-dialog__snippet {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:root[data-theme='ice-station'] .app-dialog__snippet,
+:root[data-theme='kiwi'] .app-dialog__snippet,
+:root[data-theme='custom'][data-custom-light='true'] .app-dialog__snippet {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 /* ───────────────── Layout ───────────────── */
@@ -417,24 +545,16 @@ html[data-platform='darwin'] .app-shell {
   overflow: hidden;
 }
 
-/* “Mythra” wordmark — Monomaniac One */
+/* Mythra wordmark — Quicksand, follows primary theme text */
 .mythra-mark {
   display: inline-block;
-  font-family: 'Monomaniac One', ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Quicksand', 'Inter', ui-sans-serif, system-ui, sans-serif;
   font-size: 1em;
-  font-weight: 400;
+  font-weight: 700;
   line-height: 1.1;
   letter-spacing: 0.02em;
   white-space: nowrap;
-  color: #8ede9a;
-  text-shadow: 0 0 18px color-mix(in srgb, #8ede9a 25%, transparent);
-}
-
-:root[data-theme='ice-station'] .mythra-mark,
-:root[data-theme='kiwi'] .mythra-mark,
-:root[data-theme='custom'][data-custom-light='true'] .mythra-mark {
-  color: #3dad5c;
-  text-shadow: none;
+  color: var(--text-0);
 }
 
 .sidebar-brand__title .mythra-mark {
@@ -459,7 +579,7 @@ html[data-platform='darwin'] .app-shell {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px 16px 12px;
+  padding: 24px 16px 14px;
   -webkit-app-region: drag;
 }
 
@@ -486,13 +606,6 @@ html[data-platform='darwin'] .app-shell {
   color: var(--text-0);
 }
 
-.sidebar-brand__copy {
-  color: var(--text-2);
-  font-size: 0.72rem;
-  margin-top: 1px;
-}
-
-/* Quick actions */
 .sidebar-quick {
   display: flex;
   flex-direction: column;
@@ -787,7 +900,8 @@ html[data-platform='darwin'] .app-shell {
   max-height: 240px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  /* Elevated overlays must not use --bg-elevated: custom dark themes set it very translucent */
+  background: var(--panel-strong);
   box-shadow: var(--shadow-lg);
   overflow-y: auto;
   opacity: 0;
@@ -953,7 +1067,7 @@ html[data-platform='darwin'] .app-shell {
   display: grid;
   gap: 4px;
   min-width: 0;
-  margin: -2px 4px 8px 20px;
+  margin: 6px 4px 8px 20px;
   padding-left: 10px;
   border-left: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
 }
@@ -1107,6 +1221,7 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .chat-list__rename,
+.chat-list__export,
 .chat-list__delete {
   padding: 4px;
   border-radius: 4px;
@@ -1115,14 +1230,19 @@ html[data-platform='darwin'] .app-shell {
   flex-shrink: 0;
 }
 
-.chat-list__rename:hover {
+.chat-list__rename:hover,
+.chat-list__export:hover {
   color: var(--text-0);
   background: rgba(255, 255, 255, 0.08);
 }
 
 :root[data-theme='ice-station'] .chat-list__rename:hover,
 :root[data-theme='kiwi'] .chat-list__rename:hover,
-:root[data-theme='custom'][data-custom-light='true'] .chat-list__rename:hover {
+:root[data-theme='custom'][data-custom-light='true'] .chat-list__rename:hover ,
+:root[data-theme='ice-station'] .chat-list__export:hover,
+:root[data-theme='kiwi'] .chat-list__export:hover,
+:root[data-theme='custom'][data-custom-light='true'] .chat-list__export:hover {
+
   background: rgba(0, 0, 0, 0.06);
 }
 
@@ -1231,7 +1351,7 @@ html[data-platform='darwin'] .app-shell {
 
 .chat-panel__header-titles {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
 
@@ -1519,9 +1639,20 @@ html[data-platform='darwin'] .app-shell {
   min-height: 100%;
 }
 
-.wizard-hub-empty.chat-empty {
+/* Same vertical band as Wizard hub placeholder (normal chat empty thread only). */
+.wizard-hub-empty.chat-empty,
+.chat-empty.chat-empty--thread-start {
   padding-top: min(72px, 12vh);
   padding-bottom: min(96px, 18vh);
+}
+
+/*
+ * Empty thread with composer below: nudge content down so it matches the optical center of the
+ * scroll region (wizard chats use the same layout as Agent chats).
+ * (12+12 compose padding + ~48px bar row — bar flex height is ~min one line of input.)
+ */
+.chat-empty.chat-empty--thread-start {
+  transform: translateY(calc((24px + 48px) / 2));
 }
 
 .chat-empty__icon--wizard-hat svg {
@@ -1538,14 +1669,19 @@ html[data-platform='darwin'] .app-shell {
   font: inherit;
   font-size: inherit;
   line-height: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  font-weight: 700;
+  text-decoration: none;
   cursor: pointer;
 }
 
 .wizard-hub-desc__here:hover {
-  opacity: 0.9;
+  opacity: 0.92;
+}
+
+.wizard-hub-desc__here:focus-visible {
+  outline: 2px solid var(--accent-light, var(--accent));
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* Chat activity */
@@ -1645,7 +1781,9 @@ details.chat-activity--collapsible {
 .chat-activity--tool,
 .chat-activity--command,
 .chat-activity--success,
-.chat-activity--finished { border-left-color: var(--accent-2); }
+.chat-activity--finished {
+  border-left-color: var(--chat-activity-success-border);
+}
 .chat-activity--approval, .chat-activity--warning { border-left-color: var(--warning); }
 .chat-activity--stopped, .chat-activity--error { border-left-color: var(--danger); }
 
@@ -1673,7 +1811,9 @@ details.chat-activity--collapsible {
 
 .chat-activity-group__row--tool,
 .chat-activity-group__row--command,
-.chat-activity-group__row--success { border-left: 2px solid var(--accent-2); }
+.chat-activity-group__row--success {
+  border-left: 2px solid var(--chat-activity-success-border);
+}
 .chat-activity-group__row--approval { border-left: 2px solid var(--warning); }
 
 .chat-activity-group__row-label {
@@ -2413,7 +2553,9 @@ details.chat-activity--collapsible {
   background: rgba(255, 255, 255, 0.06);
 }
 
-:root[data-theme='ice-station'] .chat-compose__terminal-toggle:hover {
+:root[data-theme='ice-station'] .chat-compose__terminal-toggle:hover,
+:root[data-theme='kiwi'] .chat-compose__terminal-toggle:hover,
+:root[data-theme='custom'][data-custom-light='true'] .chat-compose__terminal-toggle:hover {
   background: rgba(0, 0, 0, 0.06);
 }
 
@@ -2435,8 +2577,22 @@ details.chat-activity--collapsible {
   flex-direction: column;
 }
 
-:root[data-theme='ice-station'] .chat-terminal {
+:root[data-theme='ice-station'] .chat-terminal,
+:root[data-theme='custom'][data-custom-light='true'] .chat-terminal {
   background: rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme='kiwi'] .chat-terminal {
+  background: color-mix(in srgb, var(--accent-light) 11%, var(--bg-1));
+}
+
+:root[data-theme='ice-station'] .chat-terminal__close:hover,
+:root[data-theme='custom'][data-custom-light='true'] .chat-terminal__close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme='kiwi'] .chat-terminal__close:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 .chat-terminal__header {
@@ -2952,6 +3108,35 @@ details.chat-activity--collapsible {
   color: var(--text-1);
 }
 
+.wizard-setup__topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.wizard-setup__topbar .app-dialog__kicker {
+  margin-bottom: 0;
+}
+
+.wizard-setup__import-btn {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.wizard-setup__import-note {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--accent-subtle);
+  color: var(--text-1);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .wizard-setup__steps {
   display: flex;
   align-items: center;
@@ -3461,7 +3646,7 @@ details.chat-activity--collapsible {
   overflow-y: auto;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--panel-strong);
   box-shadow: var(--shadow-lg);
   z-index: 100;
 }
@@ -3474,6 +3659,16 @@ details.chat-activity--collapsible {
 
 .model-search__row + .model-search__row {
   border-top: 1px solid var(--line);
+}
+
+.model-search__row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme='ice-station'] .model-search__row:hover,
+:root[data-theme='kiwi'] .model-search__row:hover,
+:root[data-theme='custom'][data-custom-light='true'] .model-search__row:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .model-search__star {
@@ -3560,7 +3755,7 @@ details.chat-activity--collapsible {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
-  background: var(--bg-elevated);
+  background: var(--panel-strong);
   box-shadow: var(--shadow-lg);
   color: var(--text-0);
   font-size: 0.78rem;
@@ -3691,7 +3886,7 @@ details.chat-activity--collapsible {
   flex-direction: column;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--panel-strong);
   box-shadow: var(--shadow-lg);
 }
 
@@ -3757,7 +3952,7 @@ details.chat-activity--collapsible {
   flex-direction: column;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--panel-strong);
   box-shadow: var(--shadow-lg);
   padding: 4px 0;
   box-sizing: border-box;
