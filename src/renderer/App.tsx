@@ -662,9 +662,14 @@ export function App() {
   const [nexusDraft, setNexusDraft] = useState<NexusProject | null>(null);
   const [wizardExportChat, setWizardExportChat] = useState<SavedChatMeta | null>(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [nexusDeleteTarget, setNexusDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
-  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{ wizardName: string; workspaceRoot: string } | null>(null);
+  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{
+    workspaceRoot: string;
+    label: string;
+    variant: 'wizard' | 'nexus';
+  } | null>(null);
   const [wizardPromptApproval, setWizardPromptApproval] = useState<WizardPromptApprovalRequest | null>(null);
   const [toolApprovalRequest, setToolApprovalRequest] = useState<ToolApprovalRequest | null>(null);
   const [expandedWizardIds, setExpandedWizardIds] = useState<Set<string>>(new Set());
@@ -878,6 +883,8 @@ export function App() {
 
   /** Wizard selected from sidebar (settings/workspace) without an active chat thread. */
   const [sidebarFocusedWizardId, setSidebarFocusedWizardId] = useState<string | undefined>(undefined);
+  /** Nexus project selected from sidebar without an active room thread. */
+  const [sidebarFocusedNexusId, setSidebarFocusedNexusId] = useState<string | undefined>(undefined);
 
   const sidebarWizardListMeta = useMemo(
     () =>
@@ -885,6 +892,14 @@ export function App() {
         ? wizardChatList.find((c) => c.id === sidebarFocusedWizardId)
         : undefined,
     [sidebarFocusedWizardId, wizardChatList]
+  );
+
+  const sidebarNexusListMeta = useMemo(
+    () =>
+      sidebarFocusedNexusId
+        ? nexusProjectList.find((c) => c.id === sidebarFocusedNexusId)
+        : undefined,
+    [sidebarFocusedNexusId, nexusProjectList]
   );
 
   const activeWizardMeta = useMemo(() => {
@@ -902,8 +917,8 @@ export function App() {
       return chatList.find((c) => c.id === activeChatMeta.nexusId && c.kind === 'nexus');
     }
     if (activeChatMeta?.kind === 'nexus') return activeChatMeta;
-    return undefined;
-  }, [activeChatMeta, chatList]);
+    return sidebarNexusListMeta;
+  }, [activeChatMeta, chatList, sidebarNexusListMeta]);
   const activeNexus = activeNexusMeta?.nexus ?? null;
 
   useEffect(() => {
@@ -956,6 +971,13 @@ export function App() {
     }
   }, [activeWizardMeta?.id]);
 
+  useEffect(() => {
+    if (nexusAutosaveTimerRef.current) {
+      clearTimeout(nexusAutosaveTimerRef.current);
+      nexusAutosaveTimerRef.current = null;
+    }
+  }, [activeNexusMeta?.id]);
+
   const effectiveModelOverride = useMemo((): ChatModelOverride | null => {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
     return newChatModelOverride;
@@ -964,15 +986,26 @@ export function App() {
   const showWizardHubPlaceholder = useMemo(
     () =>
       sidebarTab === 'wizards' &&
+      wizardsSidebarPane === 'wizards' &&
       !sidebarFocusedWizardId &&
       activeChatMeta?.kind !== 'wizard-session' &&
       activeChatMeta?.kind !== 'nexus-session',
-    [sidebarTab, sidebarFocusedWizardId, activeChatMeta?.kind]
+    [sidebarTab, wizardsSidebarPane, sidebarFocusedWizardId, activeChatMeta?.kind]
   );
 
   const chatSessionSubheading = useMemo(() => {
     if (
       sidebarTab === 'wizards' &&
+      wizardsSidebarPane === 'nexus' &&
+      !sidebarFocusedNexusId &&
+      activeChatMeta?.kind !== 'wizard-session' &&
+      activeChatMeta?.kind !== 'nexus-session'
+    ) {
+      return 'Select a Nexus project to get started';
+    }
+    if (
+      sidebarTab === 'wizards' &&
+      wizardsSidebarPane === 'wizards' &&
       !sidebarFocusedWizardId &&
       activeChatMeta?.kind !== 'wizard-session' &&
       activeChatMeta?.kind !== 'nexus-session'
@@ -991,7 +1024,12 @@ export function App() {
       return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
     }
     if (activeNexus) {
-      const session = activeChatMeta?.kind === 'nexus-session' ? activeChatMeta.title : 'Project room';
+      const session =
+        activeChatMeta?.kind === 'nexus-session'
+          ? activeChatMeta.title
+          : !activeChatId && sidebarFocusedNexusId && activeNexusMeta?.id === sidebarFocusedNexusId
+            ? 'New room on first send'
+            : 'Project room';
       const leaderName = chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.name ?? 'Leader';
       return `${activeNexus.name} · ${session} · ${leaderName} leads · ${pathLabel(activeNexus.workspaceRoot)}`;
     }
@@ -1023,6 +1061,9 @@ export function App() {
     newChatModelOverride,
     pathLabel,
     sidebarFocusedWizardId,
+    sidebarFocusedNexusId,
+    wizardsSidebarPane,
+    activeNexusMeta?.id,
     sidebarTab
   ]);
 
@@ -1771,6 +1812,7 @@ export function App() {
       saveTimerRef.current = null;
     }
     setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(undefined);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -1795,6 +1837,7 @@ export function App() {
     const meta = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
     const comingFromWizardContext = Boolean(
       sidebarFocusedWizardId ||
+        sidebarFocusedNexusId ||
         meta?.kind === 'wizard' ||
         meta?.kind === 'wizard-session' ||
         meta?.kind === 'nexus' ||
@@ -1813,6 +1856,7 @@ export function App() {
 
     /** Opening any saved conversation clears “wizard selected, no chat” sidebar focus. */
     setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(undefined);
     const parentWizard =
       chat.kind === 'wizard-session' && chat.wizardId
         ? await window.electronAPI.loadChat(chat.wizardId)
@@ -1877,11 +1921,11 @@ export function App() {
     }
 
     const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
-    const sessionOpenForThisWizard = active?.kind === 'wizard-session' && active.wizardId === chat.id;
-    const toggleOnlySidebar =
-      (!activeChatId && sidebarFocusedWizardId === chat.id) || sessionOpenForThisWizard;
+    const sessionOpenForThisWizard =
+      Boolean(activeChatId && active?.kind === 'wizard-session' && active.wizardId === chat.id);
 
-    if (toggleOnlySidebar) {
+    /** Parent row click while a session is open: only fold/unfold sessions (legacy behavior). */
+    if (sessionOpenForThisWizard) {
       setExpandedWizardIds((current) => {
         const next = new Set(current);
         if (next.has(chat.id)) next.delete(chat.id);
@@ -1891,13 +1935,21 @@ export function App() {
       return;
     }
 
-    setExpandedWizardIds((current) => {
-      const next = new Set(current);
-      if (next.has(chat.id)) next.delete(chat.id);
-      else next.add(chat.id);
-      return next;
-    });
+    /** Same wizard already focused with no chat open: second click toggles session list expand/collapse. */
+    const wizardAlreadyFocusedNoChat = !activeChatId && sidebarFocusedWizardId === chat.id;
+    if (wizardAlreadyFocusedNoChat) {
+      setExpandedWizardIds((current) => {
+        const next = new Set(current);
+        if (next.has(chat.id)) next.delete(chat.id);
+        else next.add(chat.id);
+        return next;
+      });
+      return;
+    }
 
+    /** First selection (nothing focused or switching Wizards): focus workspace + inspector only — do not expand sessions yet. */
+
+    setSidebarFocusedNexusId(undefined);
     setSidebarFocusedWizardId(chat.id);
     setInspectorTab('settings');
     setSettingsInspectorScope('wizard');
@@ -1934,6 +1986,76 @@ export function App() {
     }
   };
 
+  const handleNexusSidebarRowActivate = async (project: SavedChatMeta) => {
+    if (project.kind !== 'nexus' || !project.nexus?.workspaceRoot) return;
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
+    const sessionOpenForThisNexus =
+      Boolean(activeChatId && active?.kind === 'nexus-session' && active.nexusId === project.id);
+
+    if (sessionOpenForThisNexus) {
+      setExpandedNexusIds((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) next.delete(project.id);
+        else next.add(project.id);
+        return next;
+      });
+      return;
+    }
+
+    const nexusAlreadyFocusedNoChat = !activeChatId && sidebarFocusedNexusId === project.id;
+    if (nexusAlreadyFocusedNoChat) {
+      setExpandedNexusIds((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) next.delete(project.id);
+        else next.add(project.id);
+        return next;
+      });
+      return;
+    }
+
+    setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(project.id);
+    setInspectorTab('settings');
+    setSettingsInspectorScope('nexus');
+
+    lastContentFingerprintRef.current = null;
+    setChatMessages([]);
+    setChatTimeline([]);
+    setChatInput('');
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(undefined);
+    setActiveChatId(undefined);
+    activeChatIdRef.current = undefined;
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
+
+    try {
+      await activateWorkspace(project.nexus.workspaceRoot);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : 'Nexus workspace could not be opened.');
+    }
+    setSidebarTab('wizards');
+
+    try {
+      const full = await window.electronAPI.loadChat(project.id);
+      if (full?.kind === 'nexus' && full.nexus) {
+        setNexusDraft(full.nexus);
+        nexusDraftRef.current = full.nexus;
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   const deleteChat = async (id: string) => {
     const inFlight = findInFlightByChatId(id);
     if (inFlight) {
@@ -1958,6 +2080,10 @@ export function App() {
       setWizardSessionDeleteTarget(chat);
       return;
     }
+    if (chat.kind === 'nexus') {
+      setNexusDeleteTarget(chat);
+      return;
+    }
     if (chat.kind === 'nexus-session') {
       setNexusSessionDeleteTarget(chat);
       return;
@@ -1971,6 +2097,7 @@ export function App() {
       saveTimerRef.current = null;
     }
     setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(undefined);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -2078,9 +2205,54 @@ export function App() {
       next.delete(target.id);
       return next;
     });
-    if (workspaceRoot) {
-      setWorkspaceDeleteTarget({ wizardName, workspaceRoot });
+    if (sidebarFocusedWizardId === target.id) {
+      setSidebarFocusedWizardId(undefined);
     }
+    if (workspaceRoot) {
+      setWorkspaceDeleteTarget({ workspaceRoot, label: wizardName, variant: 'wizard' });
+    }
+  };
+
+  const confirmDeleteNexus = async () => {
+    const target = nexusDeleteTarget;
+    if (!target?.nexus?.workspaceRoot || target.kind !== 'nexus') return;
+    const workspaceRoot = target.nexus.workspaceRoot;
+    const projectLabel = target.nexus.name?.trim() || target.title;
+    const sessions = nexusSessionsByNexusId.get(target.id) ?? [];
+    const priorActiveId = activeChatId;
+    const idsRemoved = new Set<string>([target.id, ...sessions.map((s) => s.id)]);
+
+    setNexusDeleteTarget(null);
+
+    for (const cid of idsRemoved) {
+      const inf = findInFlightByChatId(cid);
+      if (inf) {
+        await window.electronAPI.stopChat(inf.requestId);
+        inFlightChatsRef.current.delete(inf.requestId);
+      }
+    }
+
+    await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
+    await deleteChat(target.id);
+
+    if (priorActiveId && idsRemoved.has(priorActiveId)) {
+      await startNewChat();
+    }
+    if (editingTitleId && idsRemoved.has(editingTitleId)) {
+      setEditingTitleId(null);
+      setEditingTitleDraft('');
+    }
+
+    setSidebarTab('wizards');
+    setExpandedNexusIds((current) => {
+      const next = new Set(current);
+      next.delete(target.id);
+      return next;
+    });
+    if (sidebarFocusedNexusId === target.id) {
+      setSidebarFocusedNexusId(undefined);
+    }
+    setWorkspaceDeleteTarget({ workspaceRoot, label: projectLabel, variant: 'nexus' });
   };
 
   /** Persist a new wizard-session with the bootstrap assistant message (shared with Send auto-create). */
@@ -2154,6 +2326,7 @@ export function App() {
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
     setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(undefined);
   };
 
   const createNexusSessionBootstrapOnDisk = async (full: SavedChat) => {
@@ -2224,6 +2397,7 @@ export function App() {
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
     setSidebarFocusedWizardId(undefined);
+    setSidebarFocusedNexusId(undefined);
   };
 
   const beginWizardExport = (e: MouseEvent, chat: SavedChatMeta) => {
@@ -2648,6 +2822,7 @@ export function App() {
       setChatSessionId(sessionId);
       chatSessionIdRef.current = sessionId;
       setSidebarFocusedWizardId(undefined);
+      setSidebarFocusedNexusId(undefined);
       setExpandedWizardIds((current) => new Set(current).add(wizardDiskId));
       await refreshChatList();
       try {
@@ -3365,18 +3540,44 @@ export function App() {
         title="Are you sure?"
       />
       <AppConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Delete Nexus project"
+        confirmVariant="danger"
+        description={
+          <>
+            Delete Nexus project <strong>{nexusDeleteTarget?.title ?? 'this project'}</strong> from Mythra? This removes
+            the project entry and all Nexus rooms / conversation history, but does not delete its shared workspace folder
+            yet.
+          </>
+        }
+        kicker="Delete Nexus project"
+        onCancel={() => setNexusDeleteTarget(null)}
+        onConfirm={() => void confirmDeleteNexus()}
+        open={Boolean(nexusDeleteTarget)}
+        title="Are you sure?"
+      />
+      <AppConfirmDialog
         cancelLabel="Keep folder"
         confirmLabel="Delete folder"
         confirmVariant="danger"
         description={
-          <>
-            Also delete <strong>{workspaceDeleteTarget?.wizardName ?? 'this Wizard'}</strong>&apos;s workspace folder and
-            all files inside it?
-            <br />
-            <code className="app-dialog__code">{workspaceDeleteTarget?.workspaceRoot}</code>
-          </>
+          workspaceDeleteTarget?.variant === 'nexus' ? (
+            <>
+              Also delete the shared Nexus workspace folder for <strong>{workspaceDeleteTarget.label}</strong> and all
+              files inside it?
+              <br />
+              <code className="app-dialog__code">{workspaceDeleteTarget.workspaceRoot}</code>
+            </>
+          ) : (
+            <>
+              Also delete <strong>{workspaceDeleteTarget?.label ?? 'this Wizard'}</strong>&apos;s workspace folder and
+              all files inside it?
+              <br />
+              <code className="app-dialog__code">{workspaceDeleteTarget?.workspaceRoot}</code>
+            </>
+          )
         }
-        kicker="Wizard Workspace"
+        kicker={workspaceDeleteTarget?.variant === 'nexus' ? 'Nexus workspace' : 'Wizard Workspace'}
         onCancel={() => setWorkspaceDeleteTarget(null)}
         onConfirm={() => {
           const target = workspaceDeleteTarget;
@@ -4138,14 +4339,9 @@ export function App() {
                                 <div className="wizard-group wizard-group--nexus" key={project.id}>
                                   <div
                                     aria-expanded={expandedNexusIds.has(project.id)}
-                                    className={`chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? 'is-active' : ''}`}
+                                    className={`chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? 'is-active' : ''} ${project.pinned ? 'is-pinned' : ''}`}
                                     onClick={() => {
-                                      setExpandedNexusIds((current) => {
-                                        const next = new Set(current);
-                                        if (next.has(project.id)) next.delete(project.id);
-                                        else next.add(project.id);
-                                        return next;
-                                      });
+                                      void handleNexusSidebarRowActivate(project);
                                     }}
                                   >
                                     <div className="chat-list__content">
@@ -4165,6 +4361,44 @@ export function App() {
                                       <div className="chat-list__date">
                                         Nexus · {leader ?? 'Leader'} · {sessions.length} sessions
                                       </div>
+                                    </div>
+                                    <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
+                                      <button
+                                        className={`chat-list__pin ${project.pinned ? 'is-active' : ''}`}
+                                        onClick={(e) => void togglePinChat(e, project.id)}
+                                        type="button"
+                                        title={project.pinned ? 'Unpin' : 'Pin to top'}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                          <path
+                                            d="M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z"
+                                            fill={project.pinned ? 'currentColor' : 'none'}
+                                            stroke="currentColor"
+                                            strokeLinejoin="round"
+                                            strokeWidth="1.1"
+                                          />
+                                        </svg>
+                                      </button>
+                                      <button
+                                        className="chat-list__delete"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          requestDeleteChat(project);
+                                        }}
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        type="button"
+                                        title="Delete Nexus project"
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                          <path
+                                            d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3"
+                                            stroke="currentColor"
+                                            strokeWidth="1.2"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                        </svg>
+                                      </button>
                                     </div>
                                   </div>
                                   <motion.div
@@ -4410,7 +4644,10 @@ export function App() {
                   <button
                     aria-selected={wizardsSidebarPane === 'wizards'}
                     className={`wizards-pane-mode-toggle__btn ${wizardsSidebarPane === 'wizards' ? 'is-active' : ''}`}
-                    onClick={() => setWizardsSidebarPane('wizards')}
+                    onClick={() => {
+                      setWizardsSidebarPane('wizards');
+                      setSidebarFocusedNexusId(undefined);
+                    }}
                     role="tab"
                     type="button"
                   >
@@ -4419,7 +4656,10 @@ export function App() {
                   <button
                     aria-selected={wizardsSidebarPane === 'nexus'}
                     className={`wizards-pane-mode-toggle__btn ${wizardsSidebarPane === 'nexus' ? 'is-active' : ''}`}
-                    onClick={() => setWizardsSidebarPane('nexus')}
+                    onClick={() => {
+                      setWizardsSidebarPane('nexus');
+                      setSidebarFocusedWizardId(undefined);
+                    }}
                     role="tab"
                     type="button"
                   >

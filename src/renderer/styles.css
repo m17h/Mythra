@@ -1088,13 +1088,6 @@ html[data-platform='darwin'] .app-shell {
   text-transform: uppercase;
 }
 
-.chat-list__item--nexus {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent-subtle) 70%, transparent), transparent),
-    rgba(255, 255, 255, 0.02);
-}
-
 .wizard-group {
   display: grid;
   gap: 4px;
