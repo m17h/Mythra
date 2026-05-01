@@ -17,6 +17,7 @@ import { WizardExportDialog } from './components/WizardExportDialog';
 import { WizardSetupModal } from './components/WizardSetupModal';
 import { NexusSetupModal } from './components/NexusSetupModal';
 import { NexusSettingsPanel } from './components/NexusSettingsPanel';
+import { OnboardingDialog } from './components/OnboardingDialog';
 import {
   defaultSettings,
   type AppSettings,
@@ -652,6 +653,7 @@ export function App() {
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showWizardSetup, setShowWizardSetup] = useState(false);
   const [showNexusSetup, setShowNexusSetup] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
@@ -1206,6 +1208,8 @@ export function App() {
     const boot = async () => {
       const loaded = await window.electronAPI.loadSettings();
       setSettings(loaded);
+      settingsRef.current = loaded;
+      setShowOnboarding(!loaded.ui.onboardingCompleted);
       await refreshChatList();
     };
     void boot();
@@ -1861,6 +1865,21 @@ export function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+
+  const completeOnboarding = useCallback(async () => {
+    setShowOnboarding(false);
+    const current = settingsRef.current;
+    if (!current || current.ui.onboardingCompleted) return;
+    const next = { ...current, ui: { ...current.ui, onboardingCompleted: true } };
+    setSettings(next);
+    settingsRef.current = next;
+    try {
+      await persistSettingsToDisk(next);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Onboarding completion not saved: ${m}`);
+    }
+  }, []);
 
   const addChatAttachments = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -3520,6 +3539,7 @@ export function App() {
   return (
     <div className="app-shell">
       <div className="background-grid" />
+      <OnboardingDialog onComplete={completeOnboarding} open={showOnboarding} />
       <AnimatePresence>
         {showWebSearchNotice ? (
           <motion.div

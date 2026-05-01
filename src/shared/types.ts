@@ -224,6 +224,8 @@ export interface UiSettings {
    * Folder where new Wizards get subfolders (`<this>/<sanitized name>/`). Persisted when chosen in New Wizard.
    */
   wizardProjectsParentFolder: string | null;
+  /** First-run product tour. Once true, Mythra does not show onboarding automatically. */
+  onboardingCompleted: boolean;
 }
 
 export interface AgentSettings {
@@ -450,7 +452,8 @@ export const defaultSettings: AppSettings = {
     sessionMode: 'agent',
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] },
-    wizardProjectsParentFolder: null
+    wizardProjectsParentFolder: null,
+    onboardingCompleted: false
   },
   lastWorkspaceRoot: null
 };
