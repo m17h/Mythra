@@ -568,6 +568,7 @@ interface NexusMultiResponseGroup {
   requestIds: Set<string>;
   pending: Set<string>;
   responders: Array<{ requestId: string; name: string }>;
+  messageIdByRequestId: Map<string, string>;
   contentByRequestId: Map<string, string>;
   reasoningByRequestId: Map<string, string>;
   timeline: ChatTimelineEntry[];
@@ -751,7 +752,8 @@ export function App() {
 
   const appendActivity = (activity: ChatActivity) => {
     const nexusGroup = nexusMultiResponseGroupsRef.current.get(activity.requestId);
-    const routedActivity = nexusGroup ? { ...activity, requestId: nexusGroup.messageId } : activity;
+    const routedRequestId = nexusGroup?.messageIdByRequestId.get(activity.requestId) ?? nexusGroup?.messageId;
+    const routedActivity = routedRequestId ? { ...activity, requestId: routedRequestId } : activity;
     const entry: ChatTimelineEntry = { id: `activity-${routedActivity.id}`, type: 'activity', activity: routedActivity };
     const snapshot = inFlightChatsRef.current.get(activity.requestId);
     const routedSnapshot = nexusGroup ? inFlightChatsRef.current.get(nexusGroup.messageId) : snapshot;
@@ -771,28 +773,97 @@ export function App() {
     );
   };
 
-  const updateNexusMultiResponseMessage = (group: NexusMultiResponseGroup, status: ChatMessage['status']) => {
-    const content = formatNexusMultiResponseContent(group);
-    const reasoning = formatNexusMultiResponseReasoning(group) || undefined;
+  const addNexusMultiResponseMessage = (group: NexusMultiResponseGroup, requestId: string, name: string) => {
+    const messageId = group.messageIdByRequestId.get(requestId) ?? requestId;
+    group.messageIdByRequestId.set(requestId, messageId);
+    const message: ChatMessage = {
+      id: messageId,
+      role: 'assistant',
+      content: 'Thinking...',
+      status: 'streaming',
+      assistantDisplayName: name
+    };
+    const entry: ChatTimelineEntry = { id: `message-${messageId}`, type: 'message', message };
+    const snapshot = inFlightChatsRef.current.get(group.messageId);
+    if (snapshot && !snapshot.messages.some((m) => m.id === messageId)) {
+      snapshot.messages = [...snapshot.messages, message];
+      snapshot.timeline = [...snapshot.timeline, entry];
+      showInFlightIfActive(snapshot);
+    }
+  };
+
+  const updateNexusMultiResponseMessage = (
+    group: NexusMultiResponseGroup,
+    status: ChatMessage['status'],
+    requestIdFilter?: string
+  ) => {
+    const targetRequestIds = requestIdFilter ? new Set([requestIdFilter]) : group.requestIds;
+    const responderByRequestId = new Map(group.responders.map((responder) => [responder.requestId, responder.name]));
     const recipe = (m: ChatMessage): ChatMessage => ({
-      ...m,
-      content,
-      reasoning,
-      status
+      ...m
     });
     const snapshot = inFlightChatsRef.current.get(group.messageId);
     if (snapshot) {
-      snapshot.messages = snapshot.messages.map((m) => (m.id === group.messageId ? recipe(m) : m));
+      snapshot.messages = snapshot.messages.map((m) => {
+        const requestId = [...targetRequestIds].find((rid) => group.messageIdByRequestId.get(rid) === m.id);
+        if (!requestId) return m;
+        const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
+        const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
+        const content = stripDuplicateNexusSpeakerLabel(name, raw);
+        const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+        return {
+          ...recipe(m),
+          content: content || 'Thinking...',
+          reasoning,
+          status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
+        };
+      });
       snapshot.timeline = snapshot.timeline.map((entry) =>
-        entry.type === 'message' && entry.message.id === group.messageId
-          ? { ...entry, message: recipe(entry.message) }
+        entry.type === 'message'
+          ? {
+              ...entry,
+              message:
+                snapshot.messages.find((m) => m.id === entry.message.id) ??
+                entry.message
+            }
           : entry
       );
       showInFlightIfActive(snapshot);
       return snapshot;
     }
-    setChatMessages((current) => current.map((m) => (m.id === group.messageId ? recipe(m) : m)));
-    updateTimelineMessage(group.messageId, recipe);
+    setChatMessages((current) =>
+      current.map((m) => {
+        const requestId = [...targetRequestIds].find((rid) => group.messageIdByRequestId.get(rid) === m.id);
+        if (!requestId) return m;
+        const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
+        const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
+        const content = stripDuplicateNexusSpeakerLabel(name, raw);
+        const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+        return {
+          ...m,
+          content: content || 'Thinking...',
+          reasoning,
+          status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
+        };
+      })
+    );
+    for (const requestId of targetRequestIds) {
+      const messageId = group.messageIdByRequestId.get(requestId);
+      if (messageId) {
+        updateTimelineMessage(messageId, (m) => {
+          const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
+          const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
+          const content = stripDuplicateNexusSpeakerLabel(name, raw);
+          const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+          return {
+            ...m,
+            content: content || 'Thinking...',
+            reasoning,
+            status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
+          };
+        });
+      }
+    }
     return undefined;
   };
 
@@ -1258,7 +1329,7 @@ export function App() {
             `${nexusGroup.reasoningByRequestId.get(requestId) ?? ''}${reasoningDelta}`
           );
         }
-        updateNexusMultiResponseMessage(nexusGroup, 'streaming');
+        updateNexusMultiResponseMessage(nexusGroup, 'streaming', requestId);
         return;
       }
       const map = streamPendingDeltaRef.current;
@@ -1282,7 +1353,7 @@ export function App() {
         nexusGroup.pending.delete(requestId);
 
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
-          updateNexusMultiResponseMessage(nexusGroup, 'streaming');
+          updateNexusMultiResponseMessage(nexusGroup, 'streaming', requestId);
           if (usage && activeChatIdRef.current === nexusGroup.chatId) {
             setLastTokenUsage(usage);
           }
@@ -1291,7 +1362,8 @@ export function App() {
 
         const snapshot = updateNexusMultiResponseMessage(
           nexusGroup,
-          nexusGroup.pending.size === 0 ? 'done' : 'streaming'
+          nexusGroup.pending.size === 0 ? 'done' : 'streaming',
+          requestId
         );
         if (snapshot && usage && activeChatIdRef.current === snapshot.chatId) {
           setLastTokenUsage(usage);
@@ -1339,13 +1411,14 @@ export function App() {
         });
 
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
-          updateNexusMultiResponseMessage(nexusGroup, 'streaming');
+          updateNexusMultiResponseMessage(nexusGroup, 'streaming', requestId);
           return;
         }
 
         const snapshot = updateNexusMultiResponseMessage(
           nexusGroup,
-          nexusGroup.pending.size === 0 ? 'done' : 'streaming'
+          nexusGroup.pending.size === 0 ? 'done' : 'streaming',
+          requestId
         );
         if (nexusGroup.pending.size === 0) {
           finalizeNexusMultiResponseUiRef.current(nexusGroup);
@@ -2921,26 +2994,41 @@ export function App() {
     const assistantStreaming: ChatMessage = {
       id: requestId,
       role: 'assistant',
-      content: useParallelNexusStreams
-        ? nexusResponders.map((member) => `**${member.wizard.name}:**\nThinking...`).join('\n\n')
-        : useNexusMultiWizard
-          ? `**${relayIntroSpeaker}:**\nThinking...`
-          : '',
+      content: '',
       status: 'streaming',
       assistantDisplayName:
-        (useNexusMultiWizard ? nexusResponders.map((member) => member.wizard.name).join(', ') : nexusLeader?.name?.trim()) ||
+        (useNexusMultiWizard ? relayIntroSpeaker : nexusLeader?.name?.trim()) ||
         wizardForStream?.name?.trim() ||
         undefined,
       reasoning:
         sendSettings.ui.sessionMode === 'talk' && !wizardForStream && !nexusForStream ? '' : undefined
     };
+    const parallelAssistantMessages: ChatMessage[] =
+      useParallelNexusStreams
+        ? nexusResponders.map((member, index) => ({
+            id: parallelChildRequestIds[index]!,
+            role: 'assistant' as const,
+            content: 'Thinking...',
+            status: 'streaming' as const,
+            assistantDisplayName: member.wizard.name
+          }))
+        : [];
+    const assistantMessagesForTurn = useParallelNexusStreams
+      ? parallelAssistantMessages
+      : useNexusMultiWizard
+        ? []
+        : [assistantStreaming];
     const nextHistory = [...messagesForHistory, userMessage];
     const nextTimeline: ChatTimelineEntry[] = [
       ...timelineForHistory,
       { id: `message-${userMessage.id}`, type: 'message', message: userMessage },
-      { id: `message-${assistantStreaming.id}`, type: 'message', message: assistantStreaming }
+      ...assistantMessagesForTurn.map((message) => ({
+        id: `message-${message.id}`,
+        type: 'message' as const,
+        message
+      }))
     ];
-    setChatMessages([...nextHistory, assistantStreaming]);
+    setChatMessages([...nextHistory, ...assistantMessagesForTurn]);
     setChatTimeline(nextTimeline);
     setChatInput('');
     setChatAttachments([]);
@@ -2962,9 +3050,9 @@ export function App() {
       setNewChatModelOverride(null);
       const chat: SavedChat = {
         id: newId,
-        title: chatTitle([...nextHistory, assistantStreaming]),
+        title: chatTitle([...nextHistory, ...assistantMessagesForTurn]),
         titleOverride: null,
-        messages: [...nextHistory, assistantStreaming],
+        messages: [...nextHistory, ...assistantMessagesForTurn],
         timeline: nextTimeline,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -2981,7 +3069,7 @@ export function App() {
     inFlightChatsRef.current.set(requestId, {
       chatId: chatIdForStream,
       requestId,
-      messages: [...nextHistory, assistantStreaming],
+      messages: [...nextHistory, ...assistantMessagesForTurn],
       timeline: nextTimeline
     });
     let nexusMultiGroup: NexusMultiResponseGroup | null = null;
@@ -2997,6 +3085,9 @@ export function App() {
               name: member.wizard.name
             }))
           : [],
+        messageIdByRequestId: new Map(
+          useParallelNexusStreams ? parallelChildRequestIds.map((rid) => [rid, rid]) : []
+        ),
         contentByRequestId: new Map(parallelChildRequestIds.map((rid) => [rid, ''])),
         reasoningByRequestId: new Map(),
         timeline: nextTimeline,
@@ -3197,11 +3288,13 @@ export function App() {
           nexusMultiGroup.requestIds.add(rid);
           nexusMultiGroup.pending.add(rid);
           nexusMultiGroup.responders.push({ requestId: rid, name: member.wizard.name });
+          nexusMultiGroup.messageIdByRequestId.set(rid, rid);
           nexusMultiGroup.contentByRequestId.set(rid, '');
           nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
 
           setNexusRelayProgress({ wizardName: member.wizard.name, segmentStartedAt: Date.now() });
 
+          addNexusMultiResponseMessage(nexusMultiGroup, rid, member.wizard.name);
           updateNexusMultiResponseMessage(nexusMultiGroup, 'streaming');
 
           const continuationHistoryBase =
