@@ -774,8 +774,8 @@ html[data-platform='darwin'] .app-shell {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 24px 16px 14px;
+  gap: 3px;
+  padding: 18px 16px 14px;
   -webkit-app-region: drag;
 }
 
@@ -794,12 +794,31 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .sidebar-brand__title {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-0);
+  min-width: 0;
+  /* Pull wordmark toward OK without transform (avoids clipping under overflow:hidden). */
+  margin-left: -16px;
+}
+
+/* Crop away empty margins in the 1536×1024 source; keep insets generous so the logo isn’t clipped. */
+/* Width was driving size (sidebar ~300px); cap max-width so max-height can matter too. */
+.sidebar-brand__mark-img {
+  display: block;
+  height: auto;
+  width: auto;
+  max-width: min(200px, 100%);
+  max-height: min(100px, 22vh);
+  object-fit: contain;
+  object-position: left center;
+  object-view-box: inset(22% 12% 48% 12%);
+  margin-top: -10px;
+  -webkit-user-drag: none;
 }
 
 .sidebar-quick {

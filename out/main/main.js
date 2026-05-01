@@ -13,7 +13,7 @@ import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
-const appIconPath = join(__dirname, "./chunks/Mythra_icon-KE-2iURq.png");
+const appIconPath = join(__dirname, "./chunks/app_icon-DtNVDXr_.png");
 const CHATS_DIR = "mythra-chats";
 const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -1275,7 +1275,7 @@ const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot rea
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
-const mythraCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful. Every tool call must use strict JSON arguments (double quotes, escaped strings). If arguments were malformed, fix escaping and retry instead of blaming Mythra or “relay” issues.";
+const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -2064,13 +2064,13 @@ class ModelService {
           type: "function",
           function: {
             name: "apply_patch",
-            description: "Apply a unified diff patch inside the current workspace. Preferred for multi-line code edits because it preserves untouched content and creates a reviewable git diff.",
+            description: 'Apply a unified diff with `git apply` from the workspace root. The patch must be valid standard unified diff text only (---/+++/@@ lines, context lines starting with a single space). Context must match the file exactly or git fails with "corrupt patch". Always read_file first. If unsure, use replace_in_file or write_file instead.',
             parameters: {
               type: "object",
               properties: {
                 patch: {
                   type: "string",
-                  description: "A valid unified diff, suitable for `git apply`."
+                  description: "Full unified diff as plain text (same as stdin to `git -C <workspace> apply --whitespace=nowarn -`). No markdown fences. Paths like --- a/src/file.ext / +++ b/src/file.ext relative to workspace root."
                 }
               },
               required: ["patch"],
@@ -3205,7 +3205,8 @@ const defaultSettings = {
     sessionMode: "agent",
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] },
-    wizardProjectsParentFolder: null
+    wizardProjectsParentFolder: null,
+    onboardingCompleted: false
   },
   lastWorkspaceRoot: null
 };
@@ -3360,7 +3361,14 @@ Describe this Wizard's identity, tone, principles, strengths, boundaries, and wo
 `,
   "tools.md": () => `# Tools
 
-Describe preferred tools, workflows, commands, project conventions, and when this Wizard should use them.
+## Mythra (this app)
+
+- **Always** call \`read_file\` before editing so file content matches disk.
+- **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
+- If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
+- Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+
+Describe your preferred stacks, scripts, test commands, and project conventions below.
 `,
   "memory.md": () => `# Memory
 
@@ -3994,7 +4002,16 @@ class WorkspaceService {
       throw new Error("Patch cannot be empty.");
     }
     const cwd = resolve(root);
-    await spawnWithInput("git", ["apply", "--whitespace=nowarn", "-"], cwd, patch);
+    const applyHint = "\n\nHow to recover (Mythra uses `git apply` here): re-read the file with read_file; make every context line in the patch match the file exactly (including spaces/tabs); check @@ old/new line counts; keep paths as `a/rel/path` and `b/rel/path` under this folder; do not wrap the patch in markdown inside JSON. For one exact replacement use replace_in_file, or rewrite a small file with write_file.";
+    try {
+      await spawnWithInput("git", ["apply", "--whitespace=nowarn", "-"], cwd, patch);
+    } catch (error) {
+      const stderr = error instanceof Error ? error.message : String(error);
+      if (/corrupt patch|does not apply|patch failed|unrecognized input|bogus|empty ident/i.test(stderr)) {
+        throw new Error(`${stderr}${applyHint}`);
+      }
+      throw error instanceof Error ? new Error(`${stderr}${applyHint}`) : error;
+    }
     return this.getChanges(root);
   }
   async searchSymbols(root, query, limit = 50) {

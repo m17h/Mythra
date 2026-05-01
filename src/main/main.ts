@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, resolve } from 'node:path';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron';
-/** Project-root asset (capital M): single source for window + dock icon. */
-import appIconPath from '../../Mythra_icon.png?asset';
+/** Single source for BrowserWindow + macOS dock icon (bundled via ?asset). */
+import appIconPath from '../../Images/app_icon.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';

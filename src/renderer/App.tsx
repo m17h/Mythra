@@ -8,7 +8,6 @@ import { ChangesPanel } from './components/ChangesPanel';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
 import { ModelSearch } from './components/ModelSearch';
-import { MythraMark } from './components/MythraMark';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SystemPromptInfoDialog } from './components/SystemPromptInfoDialog';
 import { SystemPromptModal } from './components/SystemPromptModal';
@@ -18,6 +17,10 @@ import { WizardSetupModal } from './components/WizardSetupModal';
 import { NexusSetupModal } from './components/NexusSetupModal';
 import { NexusSettingsPanel } from './components/NexusSettingsPanel';
 import { OnboardingDialog } from './components/OnboardingDialog';
+import logoIce from '../../Images/logo_ice.png';
+import logoKiwi from '../../Images/logo_kiwi.png';
+import logoNeonGrid from '../../Images/onboarding_1-1.png';
+import logoSunset from '../../Images/logo_sunset.png';
 import {
   defaultSettings,
   type AppSettings,
@@ -45,7 +48,22 @@ import {
 } from '@shared/types';
 import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
-import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground } from '@shared/themes';
+import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground, type ThemeId } from '@shared/themes';
+
+function sidebarBrandLogoSrc(themeId: ThemeId | undefined): string {
+  switch (themeId) {
+    case 'sunset-terminal':
+      return logoSunset;
+    case 'ice-station':
+      return logoIce;
+    case 'kiwi':
+      return logoKiwi;
+    case 'neon-grid':
+    case 'custom':
+    default:
+      return logoNeonGrid;
+  }
+}
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
@@ -600,6 +618,8 @@ export function App() {
   settingsRef.current = settings;
   workspaceRootRef.current = workspaceRoot;
   activeFilePathRef.current = activeFilePath;
+
+  const sidebarBrandLogo = useMemo(() => sidebarBrandLogoSrc(settings?.ui.themeId), [settings?.ui.themeId]);
 
   /** New id on “New chat”; matches saved chat id when a thread is loaded — sent to the model as a fresh thread boundary. */
   const [chatSessionId, setChatSessionId] = useState(() => uid());
@@ -4006,7 +4026,13 @@ export function App() {
             <div className="sidebar-brand">
               <div className="sidebar-brand__badge">OK</div>
               <div className="sidebar-brand__title">
-                <MythraMark />
+                <img
+                  alt="Mythra"
+                  className="sidebar-brand__mark-img"
+                  decoding="async"
+                  key={settings?.ui.themeId ?? 'default'}
+                  src={sidebarBrandLogo}
+                />
               </div>
             </div>
 

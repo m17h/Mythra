@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Quicksand:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Audiowide&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Quicksand:wght@500;600;700&display=swap');
 
 /* ───────────────── Design Tokens ───────────────── */
 
@@ -540,6 +540,202 @@ html[data-platform='darwin'] .app-shell {
   min-height: 0;
 }
 
+.onboarding-dialog {
+  width: min(780px, calc(100vw - 40px));
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.onboarding-dialog__page-shell {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+}
+
+.onboarding-dialog__measure-clone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.onboarding-dialog__measure-host {
+  width: 100%;
+  min-height: 0;
+}
+
+.onboarding-dialog__page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.onboarding-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.onboarding-dialog__progress {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.onboarding-dialog__visual {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+
+.onboarding-dialog__visual-frame {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-subtle) 70%, transparent), transparent),
+    rgba(255, 255, 255, 0.025);
+  color: var(--text-2);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.onboarding-dialog__visual-frame img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+
+.onboarding-dialog__visual-frame.has-image {
+  border-style: solid;
+  border-color: transparent;
+  background: transparent;
+}
+
+.onboarding-dialog__image--welcome {
+  transform: translateY(16px) scale(1.16);
+  transform-origin: center center;
+}
+
+.onboarding-dialog__image-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.onboarding-dialog__image-strip img {
+  width: 100%;
+  max-height: 300px;
+}
+
+.onboarding-dialog__image-strip--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.onboarding-dialog__image--chat {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__image--web {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__image--connection {
+  max-height: 300px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__image--system-prompt {
+  max-height: 300px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__image--wizard {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__image--nexus {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.onboarding-dialog__points {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding-dialog__points li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--text-1);
+  font-size: 0.83rem;
+  line-height: 1.45;
+}
+
+.onboarding-dialog__points li::before {
+  content: '';
+  position: absolute;
+  top: 0.62em;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  transform: translateY(-50%);
+}
+
+.onboarding-dialog__dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.onboarding-dialog__dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition:
+    width var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.onboarding-dialog__dots span.is-active {
+  width: 18px;
+  background: var(--accent);
+}
+
+.onboarding-dialog__actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.onboarding-dialog__nav {
+  display: flex;
+  gap: 8px;
+}
+
 .sidebar-card {
   display: flex;
   flex-direction: column;
@@ -552,13 +748,13 @@ html[data-platform='darwin'] .app-shell {
   overflow: hidden;
 }
 
-/* Mythra wordmark — Quicksand, follows primary theme text */
+/* Mythra wordmark — Audiowide, follows primary theme text */
 
 .mythra-mark {
   display: inline-block;
-  font-family: 'Quicksand', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Audiowide', ui-sans-serif, system-ui, sans-serif;
   font-size: 1em;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.1;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -586,8 +782,8 @@ html[data-platform='darwin'] .app-shell {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 24px 16px 14px;
+  gap: 3px;
+  padding: 18px 16px 14px;
   -webkit-app-region: drag;
 }
 
@@ -606,12 +802,33 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .sidebar-brand__title {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-0);
+  min-width: 0;
+  /* Pull wordmark toward OK without transform (avoids clipping under overflow:hidden). */
+  margin-left: -16px;
+}
+
+/* Crop away empty margins in the 1536×1024 source; keep insets generous so the logo isn’t clipped. */
+
+/* Width was driving size (sidebar ~300px); cap max-width so max-height can matter too. */
+
+.sidebar-brand__mark-img {
+  display: block;
+  height: auto;
+  width: auto;
+  max-width: min(200px, 100%);
+  max-height: min(100px, 22vh);
+  object-fit: contain;
+  object-position: left center;
+  object-view-box: inset(22% 12% 48% 12%);
+  margin-top: -10px;
+  -webkit-user-drag: none;
 }
 
 .sidebar-quick {
@@ -1102,13 +1319,6 @@ html[data-platform='darwin'] .app-shell {
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-}
-
-.chat-list__item--nexus {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent-subtle) 70%, transparent), transparent),
-    rgba(255, 255, 255, 0.02);
 }
 
 .wizard-group {

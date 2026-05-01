@@ -36,7 +36,17 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
   'soul.md': (name) =>
     `# ${name}\n\nDescribe this Wizard's identity, tone, principles, strengths, boundaries, and working style here.\n`,
   'tools.md': () =>
-    `# Tools\n\nDescribe preferred tools, workflows, commands, project conventions, and when this Wizard should use them.\n`,
+    `# Tools
+
+## Mythra (this app)
+
+- **Always** call \`read_file\` before editing so file content matches disk.
+- **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
+- If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
+- Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+
+Describe your preferred stacks, scripts, test commands, and project conventions below.
+`,
   'memory.md': () =>
     `# Memory\n\nDurable notes this Wizard should remember across sessions.\n`,
   'corrections.md': () =>
@@ -799,7 +809,17 @@ export class WorkspaceService {
       throw new Error('Patch cannot be empty.');
     }
     const cwd = resolve(root);
-    await spawnWithInput('git', ['apply', '--whitespace=nowarn', '-'], cwd, patch);
+    const applyHint =
+      '\n\nHow to recover (Mythra uses `git apply` here): re-read the file with read_file; make every context line in the patch match the file exactly (including spaces/tabs); check @@ old/new line counts; keep paths as `a/rel/path` and `b/rel/path` under this folder; do not wrap the patch in markdown inside JSON. For one exact replacement use replace_in_file, or rewrite a small file with write_file.';
+    try {
+      await spawnWithInput('git', ['apply', '--whitespace=nowarn', '-'], cwd, patch);
+    } catch (error) {
+      const stderr = error instanceof Error ? error.message : String(error);
+      if (/corrupt patch|does not apply|patch failed|unrecognized input|bogus|empty ident/i.test(stderr)) {
+        throw new Error(`${stderr}${applyHint}`);
+      }
+      throw error instanceof Error ? new Error(`${stderr}${applyHint}`) : error;
+    }
     return this.getChanges(root);
   }
 

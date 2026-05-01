@@ -33431,7 +33431,11 @@ function NexusRelayProgressBar(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-muted", children: " · responding" })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-elapsed", children: elapsed }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-hint", children: "Still working — queue a message for the next teammate (or ask your leader to coordinate)." })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-compose__relay-hint", children: [
+      "Still working — queue a message for the next teammate. Name someone (",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "@WizardName" }),
+      " or their display name) so Mythra routes the next reply to them."
+    ] })
   ] });
 }
 function distanceFromChatBottom(node2) {
@@ -37567,6 +37571,481 @@ function NexusSettingsPanel({
     ] })
   ] });
 }
+const logoNeonGrid = "" + new URL("onboarding_1-1-CS3xJehT.png", import.meta.url).href;
+const chatsImage1 = "" + new URL("onboarding_2-1-BMSePp6C.png", import.meta.url).href;
+const chatsImage2 = "" + new URL("onboarding_2-2-Ylbe-pTL.png", import.meta.url).href;
+const chatsImage3 = "" + new URL("onboarding_2-3-_s40vyiW.png", import.meta.url).href;
+const webImage1 = "" + new URL("onboarding_3-1-D9P8zL3P.png", import.meta.url).href;
+const webImage2 = "" + new URL("onboarding_3-2-DtPLE2S0.png", import.meta.url).href;
+const connectionImage = "" + new URL("onboarding_4-1-Bi4_oPeT.png", import.meta.url).href;
+const systemPromptImage = "" + new URL("onboarding_5-1-CvI0aE2Q.png", import.meta.url).href;
+const wizardOnboarding1 = "" + new URL("onboarding_6-1-BhzkPzAx.png", import.meta.url).href;
+const wizardOnboarding2 = "" + new URL("onboarding_6-2-TH8rw92b.png", import.meta.url).href;
+const nexusOnboarding1 = "" + new URL("onboarding_7-1-DqCs9RBA.png", import.meta.url).href;
+const nexusOnboarding2 = "" + new URL("onboarding_7-2-Dj6WvB4C.png", import.meta.url).href;
+const nexusOnboarding3 = "" + new URL("onboarding_7-3-Dxo3krhW.png", import.meta.url).href;
+const pages = [
+  {
+    kicker: "Welcome",
+    title: "Meet Mythra",
+    body: "Mythra is a local AI workspace for chatting, coding, editing files, searching the web, and building longer-running AI assistants called Wizards.",
+    points: [
+      "Start simple with a normal chat.",
+      "Open a workspace when you want AI help with files.",
+      "Use Wizards and Nexus projects when you want persistent AI teammates."
+    ],
+    imageLabel: "Main app overview screenshot",
+    imageSrc: logoNeonGrid,
+    imageClassName: "onboarding-dialog__image--welcome"
+  },
+  {
+    kicker: "Normal Chats",
+    title: "Chat mode and Agent mode",
+    body: "Normal chats can switch between two behaviors. Chat mode is for regular conversation. Agent mode gives the model access to tools, your open workspace, and coding actions.",
+    points: [
+      "Use Chat for questions, brainstorming, and writing.",
+      "Use Agent when you want the AI to inspect files, make edits, run commands, or explain a project.",
+      "The mode switch is at the top of the conversation."
+    ],
+    imageLabel: "Chat / Agent mode switch screenshots",
+    imageList: [
+      { src: chatsImage1, alt: "Normal chat list screenshot" },
+      { src: chatsImage2, alt: "Chat mode screenshot" },
+      { src: chatsImage3, alt: "Agent mode screenshot" }
+    ],
+    imageClassName: "onboarding-dialog__image--chat"
+  },
+  {
+    kicker: "Web Search",
+    title: "Let models look things up",
+    body: "The Web toggle gives the AI a search tool. Without an API key, search can still work, but results may be thin. API keys connect Mythra to better search services.",
+    points: [
+      "An API key is like a password from a service that lets this app use that service.",
+      "Tavily is recommended for AI-ready search results.",
+      "Brave Search is a strong general web-search option."
+    ],
+    imageLabel: "Web toggle and search settings screenshots",
+    imageList: [
+      { src: webImage1, alt: "Web search toggle screenshot" },
+      { src: webImage2, alt: "Web search API key settings screenshot" }
+    ],
+    imageClassName: "onboarding-dialog__image--web",
+    imageStripClassName: "onboarding-dialog__image-strip--two"
+  },
+  {
+    kicker: "Connection",
+    title: "Choose where models come from",
+    body: "Mythra can talk to models through LM Studio or OpenRouter. You can change providers and models in Settings.",
+    points: [
+      "LM Studio runs models on your own computer.",
+      "OpenRouter connects to hosted cloud models through one API key.",
+      "The selected model controls how smart, fast, and expensive a response may be."
+    ],
+    imageLabel: "Provider and model settings screenshot",
+    imageSrc: connectionImage,
+    imageClassName: "onboarding-dialog__image--connection"
+  },
+  {
+    kicker: "System Prompt",
+    title: "Set the AI’s default instructions",
+    body: "The system prompt is the instruction layer the model reads before your messages. It can define tone, rules, workflows, and what the model should remember during a chat.",
+    points: [
+      "Keep it clear and practical.",
+      "Use presets when you want different default behaviors.",
+      "In Agent mode, you can optionally allow models to suggest prompt changes."
+    ],
+    imageLabel: "System prompt section screenshot",
+    imageSrc: systemPromptImage,
+    imageClassName: "onboarding-dialog__image--system-prompt"
+  },
+  {
+    kicker: "Wizards",
+    title: "Create persistent AI assistants",
+    body: "A Wizard is a named AI with its own model, private local workspace, system prompt, and Markdown memory documents.",
+    points: [
+      "Each Wizard gets documents like soul.md, tools.md, memory.md, and corrections.md.",
+      "Those documents are injected into Wizard chats automatically.",
+      "A Wizard can have multiple sessions while keeping the same identity and memory files."
+    ],
+    imageLabel: "Wizard sidebar and settings screenshot",
+    imageList: [
+      { src: wizardOnboarding1, alt: "Wizard sidebar screenshot" },
+      { src: wizardOnboarding2, alt: "Wizard settings screenshot" }
+    ],
+    imageClassName: "onboarding-dialog__image--wizard",
+    imageStripClassName: "onboarding-dialog__image-strip--two"
+  },
+  {
+    kicker: "Nexus",
+    title: "Bring Wizards together on a project",
+    body: "A Nexus project lets multiple Wizards work in one shared project folder while keeping their own private identities and memory documents.",
+    points: [
+      "Choose a leader Wizard and teammates.",
+      "Each Wizard can respond as itself and use the shared Nexus workspace.",
+      "Nexus is built for planning, delegation, coding, review, and project collaboration."
+    ],
+    imageLabel: "Nexus project room screenshot",
+    imageList: [
+      { src: nexusOnboarding1, alt: "Nexus project overview screenshot" },
+      { src: nexusOnboarding2, alt: "Nexus workspace screenshot" },
+      { src: nexusOnboarding3, alt: "Nexus collaboration screenshot" }
+    ],
+    imageClassName: "onboarding-dialog__image--nexus"
+  },
+  {
+    kicker: "Ready",
+    title: "You can start small",
+    body: "You do not need to set everything up at once. Start with a normal chat, connect a model, and add Wizards or Nexus projects when you are ready.",
+    points: [
+      "Open Settings first if you need to add an API key or choose a model.",
+      "Create a normal chat for everyday work.",
+      "Create a Wizard when you want a persistent assistant."
+    ],
+    imageLabel: "Main app overview screenshot",
+    imageSrc: logoNeonGrid,
+    imageClassName: "onboarding-dialog__image--welcome"
+  }
+];
+function OnboardingStepBody({ page, progress: progress2 }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "onboarding-dialog__header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: page.kicker }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: page.title })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "onboarding-dialog__progress", children: progress2 })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "onboarding-dialog__visual", "aria-label": page.imageLabel, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: `onboarding-dialog__visual-frame ${"imageSrc" in page && page.imageSrc || "imageList" in page && page.imageList?.length ? "has-image" : ""}`,
+        children: "imageSrc" in page && page.imageSrc ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "img",
+          {
+            alt: page.imageLabel,
+            className: "imageClassName" in page ? page.imageClassName : void 0,
+            src: page.imageSrc
+          }
+        ) : "imageList" in page && page.imageList?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            className: `onboarding-dialog__image-strip ${"imageStripClassName" in page ? page.imageStripClassName : ""}`,
+            children: page.imageList.map((image2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "img",
+              {
+                alt: image2.alt,
+                className: "imageClassName" in page ? page.imageClassName : void 0,
+                src: image2.src
+              },
+              image2.src
+            ))
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: page.imageLabel })
+      }
+    ) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: page.body }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "onboarding-dialog__points", children: page.points.map((point2) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: point2 }, point2)) })
+  ] });
+}
+const contentTransition = { duration: 0.26, ease: [0.22, 1, 0.36, 1] };
+const pageShellTransition = {
+  duration: 0.34,
+  ease: [0.22, 1, 0.36, 1]
+};
+function readSlideLayoutHeight(slide) {
+  return Math.ceil(slide.offsetHeight);
+}
+function measureCloneRootHeight(root2, onDone) {
+  let done = false;
+  const finish = (h2) => {
+    if (done) return;
+    done = true;
+    onDone(h2);
+  };
+  const measure = () => {
+    const el = root2.querySelector(".onboarding-dialog__page") ?? root2;
+    finish(Math.max(0, readSlideLayoutHeight(el)));
+  };
+  const imgs = [...root2.querySelectorAll("img")];
+  const incomplete = imgs.filter((i) => !i.complete);
+  if (incomplete.length === 0) {
+    requestAnimationFrame(measure);
+    return;
+  }
+  let left = incomplete.length;
+  const tick = () => {
+    if (--left <= 0) requestAnimationFrame(measure);
+  };
+  for (const img of incomplete) {
+    img.addEventListener("load", tick, { once: true });
+    img.addEventListener("error", tick, { once: true });
+  }
+}
+const pageVariants = {
+  initial: (dir) => ({
+    opacity: 0,
+    x: dir * 32,
+    filter: "blur(6px)"
+  }),
+  animate: {
+    opacity: 1,
+    x: 0,
+    filter: "blur(0px)"
+  },
+  exit: (dir) => ({
+    opacity: 0,
+    x: dir * -32,
+    filter: "blur(6px)"
+  })
+};
+function OnboardingDialog({ open, onComplete }) {
+  const [index2, setIndex] = reactExports.useState(0);
+  const [direction, setDirection] = reactExports.useState(1);
+  const [contentVisible, setContentVisible] = reactExports.useState(true);
+  const [measureIndex, setMeasureIndex] = reactExports.useState(null);
+  const [pageShellHeight, setPageShellHeight] = reactExports.useState(null);
+  const [awaitingShellAfterResize, setAwaitingShellAfterResize] = reactExports.useState(false);
+  const measureHostRef = reactExports.useRef(null);
+  const measureCloneRef = reactExports.useRef(null);
+  const pendingTargetRef = reactExports.useRef(null);
+  const resizeCompleteTargetRef = reactExports.useRef(null);
+  const pageShellHeightRef = reactExports.useRef(null);
+  const shellLockHeightRef = reactExports.useRef(null);
+  const shellLockTimerRef = reactExports.useRef(null);
+  const expectShellResizeCompleteRef = reactExports.useRef(false);
+  const page = pages[index2] ?? pages[0];
+  const isLast = index2 === pages.length - 1;
+  const progress2 = reactExports.useMemo(() => `${index2 + 1} of ${pages.length}`, [index2]);
+  const navLocked = !contentVisible || measureIndex !== null || awaitingShellAfterResize;
+  reactExports.useEffect(() => {
+    pageShellHeightRef.current = pageShellHeight;
+  }, [pageShellHeight]);
+  const syncPageShellHeightFromVisible = reactExports.useCallback(() => {
+    if (!contentVisible) return;
+    const host = measureHostRef.current;
+    if (!host) return;
+    const slide = host.firstElementChild;
+    if (!slide) return;
+    const next = readSlideLayoutHeight(slide);
+    if (next < 1) return;
+    const lockH = shellLockHeightRef.current;
+    if (lockH !== null && Math.abs(next - lockH) <= 8) return;
+    const prev = pageShellHeightRef.current;
+    if (prev !== null && Math.abs(next - prev) <= 6) return;
+    setPageShellHeight(next);
+  }, [contentVisible]);
+  const finishNavSequence = reactExports.useCallback((target) => {
+    expectShellResizeCompleteRef.current = false;
+    setIndex(target);
+    setContentVisible(true);
+    setAwaitingShellAfterResize(false);
+    pendingTargetRef.current = null;
+    resizeCompleteTargetRef.current = null;
+  }, []);
+  reactExports.useEffect(() => {
+    if (open) {
+      setIndex(0);
+      setDirection(1);
+      setContentVisible(true);
+      setMeasureIndex(null);
+      setPageShellHeight(null);
+      setAwaitingShellAfterResize(false);
+      expectShellResizeCompleteRef.current = false;
+      pendingTargetRef.current = null;
+      resizeCompleteTargetRef.current = null;
+      shellLockHeightRef.current = null;
+      if (shellLockTimerRef.current) {
+        clearTimeout(shellLockTimerRef.current);
+        shellLockTimerRef.current = null;
+      }
+    }
+  }, [open]);
+  reactExports.useLayoutEffect(() => {
+    if (!open || !contentVisible) return;
+    syncPageShellHeightFromVisible();
+  }, [open, contentVisible, syncPageShellHeightFromVisible]);
+  reactExports.useLayoutEffect(() => {
+    const host = measureHostRef.current;
+    if (!host || !contentVisible) return;
+    const ro = new ResizeObserver(() => {
+      syncPageShellHeightFromVisible();
+    });
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [syncPageShellHeightFromVisible, open, contentVisible]);
+  reactExports.useLayoutEffect(() => {
+    if (measureIndex === null) return;
+    let cancelled = false;
+    const target = measureIndex;
+    const el = measureCloneRef.current;
+    if (!el) {
+      setMeasureIndex(null);
+      finishNavSequence(target);
+      return;
+    }
+    measureCloneRootHeight(el, (h2) => {
+      if (cancelled) return;
+      setMeasureIndex(null);
+      if (h2 < 1) {
+        finishNavSequence(target);
+        return;
+      }
+      const prevH = pageShellHeightRef.current;
+      if (prevH !== null && Math.abs(h2 - prevH) < 2) {
+        finishNavSequence(target);
+        return;
+      }
+      if (shellLockTimerRef.current) {
+        clearTimeout(shellLockTimerRef.current);
+        shellLockTimerRef.current = null;
+      }
+      shellLockHeightRef.current = h2;
+      shellLockTimerRef.current = setTimeout(() => {
+        shellLockHeightRef.current = null;
+        shellLockTimerRef.current = null;
+      }, 450);
+      resizeCompleteTargetRef.current = target;
+      expectShellResizeCompleteRef.current = true;
+      setAwaitingShellAfterResize(true);
+      setPageShellHeight(h2);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureIndex, finishNavSequence]);
+  const handleExitComplete = reactExports.useCallback(() => {
+    const target = pendingTargetRef.current;
+    if (target === null) return;
+    setMeasureIndex(target);
+  }, []);
+  const handlePageShellAnimationComplete = reactExports.useCallback(() => {
+    if (!expectShellResizeCompleteRef.current) return;
+    const target = resizeCompleteTargetRef.current;
+    if (target === null) {
+      expectShellResizeCompleteRef.current = false;
+      setAwaitingShellAfterResize(false);
+      return;
+    }
+    finishNavSequence(target);
+  }, [finishNavSequence]);
+  const goBack = () => {
+    if (navLocked || index2 === 0) return;
+    pendingTargetRef.current = index2 - 1;
+    setDirection(-1);
+    setContentVisible(false);
+  };
+  const goNext = () => {
+    if (navLocked) return;
+    if (isLast) {
+      onComplete();
+      return;
+    }
+    pendingTargetRef.current = index2 + 1;
+    setDirection(1);
+    setContentVisible(false);
+  };
+  const handleSkip = () => {
+    pendingTargetRef.current = null;
+    resizeCompleteTargetRef.current = null;
+    expectShellResizeCompleteRef.current = false;
+    shellLockHeightRef.current = null;
+    if (shellLockTimerRef.current) {
+      clearTimeout(shellLockTimerRef.current);
+      shellLockTimerRef.current = null;
+    }
+    setMeasureIndex(null);
+    setAwaitingShellAfterResize(false);
+    setContentVisible(true);
+    onComplete();
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          "aria-modal": "true",
+          animate: { opacity: 1, scale: 1, y: 0 },
+          className: "app-dialog onboarding-dialog",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          role: "dialog",
+          transition: {
+            opacity: { duration: 0.18, ease: "easeOut" },
+            scale: { duration: 0.18, ease: "easeOut" },
+            y: { duration: 0.18, ease: "easeOut" }
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              motion.div,
+              {
+                animate: { height: pageShellHeight ?? "auto" },
+                className: "onboarding-dialog__page-shell",
+                initial: false,
+                onAnimationComplete: handlePageShellAnimationComplete,
+                style: { overflow: "hidden" },
+                transition: pageShellTransition,
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "onboarding-dialog__measure-host", ref: measureHostRef, children: /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { custom: direction, initial: false, onExitComplete: handleExitComplete, children: contentVisible ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    motion.div,
+                    {
+                      animate: "animate",
+                      className: "onboarding-dialog__page",
+                      custom: direction,
+                      exit: "exit",
+                      initial: "initial",
+                      transition: contentTransition,
+                      variants: pageVariants,
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingStepBody, { page, progress: progress2 })
+                    },
+                    index2
+                  ) : null }) }),
+                  measureIndex !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "onboarding-dialog__measure-clone", ref: measureCloneRef, "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "onboarding-dialog__page", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    OnboardingStepBody,
+                    {
+                      page: pages[measureIndex],
+                      progress: `${measureIndex + 1} of ${pages.length}`
+                    }
+                  ) }) }) : null
+                ]
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "onboarding-dialog__dots", "aria-hidden": true, children: pages.map((item, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: i === index2 ? "is-active" : "" }, item.title)) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions onboarding-dialog__actions", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: handleSkip, type: "button", children: "Skip" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "onboarding-dialog__nav", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", disabled: index2 === 0 || navLocked, onClick: goBack, type: "button", children: "Back" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: navLocked && !isLast, onClick: goNext, type: "button", children: isLast ? "Get started" : "Next" })
+              ] })
+            ] })
+          ]
+        }
+      )
+    }
+  ) : null });
+}
+const logoIce = "" + new URL("logo_ice-DL5fDf1L.png", import.meta.url).href;
+const logoKiwi = "" + new URL("logo_kiwi-C9M5Vj4w.png", import.meta.url).href;
+const logoSunset = "" + new URL("logo_sunset-DZBqj2-T.png", import.meta.url).href;
+function sidebarBrandLogoSrc(themeId) {
+  switch (themeId) {
+    case "sunset-terminal":
+      return logoSunset;
+    case "ice-station":
+      return logoIce;
+    case "kiwi":
+      return logoKiwi;
+    case "neon-grid":
+    case "custom":
+    default:
+      return logoNeonGrid;
+  }
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 function workspaceRelativeDisplay(workspaceRoot, absolutePath) {
@@ -37750,8 +38229,8 @@ const buildNexusResponderSystemPrompt = (wizard, nexus, teamNames, role, convers
 ${missionTrimmed}` : `No Nexus mission text is configured yet — ask the user for project goals if you need direction.`;
   const parallelLeader = "- **Parallel Nexus:** Mythra runs **one concurrent model stream per Wizard** on each user message (two or more teammates). Everyone replies **at the same time**—you cannot see teammate drafts until their messages appear.\n- **Your leader responsibilities:** Assign tasks by Wizard name with ownership (who touches which areas/files when possible). When something must wait on another Wizard's deliverable, say **WAITING ON [Wizard]:** reason so nobody guesses whether to idle. Delegate alternate tasks so teammates aren't blocked unnecessarily. When tracks are independent and safe to overlap, say **PARALLEL OK** for those tracks.\n";
   const parallelMember = "- **Parallel Nexus:** Mythra runs **one concurrent stream per Wizard** on each message—assume teammates answer **simultaneously** and you usually cannot see their reply yet.\n- **Follow the Nexus leader's routing.** If your task depends on another Wizard's output, write **WAITING ON [Wizard]:** what you need—avoid duplicating their work. If you have parallel-ready work (leader said PARALLEL OK or it's clearly disjoint files/tools), execute without blocking.\n";
-  const relayLeader = "- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n- When another teammate should speak next on this user message, end with `[NEXUS_CONTINUE]` alone on its own last line. When the Nexus should stop discussing this user message, end with `[NEXUS_END]` alone on its own last line.\n";
-  const relayMember = "- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n- Ask teammates questions when helpful. Use `[NEXUS_CONTINUE]` alone on its own last line if more discussion is needed; use `[NEXUS_END]` alone on its own last line when you believe this user message is fully addressed.\n";
+  const relayLeader = "- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n- When another teammate should speak next on this user message, end with `[NEXUS_CONTINUE]` alone on its own last line. When the Nexus should stop discussing this user message, end with `[NEXUS_END]` alone on its own last line.\n- When the user calls someone out **by Wizard display name** (or `@ThatName`) in a queued mid-relay message, Mythra usually routes the **next** stream to that teammate—reply directly if it was you.\n";
+  const relayMember = "- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n- If the user addresses you **by name** or `@yourName`, treat that as your cue to respond next even when others were busy.\n- Ask teammates questions when helpful. Use `[NEXUS_CONTINUE]` alone on its own last line if more discussion is needed; use `[NEXUS_END]` alone on its own last line when you believe this user message is fully addressed.\n";
   const modeLeader = conversationMode === "parallel" ? parallelLeader : relayLeader;
   const modeMember = conversationMode === "parallel" ? parallelMember : relayMember;
   return `${wizard.systemPrompt}
@@ -37873,6 +38352,39 @@ const sortNexusTeamLeaderFirst = (team, leaderWizardId) => [...team].sort((a, b)
   if (b.id === leaderWizardId && a.id !== leaderWizardId) return 1;
   return 0;
 });
+function isWizardNameMentionedInText(displayName, haystack) {
+  const name2 = displayName.trim();
+  if (name2.length < 2) return false;
+  const escaped = name2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const t = haystack.trim();
+  if (!t) return false;
+  if (new RegExp(`@${escaped}(?:\\s|$|[,:;.!?])`, "i").test(t)) return true;
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(t);
+}
+function pickNexusRelaySpeakerForQueuedTurn(ordered, roundRobinPick, queuedSlice) {
+  if (queuedSlice.length === 0) return roundRobinPick;
+  const text2 = queuedSlice.map((m) => m.content ?? "").join("\n");
+  if (!text2.trim()) return roundRobinPick;
+  const hits = ordered.filter((m) => isWizardNameMentionedInText(m.wizard.name, text2));
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) {
+    const lower = text2.toLowerCase();
+    let best = hits[0];
+    let bestPos = Infinity;
+    for (const m of hits) {
+      const nm = m.wizard.name.trim().toLowerCase();
+      const atIdx = lower.indexOf(`@${nm}`);
+      const bareIdx = lower.indexOf(nm);
+      const idx = atIdx !== -1 ? atIdx : bareIdx === -1 ? Infinity : bareIdx;
+      if (idx < bestPos) {
+        bestPos = idx;
+        best = m;
+      }
+    }
+    return best;
+  }
+  return roundRobinPick;
+}
 const chatFingerprint = (messages, timeline) => JSON.stringify({ messages, timeline });
 const stripDuplicateNexusSpeakerLabel = (name2, raw) => {
   const escaped = name2.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -37884,11 +38396,6 @@ const formatNexusMultiResponseContent = (group) => group.responders.map(({ reque
   return `**${name2}:**
 ${content2 || "Thinking..."}`;
 }).join("\n\n");
-const formatNexusMultiResponseReasoning = (group) => group.responders.map(({ requestId, name: name2 }) => {
-  const reasoning = group.reasoningByRequestId.get(requestId)?.trim();
-  return reasoning ? `${name2}:
-${reasoning}` : "";
-}).filter(Boolean).join("\n\n");
 const formatRelativeDate = (ts) => {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 6e4);
@@ -37919,6 +38426,7 @@ function App() {
   settingsRef.current = settings;
   workspaceRootRef.current = workspaceRoot;
   activeFilePathRef.current = activeFilePath;
+  const sidebarBrandLogo = reactExports.useMemo(() => sidebarBrandLogoSrc(settings?.ui.themeId), [settings?.ui.themeId]);
   const [chatSessionId, setChatSessionId] = reactExports.useState(() => uid());
   chatSessionIdRef.current = chatSessionId;
   const [chatMessages, setChatMessages] = reactExports.useState([]);
@@ -37963,6 +38471,7 @@ function App() {
   const [showNewMenu, setShowNewMenu] = reactExports.useState(false);
   const [showWizardSetup, setShowWizardSetup] = reactExports.useState(false);
   const [showNexusSetup, setShowNexusSetup] = reactExports.useState(false);
+  const [showOnboarding, setShowOnboarding] = reactExports.useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
@@ -37974,6 +38483,7 @@ function App() {
   const [nexusDraft, setNexusDraft] = reactExports.useState(null);
   const [wizardExportChat, setWizardExportChat] = reactExports.useState(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = reactExports.useState(null);
+  const [nexusDeleteTarget, setNexusDeleteTarget] = reactExports.useState(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
@@ -38047,7 +38557,8 @@ function App() {
   };
   const appendActivity = (activity) => {
     const nexusGroup = nexusMultiResponseGroupsRef.current.get(activity.requestId);
-    const routedActivity = nexusGroup ? { ...activity, requestId: nexusGroup.messageId } : activity;
+    const routedRequestId = nexusGroup?.messageIdByRequestId.get(activity.requestId) ?? nexusGroup?.messageId;
+    const routedActivity = routedRequestId ? { ...activity, requestId: routedRequestId } : activity;
     const entry = { id: `activity-${routedActivity.id}`, type: "activity", activity: routedActivity };
     const snapshot = inFlightChatsRef.current.get(activity.requestId);
     const routedSnapshot = nexusGroup ? inFlightChatsRef.current.get(nexusGroup.messageId) : snapshot;
@@ -38065,26 +38576,88 @@ function App() {
       )
     );
   };
-  const updateNexusMultiResponseMessage = (group, status) => {
-    const content2 = formatNexusMultiResponseContent(group);
-    const reasoning = formatNexusMultiResponseReasoning(group) || void 0;
+  const addNexusMultiResponseMessage = (group, requestId, name2) => {
+    const messageId = group.messageIdByRequestId.get(requestId) ?? requestId;
+    group.messageIdByRequestId.set(requestId, messageId);
+    const message = {
+      id: messageId,
+      role: "assistant",
+      content: "Thinking...",
+      status: "streaming",
+      assistantDisplayName: name2
+    };
+    const entry = { id: `message-${messageId}`, type: "message", message };
+    const snapshot = inFlightChatsRef.current.get(group.messageId);
+    if (snapshot && !snapshot.messages.some((m) => m.id === messageId)) {
+      snapshot.messages = [...snapshot.messages, message];
+      snapshot.timeline = [...snapshot.timeline, entry];
+      showInFlightIfActive(snapshot);
+    }
+  };
+  const updateNexusMultiResponseMessage = (group, status, requestIdFilter) => {
+    const targetRequestIds = requestIdFilter ? /* @__PURE__ */ new Set([requestIdFilter]) : group.requestIds;
+    const responderByRequestId = new Map(group.responders.map((responder) => [responder.requestId, responder.name]));
     const recipe = (m) => ({
-      ...m,
-      content: content2,
-      reasoning,
-      status
+      ...m
     });
     const snapshot = inFlightChatsRef.current.get(group.messageId);
     if (snapshot) {
-      snapshot.messages = snapshot.messages.map((m) => m.id === group.messageId ? recipe(m) : m);
+      snapshot.messages = snapshot.messages.map((m) => {
+        const requestId = [...targetRequestIds].find((rid) => group.messageIdByRequestId.get(rid) === m.id);
+        if (!requestId) return m;
+        const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
+        const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
+        const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+        const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+        return {
+          ...recipe(m),
+          content: content2 || "Thinking...",
+          reasoning,
+          status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
+        };
+      });
       snapshot.timeline = snapshot.timeline.map(
-        (entry) => entry.type === "message" && entry.message.id === group.messageId ? { ...entry, message: recipe(entry.message) } : entry
+        (entry) => entry.type === "message" ? {
+          ...entry,
+          message: snapshot.messages.find((m) => m.id === entry.message.id) ?? entry.message
+        } : entry
       );
       showInFlightIfActive(snapshot);
       return snapshot;
     }
-    setChatMessages((current) => current.map((m) => m.id === group.messageId ? recipe(m) : m));
-    updateTimelineMessage(group.messageId, recipe);
+    setChatMessages(
+      (current) => current.map((m) => {
+        const requestId = [...targetRequestIds].find((rid) => group.messageIdByRequestId.get(rid) === m.id);
+        if (!requestId) return m;
+        const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
+        const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
+        const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+        const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+        return {
+          ...m,
+          content: content2 || "Thinking...",
+          reasoning,
+          status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
+        };
+      })
+    );
+    for (const requestId of targetRequestIds) {
+      const messageId = group.messageIdByRequestId.get(requestId);
+      if (messageId) {
+        updateTimelineMessage(messageId, (m) => {
+          const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
+          const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
+          const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+          const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+          return {
+            ...m,
+            content: content2 || "Thinking...",
+            reasoning,
+            status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
+          };
+        });
+      }
+    }
     return void 0;
   };
   const refreshChatList = reactExports.useCallback(async () => {
@@ -38168,9 +38741,14 @@ function App() {
     return map2;
   }, [chatList]);
   const [sidebarFocusedWizardId, setSidebarFocusedWizardId] = reactExports.useState(void 0);
+  const [sidebarFocusedNexusId, setSidebarFocusedNexusId] = reactExports.useState(void 0);
   const sidebarWizardListMeta = reactExports.useMemo(
     () => sidebarFocusedWizardId ? wizardChatList.find((c) => c.id === sidebarFocusedWizardId) : void 0,
     [sidebarFocusedWizardId, wizardChatList]
+  );
+  const sidebarNexusListMeta = reactExports.useMemo(
+    () => sidebarFocusedNexusId ? nexusProjectList.find((c) => c.id === sidebarFocusedNexusId) : void 0,
+    [sidebarFocusedNexusId, nexusProjectList]
   );
   const activeWizardMeta = reactExports.useMemo(() => {
     if (activeChatMeta?.kind === "wizard-session" && activeChatMeta.wizardId) {
@@ -38187,8 +38765,8 @@ function App() {
       return chatList.find((c) => c.id === activeChatMeta.nexusId && c.kind === "nexus");
     }
     if (activeChatMeta?.kind === "nexus") return activeChatMeta;
-    return void 0;
-  }, [activeChatMeta, chatList]);
+    return sidebarNexusListMeta;
+  }, [activeChatMeta, chatList, sidebarNexusListMeta]);
   const activeNexus = activeNexusMeta?.nexus ?? null;
   reactExports.useEffect(() => {
     setWizardDraft(activeWizard);
@@ -38233,16 +38811,25 @@ function App() {
       wizardAutosaveTimerRef.current = null;
     }
   }, [activeWizardMeta?.id]);
+  reactExports.useEffect(() => {
+    if (nexusAutosaveTimerRef.current) {
+      clearTimeout(nexusAutosaveTimerRef.current);
+      nexusAutosaveTimerRef.current = null;
+    }
+  }, [activeNexusMeta?.id]);
   const effectiveModelOverride = reactExports.useMemo(() => {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
   const showWizardHubPlaceholder = reactExports.useMemo(
-    () => sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session",
-    [sidebarTab, sidebarFocusedWizardId, activeChatMeta?.kind]
+    () => sidebarTab === "wizards" && wizardsSidebarPane === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session",
+    [sidebarTab, wizardsSidebarPane, sidebarFocusedWizardId, activeChatMeta?.kind]
   );
   const chatSessionSubheading = reactExports.useMemo(() => {
-    if (sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session") {
+    if (sidebarTab === "wizards" && wizardsSidebarPane === "nexus" && !sidebarFocusedNexusId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session") {
+      return "Select a Nexus project to get started";
+    }
+    if (sidebarTab === "wizards" && wizardsSidebarPane === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session") {
       return "Select a Wizard to get started";
     }
     if (activeWizard) {
@@ -38250,7 +38837,7 @@ function App() {
       return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
     }
     if (activeNexus) {
-      const session = activeChatMeta?.kind === "nexus-session" ? activeChatMeta.title : "Project room";
+      const session = activeChatMeta?.kind === "nexus-session" ? activeChatMeta.title : !activeChatId && sidebarFocusedNexusId && activeNexusMeta?.id === sidebarFocusedNexusId ? "New room on first send" : "Project room";
       const leaderName = chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.name ?? "Leader";
       return `${activeNexus.name} · ${session} · ${leaderName} leads · ${pathLabel(activeNexus.workspaceRoot)}`;
     }
@@ -38282,6 +38869,9 @@ function App() {
     newChatModelOverride,
     pathLabel,
     sidebarFocusedWizardId,
+    sidebarFocusedNexusId,
+    wizardsSidebarPane,
+    activeNexusMeta?.id,
     sidebarTab
   ]);
   const persistCurrentChat = reactExports.useCallback(
@@ -38341,6 +38931,8 @@ function App() {
     const boot = async () => {
       const loaded = await window.electronAPI.loadSettings();
       setSettings(loaded);
+      settingsRef.current = loaded;
+      setShowOnboarding(!loaded.ui.onboardingCompleted);
       await refreshChatList();
     };
     void boot();
@@ -38446,7 +39038,7 @@ function App() {
             `${nexusGroup.reasoningByRequestId.get(requestId) ?? ""}${reasoningDelta}`
           );
         }
-        updateNexusMultiResponseMessage(nexusGroup, "streaming");
+        updateNexusMultiResponseMessage(nexusGroup, "streaming", requestId);
         return;
       }
       const map2 = streamPendingDeltaRef.current;
@@ -38469,7 +39061,7 @@ function App() {
         if (reasoning !== void 0) nexusGroup.reasoningByRequestId.set(requestId, reasoning);
         nexusGroup.pending.delete(requestId);
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
-          updateNexusMultiResponseMessage(nexusGroup, "streaming");
+          updateNexusMultiResponseMessage(nexusGroup, "streaming", requestId);
           if (usage && activeChatIdRef.current === nexusGroup.chatId) {
             setLastTokenUsage(usage);
           }
@@ -38477,7 +39069,8 @@ function App() {
         }
         const snapshot2 = updateNexusMultiResponseMessage(
           nexusGroup,
-          nexusGroup.pending.size === 0 ? "done" : "streaming"
+          nexusGroup.pending.size === 0 ? "done" : "streaming",
+          requestId
         );
         if (snapshot2 && usage && activeChatIdRef.current === snapshot2.chatId) {
           setLastTokenUsage(usage);
@@ -38524,12 +39117,13 @@ function App() {
           message: error === "Request stopped." ? "Model stopped." : `Model error: ${error}`
         });
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
-          updateNexusMultiResponseMessage(nexusGroup, "streaming");
+          updateNexusMultiResponseMessage(nexusGroup, "streaming", requestId);
           return;
         }
         updateNexusMultiResponseMessage(
           nexusGroup,
-          nexusGroup.pending.size === 0 ? "done" : "streaming"
+          nexusGroup.pending.size === 0 ? "done" : "streaming",
+          requestId
         );
         if (nexusGroup.pending.size === 0) {
           finalizeNexusMultiResponseUiRef.current(nexusGroup);
@@ -38933,6 +39527,20 @@ function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+  const completeOnboarding = reactExports.useCallback(async () => {
+    setShowOnboarding(false);
+    const current = settingsRef.current;
+    if (!current || current.ui.onboardingCompleted) return;
+    const next = { ...current, ui: { ...current.ui, onboardingCompleted: true } };
+    setSettings(next);
+    settingsRef.current = next;
+    try {
+      await persistSettingsToDisk(next);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Save failed";
+      setSettingsStatus(`Onboarding completion not saved: ${m}`);
+    }
+  }, []);
   const addChatAttachments = async (files) => {
     if (!files?.length) return;
     const nextAttachments = await Promise.all(
@@ -38953,6 +39561,7 @@ function App() {
       saveTimerRef.current = null;
     }
     setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(void 0);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -38975,7 +39584,7 @@ function App() {
     setSidebarTab("chats");
     const meta = activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0;
     const comingFromWizardContext = Boolean(
-      sidebarFocusedWizardId || meta?.kind === "wizard" || meta?.kind === "wizard-session" || meta?.kind === "nexus" || meta?.kind === "nexus-session"
+      sidebarFocusedWizardId || sidebarFocusedNexusId || meta?.kind === "wizard" || meta?.kind === "wizard-session" || meta?.kind === "nexus" || meta?.kind === "nexus-session"
     );
     if (comingFromWizardContext) void startNewChat();
   };
@@ -38987,6 +39596,7 @@ function App() {
     const chat = await window.electronAPI.loadChat(id2);
     if (!chat) return;
     setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(void 0);
     const parentWizard = chat.kind === "wizard-session" && chat.wizardId ? await window.electronAPI.loadChat(chat.wizardId) : chat.kind === "wizard" ? chat : null;
     const parentNexus = chat.kind === "nexus-session" && chat.nexusId ? await window.electronAPI.loadChat(chat.nexusId) : chat.kind === "nexus" ? chat : null;
     if (parentWizard?.kind === "wizard" && parentWizard.wizard?.workspaceRoot) {
@@ -39036,9 +39646,8 @@ function App() {
       saveTimerRef.current = null;
     }
     const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0;
-    const sessionOpenForThisWizard = active?.kind === "wizard-session" && active.wizardId === chat.id;
-    const toggleOnlySidebar = !activeChatId && sidebarFocusedWizardId === chat.id || sessionOpenForThisWizard;
-    if (toggleOnlySidebar) {
+    const sessionOpenForThisWizard = Boolean(activeChatId && active?.kind === "wizard-session" && active.wizardId === chat.id);
+    if (sessionOpenForThisWizard) {
       setExpandedWizardIds((current) => {
         const next = new Set(current);
         if (next.has(chat.id)) next.delete(chat.id);
@@ -39047,12 +39656,17 @@ function App() {
       });
       return;
     }
-    setExpandedWizardIds((current) => {
-      const next = new Set(current);
-      if (next.has(chat.id)) next.delete(chat.id);
-      else next.add(chat.id);
-      return next;
-    });
+    const wizardAlreadyFocusedNoChat = !activeChatId && sidebarFocusedWizardId === chat.id;
+    if (wizardAlreadyFocusedNoChat) {
+      setExpandedWizardIds((current) => {
+        const next = new Set(current);
+        if (next.has(chat.id)) next.delete(chat.id);
+        else next.add(chat.id);
+        return next;
+      });
+      return;
+    }
+    setSidebarFocusedNexusId(void 0);
     setSidebarFocusedWizardId(chat.id);
     setInspectorTab("settings");
     setSettingsInspectorScope("wizard");
@@ -39084,6 +39698,65 @@ function App() {
     } catch {
     }
   };
+  const handleNexusSidebarRowActivate = async (project) => {
+    if (project.kind !== "nexus" || !project.nexus?.workspaceRoot) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0;
+    const sessionOpenForThisNexus = Boolean(activeChatId && active?.kind === "nexus-session" && active.nexusId === project.id);
+    if (sessionOpenForThisNexus) {
+      setExpandedNexusIds((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) next.delete(project.id);
+        else next.add(project.id);
+        return next;
+      });
+      return;
+    }
+    const nexusAlreadyFocusedNoChat = !activeChatId && sidebarFocusedNexusId === project.id;
+    if (nexusAlreadyFocusedNoChat) {
+      setExpandedNexusIds((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) next.delete(project.id);
+        else next.add(project.id);
+        return next;
+      });
+      return;
+    }
+    setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(project.id);
+    setInspectorTab("settings");
+    setSettingsInspectorScope("nexus");
+    lastContentFingerprintRef.current = null;
+    setChatMessages([]);
+    setChatTimeline([]);
+    setChatInput("");
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(void 0);
+    setActiveChatId(void 0);
+    activeChatIdRef.current = void 0;
+    const nextSid = uid();
+    setChatSessionId(nextSid);
+    chatSessionIdRef.current = nextSid;
+    try {
+      await activateWorkspace(project.nexus.workspaceRoot);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : "Nexus workspace could not be opened.");
+    }
+    setSidebarTab("wizards");
+    try {
+      const full = await window.electronAPI.loadChat(project.id);
+      if (full?.kind === "nexus" && full.nexus) {
+        setNexusDraft(full.nexus);
+        nexusDraftRef.current = full.nexus;
+      }
+    } catch {
+    }
+  };
   const deleteChat = async (id2) => {
     const inFlight = findInFlightByChatId(id2);
     if (inFlight) {
@@ -39107,6 +39780,10 @@ function App() {
       setWizardSessionDeleteTarget(chat);
       return;
     }
+    if (chat.kind === "nexus") {
+      setNexusDeleteTarget(chat);
+      return;
+    }
     if (chat.kind === "nexus-session") {
       setNexusSessionDeleteTarget(chat);
       return;
@@ -39119,6 +39796,7 @@ function App() {
       saveTimerRef.current = null;
     }
     setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(void 0);
     await switchAwayFromWizardMountedWorkspace();
     lastContentFingerprintRef.current = null;
     setChatMessages([]);
@@ -39214,9 +39892,48 @@ function App() {
       next.delete(target.id);
       return next;
     });
-    if (workspaceRoot2) {
-      setWorkspaceDeleteTarget({ wizardName, workspaceRoot: workspaceRoot2 });
+    if (sidebarFocusedWizardId === target.id) {
+      setSidebarFocusedWizardId(void 0);
     }
+    if (workspaceRoot2) {
+      setWorkspaceDeleteTarget({ workspaceRoot: workspaceRoot2, label: wizardName, variant: "wizard" });
+    }
+  };
+  const confirmDeleteNexus = async () => {
+    const target = nexusDeleteTarget;
+    if (!target?.nexus?.workspaceRoot || target.kind !== "nexus") return;
+    const workspaceRoot2 = target.nexus.workspaceRoot;
+    const projectLabel = target.nexus.name?.trim() || target.title;
+    const sessions = nexusSessionsByNexusId.get(target.id) ?? [];
+    const priorActiveId = activeChatId;
+    const idsRemoved = /* @__PURE__ */ new Set([target.id, ...sessions.map((s) => s.id)]);
+    setNexusDeleteTarget(null);
+    for (const cid of idsRemoved) {
+      const inf = findInFlightByChatId(cid);
+      if (inf) {
+        await window.electronAPI.stopChat(inf.requestId);
+        inFlightChatsRef.current.delete(inf.requestId);
+      }
+    }
+    await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
+    await deleteChat(target.id);
+    if (priorActiveId && idsRemoved.has(priorActiveId)) {
+      await startNewChat();
+    }
+    if (editingTitleId && idsRemoved.has(editingTitleId)) {
+      setEditingTitleId(null);
+      setEditingTitleDraft("");
+    }
+    setSidebarTab("wizards");
+    setExpandedNexusIds((current) => {
+      const next = new Set(current);
+      next.delete(target.id);
+      return next;
+    });
+    if (sidebarFocusedNexusId === target.id) {
+      setSidebarFocusedNexusId(void 0);
+    }
+    setWorkspaceDeleteTarget({ workspaceRoot: workspaceRoot2, label: projectLabel, variant: "nexus" });
   };
   const createWizardSessionBootstrapOnDisk = async (full) => {
     if (!full?.wizard || full.kind !== "wizard") return null;
@@ -39279,6 +39996,7 @@ function App() {
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
     setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(void 0);
   };
   const createNexusSessionBootstrapOnDisk = async (full) => {
     if (!full?.nexus || full.kind !== "nexus") return null;
@@ -39341,6 +40059,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
     setSidebarFocusedWizardId(void 0);
+    setSidebarFocusedNexusId(void 0);
   };
   const beginWizardExport = (e, chat) => {
     e.stopPropagation();
@@ -39710,6 +40429,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       setChatSessionId(sessionId);
       chatSessionIdRef.current = sessionId;
       setSidebarFocusedWizardId(void 0);
+      setSidebarFocusedNexusId(void 0);
       setExpandedWizardIds((current) => new Set(current).add(wizardDiskId));
       await refreshChatList();
       try {
@@ -39785,20 +40505,30 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     const assistantStreaming = {
       id: requestId,
       role: "assistant",
-      content: useParallelNexusStreams ? nexusResponders.map((member) => `**${member.wizard.name}:**
-Thinking...`).join("\n\n") : useNexusMultiWizard ? `**${relayIntroSpeaker}:**
-Thinking...` : "",
+      content: "",
       status: "streaming",
-      assistantDisplayName: (useNexusMultiWizard ? nexusResponders.map((member) => member.wizard.name).join(", ") : nexusLeader?.name?.trim()) || wizardForStream?.name?.trim() || void 0,
+      assistantDisplayName: (useNexusMultiWizard ? relayIntroSpeaker : nexusLeader?.name?.trim()) || wizardForStream?.name?.trim() || void 0,
       reasoning: sendSettings.ui.sessionMode === "talk" && !wizardForStream && !nexusForStream ? "" : void 0
     };
+    const parallelAssistantMessages = useParallelNexusStreams ? nexusResponders.map((member, index2) => ({
+      id: parallelChildRequestIds[index2],
+      role: "assistant",
+      content: "Thinking...",
+      status: "streaming",
+      assistantDisplayName: member.wizard.name
+    })) : [];
+    const assistantMessagesForTurn = useParallelNexusStreams ? parallelAssistantMessages : useNexusMultiWizard ? [] : [assistantStreaming];
     const nextHistory = [...messagesForHistory, userMessage];
     const nextTimeline = [
       ...timelineForHistory,
       { id: `message-${userMessage.id}`, type: "message", message: userMessage },
-      { id: `message-${assistantStreaming.id}`, type: "message", message: assistantStreaming }
+      ...assistantMessagesForTurn.map((message) => ({
+        id: `message-${message.id}`,
+        type: "message",
+        message
+      }))
     ];
-    setChatMessages([...nextHistory, assistantStreaming]);
+    setChatMessages([...nextHistory, ...assistantMessagesForTurn]);
     setChatTimeline(nextTimeline);
     setChatInput("");
     setChatAttachments([]);
@@ -39819,9 +40549,9 @@ Thinking...` : "",
       setNewChatModelOverride(null);
       const chat = {
         id: newId,
-        title: chatTitle([...nextHistory, assistantStreaming]),
+        title: chatTitle([...nextHistory, ...assistantMessagesForTurn]),
         titleOverride: null,
-        messages: [...nextHistory, assistantStreaming],
+        messages: [...nextHistory, ...assistantMessagesForTurn],
         timeline: nextTimeline,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -39838,7 +40568,7 @@ Thinking...` : "",
     inFlightChatsRef.current.set(requestId, {
       chatId: chatIdForStream,
       requestId,
-      messages: [...nextHistory, assistantStreaming],
+      messages: [...nextHistory, ...assistantMessagesForTurn],
       timeline: nextTimeline
     });
     let nexusMultiGroup = null;
@@ -39852,6 +40582,9 @@ Thinking...` : "",
           requestId: parallelChildRequestIds[index2],
           name: member.wizard.name
         })) : [],
+        messageIdByRequestId: new Map(
+          useParallelNexusStreams ? parallelChildRequestIds.map((rid) => [rid, rid]) : []
+        ),
         contentByRequestId: new Map(parallelChildRequestIds.map((rid) => [rid, ""])),
         reasoningByRequestId: /* @__PURE__ */ new Map(),
         timeline: nextTimeline,
@@ -40023,14 +40756,17 @@ Thinking...` : "",
             break;
           }
           const queuedSlice = nexusQueuedUserTurnsRef.current.splice(0);
-          const member = ordered[turn % ordered.length];
+          const roundRobinMember = ordered[turn % ordered.length];
+          const member = queuedSlice.length > 0 ? pickNexusRelaySpeakerForQueuedTurn(ordered, roundRobinMember, queuedSlice) : roundRobinMember;
           const rid = uid();
           nexusMultiGroup.requestIds.add(rid);
           nexusMultiGroup.pending.add(rid);
           nexusMultiGroup.responders.push({ requestId: rid, name: member.wizard.name });
+          nexusMultiGroup.messageIdByRequestId.set(rid, rid);
           nexusMultiGroup.contentByRequestId.set(rid, "");
           nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
           setNexusRelayProgress({ wizardName: member.wizard.name, segmentStartedAt: Date.now() });
+          addNexusMultiResponseMessage(nexusMultiGroup, rid, member.wizard.name);
           updateNexusMultiResponseMessage(nexusMultiGroup, "streaming");
           const continuationHistoryBase = relayAssistantDigest.trim().length === 0 ? streamHistory : [
             ...streamHistory,
@@ -40202,6 +40938,7 @@ Thinking...` : "",
   const toolApprovalDiff = toolApprovalRequest && typeof toolApprovalRequest.diffBefore === "string" && typeof toolApprovalRequest.diffAfter === "string" ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter) : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingDialog, { onComplete: completeOnboarding, open: showOnboarding }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showWebSearchNotice ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
       {
@@ -40326,17 +41063,41 @@ Thinking...` : "",
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       AppConfirmDialog,
       {
+        cancelLabel: "Cancel",
+        confirmLabel: "Delete Nexus project",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete Nexus project ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: nexusDeleteTarget?.title ?? "this project" }),
+          " from Mythra? This removes the project entry and all Nexus rooms / conversation history, but does not delete its shared workspace folder yet."
+        ] }),
+        kicker: "Delete Nexus project",
+        onCancel: () => setNexusDeleteTarget(null),
+        onConfirm: () => void confirmDeleteNexus(),
+        open: Boolean(nexusDeleteTarget),
+        title: "Are you sure?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
         cancelLabel: "Keep folder",
         confirmLabel: "Delete folder",
         confirmVariant: "danger",
-        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        description: workspaceDeleteTarget?.variant === "nexus" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Also delete the shared Nexus workspace folder for ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: workspaceDeleteTarget.label }),
+          " and all files inside it?",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: workspaceDeleteTarget.workspaceRoot })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           "Also delete ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: workspaceDeleteTarget?.wizardName ?? "this Wizard" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: workspaceDeleteTarget?.label ?? "this Wizard" }),
           "'s workspace folder and all files inside it?",
           /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
           /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: workspaceDeleteTarget?.workspaceRoot })
         ] }),
-        kicker: "Wizard Workspace",
+        kicker: workspaceDeleteTarget?.variant === "nexus" ? "Nexus workspace" : "Wizard Workspace",
         onCancel: () => setWorkspaceDeleteTarget(null),
         onConfirm: () => {
           const target = workspaceDeleteTarget;
@@ -40645,7 +41406,16 @@ Thinking...` : "",
           children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-card", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__badge", children: "OK" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__title", children: /* @__PURE__ */ jsxRuntimeExports.jsx(MythraMark, {}) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__title", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "img",
+                {
+                  alt: "Mythra",
+                  className: "sidebar-brand__mark-img",
+                  decoding: "async",
+                  src: sidebarBrandLogo
+                },
+                settings?.ui.themeId ?? "default"
+              ) })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-quick", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sidebar-new ${showNewMenu ? "is-open" : ""}`, children: [
@@ -41112,43 +41882,84 @@ Thinking...` : "",
                     const sessions = nexusSessionsByNexusId.get(project.id) ?? [];
                     const leader = project.nexus ? chatList.find((chat) => chat.id === project.nexus?.leaderWizardId)?.wizard?.name : void 0;
                     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group wizard-group--nexus", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs(
                         "div",
                         {
                           "aria-expanded": expandedNexusIds.has(project.id),
-                          className: `chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? "is-active" : ""}`,
+                          className: `chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? "is-active" : ""} ${project.pinned ? "is-pinned" : ""}`,
                           onClick: () => {
-                            setExpandedNexusIds((current) => {
-                              const next = new Set(current);
-                              if (next.has(project.id)) next.delete(project.id);
-                              else next.add(project.id);
-                              return next;
-                            });
+                            void handleNexusSidebarRowActivate(project);
                           },
-                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                          children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "svg",
+                                  {
+                                    className: `wizard-title-row__chevron ${expandedNexusIds.has(project.id) ? "is-open" : ""}`,
+                                    width: "12",
+                                    height: "12",
+                                    viewBox: "0 0 12 12",
+                                    fill: "none",
+                                    "aria-hidden": true,
+                                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: project.title, children: project.title })
+                              ] }),
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
+                                "Nexus · ",
+                                leader ?? "Leader",
+                                " · ",
+                                sessions.length,
+                                " sessions"
+                              ] })
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
                               /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "svg",
+                                "button",
                                 {
-                                  className: `wizard-title-row__chevron ${expandedNexusIds.has(project.id) ? "is-open" : ""}`,
-                                  width: "12",
-                                  height: "12",
-                                  viewBox: "0 0 12 12",
-                                  fill: "none",
-                                  "aria-hidden": true,
-                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                  className: `chat-list__pin ${project.pinned ? "is-active" : ""}`,
+                                  onClick: (e) => void togglePinChat(e, project.id),
+                                  type: "button",
+                                  title: project.pinned ? "Unpin" : "Pin to top",
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "path",
+                                    {
+                                      d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z",
+                                      fill: project.pinned ? "currentColor" : "none",
+                                      stroke: "currentColor",
+                                      strokeLinejoin: "round",
+                                      strokeWidth: "1.1"
+                                    }
+                                  ) })
                                 }
                               ),
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: project.title, children: project.title })
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
-                              "Nexus · ",
-                              leader ?? "Leader",
-                              " · ",
-                              sessions.length,
-                              " sessions"
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "button",
+                                {
+                                  className: "chat-list__delete",
+                                  onClick: (e) => {
+                                    e.stopPropagation();
+                                    requestDeleteChat(project);
+                                  },
+                                  onMouseDown: (e) => e.preventDefault(),
+                                  type: "button",
+                                  title: "Delete Nexus project",
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "path",
+                                    {
+                                      d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
+                                      stroke: "currentColor",
+                                      strokeWidth: "1.2",
+                                      strokeLinecap: "round",
+                                      strokeLinejoin: "round"
+                                    }
+                                  ) })
+                                }
+                              )
                             ] })
-                          ] })
+                          ]
                         }
                       ),
                       /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -41393,7 +42204,10 @@ Thinking...` : "",
                   {
                     "aria-selected": wizardsSidebarPane === "wizards",
                     className: `wizards-pane-mode-toggle__btn ${wizardsSidebarPane === "wizards" ? "is-active" : ""}`,
-                    onClick: () => setWizardsSidebarPane("wizards"),
+                    onClick: () => {
+                      setWizardsSidebarPane("wizards");
+                      setSidebarFocusedNexusId(void 0);
+                    },
                     role: "tab",
                     type: "button",
                     children: "Wizards"
@@ -41404,7 +42218,10 @@ Thinking...` : "",
                   {
                     "aria-selected": wizardsSidebarPane === "nexus",
                     className: `wizards-pane-mode-toggle__btn ${wizardsSidebarPane === "nexus" ? "is-active" : ""}`,
-                    onClick: () => setWizardsSidebarPane("nexus"),
+                    onClick: () => {
+                      setWizardsSidebarPane("nexus");
+                      setSidebarFocusedWizardId(void 0);
+                    },
                     role: "tab",
                     type: "button",
                     children: "Nexus"

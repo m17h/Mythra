@@ -141,7 +141,7 @@ const mythraModelSystemPromptInstruction =
 const mythraToolAccessReadInstruction =
   'Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.';
 const mythraCodingToolInstruction =
-  'Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful. Every tool call must use strict JSON arguments (double quotes, escaped strings). If arguments were malformed, fix escaping and retry instead of blaming Mythra or “relay” issues.';
+  'Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.';
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -1163,13 +1163,14 @@ export class ModelService {
           function: {
             name: 'apply_patch',
             description:
-              'Apply a unified diff patch inside the current workspace. Preferred for multi-line code edits because it preserves untouched content and creates a reviewable git diff.',
+              'Apply a unified diff with `git apply` from the workspace root. The patch must be valid standard unified diff text only (---/+++/@@ lines, context lines starting with a single space). Context must match the file exactly or git fails with "corrupt patch". Always read_file first. If unsure, use replace_in_file or write_file instead.',
             parameters: {
               type: 'object',
               properties: {
                 patch: {
                   type: 'string',
-                  description: 'A valid unified diff, suitable for `git apply`.'
+                  description:
+                    'Full unified diff as plain text (same as stdin to `git -C <workspace> apply --whitespace=nowarn -`). No markdown fences. Paths like --- a/src/file.ext / +++ b/src/file.ext relative to workspace root.'
                 }
               },
               required: ['patch'],
