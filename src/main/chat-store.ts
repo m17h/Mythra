@@ -70,7 +70,9 @@ export class ChatStore {
           pinned: chat.pinned ?? false,
           modelOverride: chat.modelOverride ?? null,
           wizard: chat.wizard ?? null,
-          wizardId: chat.wizardId ?? null
+          wizardId: chat.wizardId ?? null,
+          nexus: chat.nexus ?? null,
+          nexusId: chat.nexusId ?? null
         });
       } catch {
         // skip corrupted files

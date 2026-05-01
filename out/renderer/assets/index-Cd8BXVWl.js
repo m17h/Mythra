@@ -33414,6 +33414,26 @@ function AssistantMessageContent({
   }) });
 }
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+function NexusRelayProgressBar(props) {
+  const [, setTick] = reactExports.useState(0);
+  reactExports.useEffect(() => {
+    const id2 = window.setInterval(() => setTick((x) => x + 1), 1e3);
+    return () => window.clearInterval(id2);
+  }, [props.segmentStartedAt, props.wizardName]);
+  const sec = Math.max(0, Math.floor((Date.now() - props.segmentStartedAt) / 1e3));
+  const mm = Math.floor(sec / 60);
+  const ss = sec % 60;
+  const elapsed = mm > 0 ? `${mm}:${String(ss).padStart(2, "0")}` : `${sec}s`;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__relay-status", role: "status", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-pulse", "aria-hidden": true }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-compose__relay-primary", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: props.wizardName }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-muted", children: " · responding" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-elapsed", children: elapsed }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-hint", children: "Still working — queue a message for the next teammate (or ask your leader to coordinate)." })
+  ] });
+}
 function distanceFromChatBottom(node2) {
   const maxScroll = Math.max(0, node2.scrollHeight - node2.clientHeight);
   return maxScroll - node2.scrollTop;
@@ -33791,6 +33811,7 @@ function ChatPanel({
   selectedModel,
   sessionMode,
   isWizard = false,
+  isNexus = false,
   modelCatalogSettled,
   providerConnected,
   isStreaming,
@@ -33813,7 +33834,9 @@ function ChatPanel({
   onTerminalRun,
   onTerminalKill,
   wizardHubPlaceholder = false,
-  onOpenWizardCreator
+  onOpenWizardCreator,
+  nexusRelayProgress = null,
+  nexusRelayQueueDuringStream = false
 }) {
   const scrollRef = reactExports.useRef(null);
   const innerRef = reactExports.useRef(null);
@@ -34027,7 +34050,7 @@ function ChatPanel({
     }
     setTerminalOpen((v2) => !v2);
   }, [hasWorkspace, showWorkspaceGateNotice]);
-  const isTalk = !isWizard && sessionMode === "talk";
+  const isTalk = !isWizard && !isNexus && sessionMode === "talk";
   const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
@@ -34035,7 +34058,14 @@ function ChatPanel({
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-left", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-titles", children: [
-          isWizard ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-panel__wizard-pill", title: "Wizards always work with tools and their own workspace", children: "Wizard" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle ${sessionModeToggleDisabled ? "is-disabled" : ""}`, children: [
+          isWizard || isNexus ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: `chat-panel__wizard-pill ${isNexus ? "chat-panel__wizard-pill--nexus" : ""}`,
+              title: isNexus ? "Nexus projects coordinate multiple Wizards in a shared workspace" : "Wizards always work with tools and their own workspace",
+              children: isNexus ? "Nexus" : "Wizard"
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-panel__mode-toggle ${sessionModeToggleDisabled ? "is-disabled" : ""}`, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "button",
               {
@@ -34157,8 +34187,8 @@ function ChatPanel({
             /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
           ] }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
         ] }) : null,
         renderChunks.map((chunk) => {
           if (chunk.type === "activity-group") {
@@ -34188,7 +34218,7 @@ function ChatPanel({
               transition: { duration: 0.22, ease: "easeOut" },
               children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : "Assistant" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
                   getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                     "button",
                     {
@@ -34283,6 +34313,7 @@ function ChatPanel({
         "inline-terminal"
       ) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose", children: [
+        nexusRelayProgress ? /* @__PURE__ */ jsxRuntimeExports.jsx(NexusRelayProgressBar, { ...nexusRelayProgress }) : null,
         workspaceGateNotice ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__notice", role: "alert", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-compose__notice-text", children: workspaceGateNotice }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34330,7 +34361,8 @@ function ChatPanel({
               onKeyDown: (e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (!isStreaming) {
+                  const canSend = !isStreaming || nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0);
+                  if (canSend) {
                     onSend();
                   }
                 }
@@ -34354,7 +34386,20 @@ function ChatPanel({
               ] })
             }
           ),
-          isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+          isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            nexusRelayQueueDuringStream ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "chat-compose__send chat-compose__send--alongside-stop",
+                disabled: input.trim().length === 0 && attachments.length === 0,
+                onClick: onSend,
+                type: "button",
+                title: "Queue message for next teammate turn",
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
+              }
+            ) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) })
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
               className: "chat-compose__send",
@@ -37138,6 +37183,390 @@ function WizardSetupModal({
     }
   ) : null });
 }
+function NexusSetupModal({ open, wizards, onClose, onCreate }) {
+  const [name2, setName] = reactExports.useState("");
+  const [mission, setMission] = reactExports.useState("");
+  const [workspaceRoot, setWorkspaceRoot] = reactExports.useState("");
+  const [leaderWizardId, setLeaderWizardId] = reactExports.useState("");
+  const [memberWizardIds, setMemberWizardIds] = reactExports.useState(/* @__PURE__ */ new Set());
+  const [creating, setCreating] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState("");
+  const wizardOptions = reactExports.useMemo(
+    () => wizards.map((wizard) => ({ value: wizard.id, label: wizard.wizard?.name ?? wizard.title })),
+    [wizards]
+  );
+  reactExports.useEffect(() => {
+    if (!open) return;
+    setName("");
+    setMission("");
+    setWorkspaceRoot("");
+    const firstWizardId = wizards[0]?.id ?? "";
+    setLeaderWizardId(firstWizardId);
+    setMemberWizardIds(firstWizardId ? /* @__PURE__ */ new Set([firstWizardId]) : /* @__PURE__ */ new Set());
+    setCreating(false);
+    setError("");
+  }, [open, wizards]);
+  const selectedMembers = reactExports.useMemo(() => {
+    const ids = new Set(memberWizardIds);
+    if (leaderWizardId) ids.add(leaderWizardId);
+    return ids;
+  }, [leaderWizardId, memberWizardIds]);
+  const canCreate = Boolean(name2.trim() && mission.trim() && workspaceRoot.trim() && leaderWizardId && selectedMembers.size >= 2);
+  const chooseWorkspace = async () => {
+    setError("");
+    const picked = await window.electronAPI.chooseNexusWorkspace(workspaceRoot || void 0);
+    if (picked) setWorkspaceRoot(picked);
+  };
+  const submit = async () => {
+    if (!canCreate || creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      await onCreate({
+        name: name2.trim(),
+        mission: mission.trim(),
+        workspaceRoot: workspaceRoot.trim(),
+        leaderWizardId,
+        memberWizardIds: [...selectedMembers]
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create Nexus.");
+    } finally {
+      setCreating(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          "aria-modal": "true",
+          animate: { opacity: 1, scale: 1, y: 0 },
+          className: "app-dialog app-dialog--scrollable nexus-setup",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          role: "dialog",
+          transition: { duration: 0.18, ease: "easeOut" },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "New Nexus" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Create a Nexus project" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "A Nexus gives multiple Wizards a shared local project workspace. Their private Markdown docs still define who they are, while the shared folder holds the project they work on together." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__grid", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Name" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => setName(e.target.value), placeholder: "Website rebuild", value: name2 })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Leader" }),
+                wizardOptions.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  AppSelect,
+                  {
+                    options: wizardOptions,
+                    onChange: (id2) => {
+                      setLeaderWizardId(id2);
+                      setMemberWizardIds((current) => new Set(current).add(id2));
+                    },
+                    value: leaderWizardId || wizardOptions[0]?.value || "",
+                    portalDropdown: true
+                  }
+                ) : /* @__PURE__ */ jsxRuntimeExports.jsx("input", { disabled: true, readOnly: true, value: "Create at least two Wizards first" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field wizard-setup__wide", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Mission" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "textarea",
+                  {
+                    onChange: (e) => setMission(e.target.value),
+                    placeholder: "Describe the project, outcome, constraints, and what done should look like.",
+                    rows: 5,
+                    value: mission
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field wizard-setup__wide", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Shared project workspace" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-setup__workspace-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => void chooseWorkspace(), type: "button", children: "Choose folder…" }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Project:" }),
+                  " ",
+                  workspaceRoot
+                ] }) : "Choose a local folder where the Nexus team can read and write project files." })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field wizard-setup__wide", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Team" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "nexus-setup__wizard-grid", children: wizards.map((wizard) => {
+                  const checked = selectedMembers.has(wizard.id);
+                  const isLeader = wizard.id === leaderWizardId;
+                  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `nexus-setup__wizard ${checked ? "is-selected" : ""}`, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "input",
+                      {
+                        checked,
+                        disabled: isLeader,
+                        onChange: (e) => {
+                          setMemberWizardIds((current) => {
+                            const next = new Set(current);
+                            if (e.target.checked) next.add(wizard.id);
+                            else next.delete(wizard.id);
+                            return next;
+                          });
+                        },
+                        type: "checkbox"
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizard.wizard?.name ?? wizard.title }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: isLeader ? "Leader" : wizard.wizard?.model ?? "Wizard" })
+                    ] })
+                  ] }, wizard.id);
+                }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Each card is one Wizard. The leader stays selected; check others to add them to the team. At least two Wizards total are required (leader + one more)." })
+              ] })
+            ] }),
+            error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: error }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", disabled: creating, onClick: onClose, type: "button", children: "Cancel" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !canCreate || creating, onClick: () => void submit(), type: "button", children: creating ? "Creating..." : "Create Nexus" })
+            ] })
+          ]
+        }
+      )
+    }
+  ) : null });
+}
+function setNexusLeader(project, leaderId) {
+  if (!project.members.some((m) => m.wizardId === leaderId)) return project;
+  return {
+    ...project,
+    leaderWizardId: leaderId,
+    members: project.members.map((m) => ({
+      wizardId: m.wizardId,
+      role: m.wizardId === leaderId ? "leader" : "member"
+    }))
+  };
+}
+function removeNexusMember(project, wizardId) {
+  if (project.members.length <= 2) return "below_min";
+  const nextMembers = project.members.filter((m) => m.wizardId !== wizardId);
+  let leaderId = project.leaderWizardId;
+  if (wizardId === leaderId) {
+    leaderId = nextMembers[0].wizardId;
+  }
+  const ids = new Set(nextMembers.map((m) => m.wizardId));
+  const tasks = project.tasks.map(
+    (t) => ids.has(t.assigneeWizardId) ? t : { ...t, assigneeWizardId: leaderId }
+  );
+  return setNexusLeader({ ...project, members: nextMembers, tasks }, leaderId);
+}
+function addNexusMember(project, wizardId) {
+  if (project.members.some((m) => m.wizardId === wizardId)) return project;
+  return {
+    ...project,
+    members: [...project.members, { wizardId, role: "member" }]
+  };
+}
+function NexusSettingsPanel({
+  project,
+  participants,
+  availableWizards,
+  statusMessage,
+  onChange,
+  onTeamConstraint,
+  onOpenWizard
+}) {
+  const [wizardIdToAdd, setWizardIdToAdd] = reactExports.useState("");
+  const leaderOptions = reactExports.useMemo(
+    () => participants.map((p) => ({ value: p.wizardId, label: p.name })),
+    [participants]
+  );
+  const addOptions = reactExports.useMemo(
+    () => availableWizards.map((w) => ({ value: w.id, label: w.name })),
+    [availableWizards]
+  );
+  const addValue = wizardIdToAdd && addOptions.some((o) => o.value === wizardIdToAdd) ? wizardIdToAdd : addOptions[0]?.value ?? "";
+  const tryRemove = (wizardId) => {
+    const next = removeNexusMember(project, wizardId);
+    if (next === "below_min") {
+      onTeamConstraint?.("A Nexus needs at least two Wizards. Add another Wizard before removing this one.");
+      return;
+    }
+    onChange(next);
+  };
+  const tryAdd = () => {
+    const id2 = addValue;
+    if (!id2) return;
+    onChange(addNexusMember(project, id2));
+    setWizardIdToAdd("");
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel settings-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-panel__header", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "settings-panel__title", children: "Nexus project" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "settings-panel__subtitle", children: "Shared workspace and team" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section settings-section--nexus-team", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Participating Wizards" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint nexus-settings-team-hint", children: "With two or more Wizards, Mythra runs Nexus sessions in relay mode by default (one teammate stream at a time in the same assistant bubble so everyone reads earlier segments before speaking). Enable parallel replies below if you want everyone answering at once instead." }),
+        leaderOptions.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field nexus-settings-leader-field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Nexus leader" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            AppSelect,
+            {
+              onChange: (id2) => onChange(setNexusLeader(project, id2)),
+              options: leaderOptions,
+              portalDropdown: true,
+              value: project.leaderWizardId
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-hint", children: "Coordinates assignments in Nexus prompts; you can change anytime." })
+        ] }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "nexus-settings-team", children: participants.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "nexus-settings-team__member", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-settings-team__identity", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "nexus-settings-team__name", children: p.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `nexus-settings-team__badge ${p.role === "leader" ? "nexus-settings-team__badge--leader" : ""}`, children: p.role === "leader" ? "Leader" : "Member" })
+          ] }),
+          p.workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "nexus-settings-team__path", title: p.workspaceRoot, children: p.workspaceRoot }) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-settings-team__actions", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary nexus-settings-team__open", onClick: () => onOpenWizard(p.wizardId), type: "button", children: "Open Wizard" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "btn btn--danger nexus-settings-team__remove",
+                disabled: project.members.length <= 2,
+                onClick: () => tryRemove(p.wizardId),
+                title: project.members.length <= 2 ? "Add another Wizard before removing" : `Remove ${p.name} from this Nexus`,
+                type: "button",
+                children: "Remove"
+              }
+            )
+          ] })
+        ] }, p.wizardId)) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-settings-add-wizard", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h5", { className: "nexus-settings-add-wizard__title", children: "Add Wizard" }),
+          addOptions.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-settings-add-wizard__row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              AppSelect,
+              {
+                onChange: (id2) => setWizardIdToAdd(id2),
+                options: addOptions,
+                portalDropdown: true,
+                value: addValue
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => tryAdd(), type: "button", children: "Add to project" })
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: "Every Wizard is already in this Nexus, or no other Wizards exist yet." })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Collaboration & tools" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row toggle-row--warning ${project.teamFullAccess ? "is-active" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Team full access" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              checked: Boolean(project.teamFullAccess),
+              onChange: (e) => {
+                const next = e.target.checked;
+                onChange({
+                  ...project,
+                  teamFullAccess: next,
+                  ...next ? { leaderApprovesTools: false } : {}
+                });
+              },
+              type: "checkbox"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: "When on, every teammate stream skips per-action tool approvals in Nexus sessions (same idea as Settings → Agent autonomy → Full access)." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row ${project.leaderApprovesTools ? "is-active" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Leader approves tools instead of user" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              checked: Boolean(project.leaderApprovesTools),
+              disabled: Boolean(project.teamFullAccess),
+              onChange: (e) => onChange({ ...project, leaderApprovesTools: e.target.checked }),
+              type: "checkbox"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "When Full access is off, Mythra asks the Nexus leader model (your leader Wizard's provider/model) for APPROVE or DENY instead of showing you the confirmation modal." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row ${project.parallelWizardResponses ? "is-active" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Parallel replies (all Wizards at once)" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              checked: Boolean(project.parallelWizardResponses),
+              onChange: (e) => onChange({ ...project, parallelWizardResponses: e.target.checked }),
+              type: "checkbox"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+          "When off (default), teammates respond one stream at a time in one assistant bubble and may continue until they emit",
+          " ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "[NEXUS_END]" }),
+          " or reach the turn cap."
+        ] }),
+        !project.parallelWizardResponses ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Max relay turns per message" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              inputMode: "numeric",
+              max: 96,
+              min: 1,
+              onChange: (e) => {
+                const n = Number.parseInt(e.target.value, 10);
+                onChange({
+                  ...project,
+                  maxSequentialWizardTurns: Number.isFinite(n) ? Math.min(96, Math.max(1, n)) : 24
+                });
+              },
+              type: "number",
+              value: project.maxSequentialWizardTurns ?? 24
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-hint", children: "Each teammate reply counts as one turn; raises the relay ceiling before Mythra stops the round-robin." })
+        ] }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Project" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Name" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => onChange({ ...project, name: e.target.value }), value: project.name })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Mission" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "textarea",
+            {
+              onChange: (e) => onChange({ ...project, mission: e.target.value }),
+              rows: 6,
+              value: project.mission
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Shared workspace" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: project.workspaceRoot })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Files tools use this folder for Nexus sessions. Change it only by moving the project on disk and updating Mythra." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Status" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: project.status })
+        ] })
+      ] }),
+      statusMessage ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-line", children: statusMessage }) : null
+    ] })
+  ] });
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 function workspaceRelativeDisplay(workspaceRoot, absolutePath) {
@@ -37148,7 +37577,84 @@ function workspaceRelativeDisplay(workspaceRoot, absolutePath) {
   if (abs.startsWith(prefix)) return abs.slice(prefix.length);
   return pathLabel(absolutePath);
 }
+function pathNormSlashes(p) {
+  return p.replace(/\\/g, "/");
+}
+function pathDirnameFs(p) {
+  const n = pathNormSlashes(p).replace(/\/+$/, "");
+  const idx = n.lastIndexOf("/");
+  if (idx <= 0) return n.startsWith("/") ? "/" : n;
+  return n.slice(0, idx);
+}
+function pathBasenameFs(p) {
+  const n = pathNormSlashes(p).replace(/\/+$/, "");
+  const idx = n.lastIndexOf("/");
+  return idx === -1 ? n : n.slice(idx + 1);
+}
+function pathJoinFs(a, b) {
+  const x = pathNormSlashes(a).replace(/\/+$/, "");
+  const y = pathNormSlashes(b).replace(/^\/+/, "");
+  if (!x) return y;
+  if (!y) return x;
+  return `${x}/${y}`;
+}
 const pathsEqual = (a, b) => a.replace(/\\/g, "/").replace(/\/+$/, "") === b.replace(/\\/g, "/").replace(/\/+$/, "");
+function resolveWizardProfileForNexusTeam(diskWizard, metaWizard, nexusSharedRoot) {
+  const trimmedShared = nexusSharedRoot.trim();
+  const mistakenForShared = (w) => Boolean(trimmedShared && w?.workspaceRoot?.trim() && pathsEqual(w.workspaceRoot, trimmedShared));
+  const ordered = [diskWizard, metaWizard];
+  for (const w of ordered) {
+    if (!w?.workspaceRoot?.trim()) continue;
+    if (mistakenForShared(w)) continue;
+    return w;
+  }
+  return void 0;
+}
+function deriveWizardPrivateRootFromDocuments(profile, mistakenRoot) {
+  if (!pathsEqual(profile.workspaceRoot, mistakenRoot)) return void 0;
+  const seg = sanitizeWizardFolderSegment(profile.name);
+  const segLower = seg.toLowerCase();
+  for (const d of profile.documents ?? []) {
+    if (!d.path?.trim()) continue;
+    let dir = pathDirnameFs(d.path);
+    for (let depth = 0; depth < 16; depth++) {
+      try {
+        if (pathBasenameFs(dir).toLowerCase() === segLower) {
+          return dir;
+        }
+      } catch {
+        break;
+      }
+      const parent = pathDirnameFs(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return void 0;
+}
+async function repairWizardWorkspaceRootIfNeeded(profile, nexusSharedRoot) {
+  const shared = nexusSharedRoot.trim();
+  if (!shared || !pathsEqual(profile.workspaceRoot, shared)) {
+    return profile;
+  }
+  const sibling = pathJoinFs(pathDirnameFs(shared), sanitizeWizardFolderSegment(profile.name));
+  const candidates = [deriveWizardPrivateRootFromDocuments(profile, shared), sibling].filter(
+    (c) => Boolean(c?.trim())
+  );
+  const tried = /* @__PURE__ */ new Set();
+  for (const candidate of candidates) {
+    const key = candidate.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!key || tried.has(key)) continue;
+    tried.add(key);
+    if (pathsEqual(key, shared)) continue;
+    try {
+      await window.electronAPI.listWizardDocuments(candidate);
+      return { ...profile, workspaceRoot: candidate };
+    } catch {
+    }
+  }
+  return profile;
+}
 function workspaceAbsolutePathPrefixRemap(oldRoot, newRoot) {
   const norm = (s) => s.replace(/\\/g, "/");
   const oldBase = norm(oldRoot).replace(/\/+$/, "");
@@ -37219,6 +37725,50 @@ ${pathRules}
 - When asked about your identity, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
 - Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
 };
+const buildNexusSystemPrompt = (leader, nexus, teamNames) => {
+  const missionTrimmed = nexus.mission.trim();
+  const missionLines = missionTrimmed ? `Nexus project mission (from project settings — treat as authoritative unless the user explicitly changes goals in chat):
+${missionTrimmed}` : `Nexus project mission is not set yet. Ask the user what this project should accomplish, or they can define it under Inspector → Settings → Nexus.`;
+  const collab = nexus.parallelWizardResponses === true ? "- **Parallel Nexus:** When Mythra runs multiple teammate streams on one message, everyone answers concurrently—you cannot rely on seeing drafts first. Coordinate explicitly in writing (ownership, sequencing, WAITING/BLOCKED).\n" : "- **Relay Nexus:** Teammates answer **one stream at a time** in a single combined assistant message; they can read earlier segments before speaking. End a round with `[NEXUS_END]` when the Nexus is done with this user message, or `[NEXUS_CONTINUE]` to hand off another turn.\n";
+  return `${leader.systemPrompt}
+
+Mythra Nexus runtime:
+- You are the leader Wizard for Nexus project "${nexus.name}".
+- ${missionLines}
+- The shared project workspace for all file tools is: ${nexus.workspaceRoot}
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, strengths, memory, and corrections.
+- The team is: ${teamNames.join(", ")}.
+${collab}- Start by making a concise plan. Delegate tasks to specific Wizards by name when useful, and explain why.
+- **Leader coordination:** Assign owners by name and file/path scope where helpful. When work must pause until another Wizard finishes something, say clearly **WAITING ON [Wizard]:** reason so teammates idle correctly or pick alternate tasks you assign. When independent tracks can proceed safely (different files / non-overlapping scope), say **PARALLEL OK** for those tracks.
+- If a teammate's injected docs suggest they are better suited for a task, adjust assignments and say so.
+- Treat this as a collaborative project room: include short messages addressed to teammates, task assignments, status updates, and a clear next action.
+- Only edit files in the shared Nexus workspace unless the user explicitly asks you to update a Wizard's private docs in a separate Wizard session.`;
+};
+const buildNexusResponderSystemPrompt = (wizard, nexus, teamNames, role, conversationMode) => {
+  const missionTrimmed = nexus.mission.trim();
+  const missionLines = missionTrimmed ? `Nexus project mission (from project settings):
+${missionTrimmed}` : `No Nexus mission text is configured yet — ask the user for project goals if you need direction.`;
+  const parallelLeader = "- **Parallel Nexus:** Mythra runs **one concurrent model stream per Wizard** on each user message (two or more teammates). Everyone replies **at the same time**—you cannot see teammate drafts until their messages appear.\n- **Your leader responsibilities:** Assign tasks by Wizard name with ownership (who touches which areas/files when possible). When something must wait on another Wizard's deliverable, say **WAITING ON [Wizard]:** reason so nobody guesses whether to idle. Delegate alternate tasks so teammates aren't blocked unnecessarily. When tracks are independent and safe to overlap, say **PARALLEL OK** for those tracks.\n";
+  const parallelMember = "- **Parallel Nexus:** Mythra runs **one concurrent stream per Wizard** on each message—assume teammates answer **simultaneously** and you usually cannot see their reply yet.\n- **Follow the Nexus leader's routing.** If your task depends on another Wizard's output, write **WAITING ON [Wizard]:** what you need—avoid duplicating their work. If you have parallel-ready work (leader said PARALLEL OK or it's clearly disjoint files/tools), execute without blocking.\n";
+  const relayLeader = "- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n- When another teammate should speak next on this user message, end with `[NEXUS_CONTINUE]` alone on its own last line. When the Nexus should stop discussing this user message, end with `[NEXUS_END]` alone on its own last line.\n";
+  const relayMember = "- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n- Ask teammates questions when helpful. Use `[NEXUS_CONTINUE]` alone on its own last line if more discussion is needed; use `[NEXUS_END]` alone on its own last line when you believe this user message is fully addressed.\n";
+  const modeLeader = conversationMode === "parallel" ? parallelLeader : relayLeader;
+  const modeMember = conversationMode === "parallel" ? parallelMember : relayMember;
+  return `${wizard.systemPrompt}
+
+Mythra Nexus runtime:
+- You are ${wizard.name}, responding directly inside Nexus project "${nexus.name}".
+- Your Nexus role is: ${role === "leader" ? "leader" : "team member"}.
+- ${missionLines}
+- The shared project workspace for all file tools is: ${nexus.workspaceRoot}
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, strengths, memory, and corrections.
+- The team is: ${teamNames.join(", ")}.
+${role === "leader" ? modeLeader : modeMember}
+- Answer as yourself, in first person, and focus on the user's latest request.
+- Prefer splitting files/paths across teammates when parallelizing so simultaneous edits collide less often.
+- If another Wizard is better suited for part of the work, say so clearly and suggest how to split it.
+- Only edit files in the shared Nexus workspace unless the user explicitly asks you to update your private docs in a separate Wizard session.`;
+};
 const buildWizardDocsContext = async (wizard) => {
   let docs2;
   try {
@@ -37233,7 +37783,7 @@ const buildWizardDocsContext = async (wizard) => {
     mdDocs.map(async (doc) => {
       const displayPath = workspaceRelativeDisplay(wizard.workspaceRoot, doc.path) || doc.label || pathLabel(doc.path);
       try {
-        const file = await window.electronAPI.openFile(wizard.workspaceRoot, doc.path);
+        const file = await window.electronAPI.readWizardDocument(wizard.workspaceRoot, doc.path);
         loaded.push({ name: displayPath, ok: true });
         return `## ${displayPath}
 ${file.content}`;
@@ -37251,6 +37801,36 @@ ${file.content}`;
       role: "system",
       content: [
         "Wizard Markdown workspace documents are injected below (every .md file Mythra could find under this workspace). Treat them as current private context; use read_file if something may have changed since this injection.",
+        ...parts
+      ].join("\n\n"),
+      status: "done"
+    }
+  };
+};
+const buildNexusDocsContext = async (team) => {
+  const loaded = [];
+  const parts = [];
+  for (const member of team) {
+    const result = await buildWizardDocsContext(member.wizard);
+    loaded.push(
+      ...result.loaded.map((doc) => ({
+        name: `${member.wizard.name}/${doc.name}`,
+        ok: doc.ok
+      }))
+    );
+    if (result.message) {
+      parts.push(`## ${member.role === "leader" ? "Leader" : "Member"}: ${member.wizard.name}
+${result.message.content}`);
+    }
+  }
+  if (parts.length === 0) return { message: null, loaded };
+  return {
+    loaded,
+    message: {
+      id: `nexus-docs-${Date.now()}`,
+      role: "system",
+      content: [
+        "Nexus team private Wizard Markdown documents are injected below as read-only context. Use them to coordinate role fit, memory, style, and corrections while doing project work only in the shared Nexus workspace.",
         ...parts
       ].join("\n\n"),
       status: "done"
@@ -37286,7 +37866,29 @@ const diffPromptLines = (before, after) => {
   }
   return { left, right };
 };
+const stripNexusRelayControlMarkers = (raw) => raw.replace(/\[\s*NEXUS_(?:END|CONTINUE)\s*\]/gi, "").trimEnd();
+const parseNexusRelayWantsEnd = (raw) => /\[\s*NEXUS_END\s*\]/i.test(raw);
+const sortNexusTeamLeaderFirst = (team, leaderWizardId) => [...team].sort((a, b) => {
+  if (a.id === leaderWizardId && b.id !== leaderWizardId) return -1;
+  if (b.id === leaderWizardId && a.id !== leaderWizardId) return 1;
+  return 0;
+});
 const chatFingerprint = (messages, timeline) => JSON.stringify({ messages, timeline });
+const stripDuplicateNexusSpeakerLabel = (name2, raw) => {
+  const escaped = name2.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return raw.replace(new RegExp(`^\\s*${escaped}\\s*:\\s*`, "i"), "").trim();
+};
+const formatNexusMultiResponseContent = (group) => group.responders.map(({ requestId, name: name2 }) => {
+  const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
+  const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+  return `**${name2}:**
+${content2 || "Thinking..."}`;
+}).join("\n\n");
+const formatNexusMultiResponseReasoning = (group) => group.responders.map(({ requestId, name: name2 }) => {
+  const reasoning = group.reasoningByRequestId.get(requestId)?.trim();
+  return reasoning ? `${name2}:
+${reasoning}` : "";
+}).filter(Boolean).join("\n\n");
 const formatRelativeDate = (ts) => {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 6e4);
@@ -37325,10 +37927,19 @@ function App() {
   const [chatAttachments, setChatAttachments] = reactExports.useState([]);
   const [chatStreaming, setChatStreaming] = reactExports.useState(false);
   const [activeRequestId, setActiveRequestId] = reactExports.useState();
+  const activeRequestIdRef = reactExports.useRef(void 0);
   const chatStreamingRef = reactExports.useRef(false);
   const [activeChatId, setActiveChatId] = reactExports.useState();
   const activeChatIdRef = reactExports.useRef(void 0);
   const inFlightChatsRef = reactExports.useRef(/* @__PURE__ */ new Map());
+  const nexusMultiResponseGroupsRef = reactExports.useRef(/* @__PURE__ */ new Map());
+  const finalizeNexusMultiResponseUiRef = reactExports.useRef(
+    () => {
+    }
+  );
+  const nexusQueuedUserTurnsRef = reactExports.useRef([]);
+  const nexusRelayComposeUnlockedRef = reactExports.useRef(false);
+  const [nexusRelayProgress, setNexusRelayProgress] = reactExports.useState(null);
   const [chatList, setChatList] = reactExports.useState([]);
   const [overrideModelProvider, setOverrideModelProvider] = reactExports.useState("lmstudio");
   const [overrideModels, setOverrideModels] = reactExports.useState([]);
@@ -37343,12 +37954,15 @@ function App() {
   const [inspectorTab, setInspectorTab] = reactExports.useState("settings");
   const [settingsInspectorScope, setSettingsInspectorScope] = reactExports.useState("general");
   const settingsInspectorWizardIdRef = reactExports.useRef(void 0);
+  const settingsInspectorNexusIdRef = reactExports.useRef(void 0);
   const lastInspectorTabRef = reactExports.useRef(inspectorTab);
   const [workspaceChanges, setWorkspaceChanges] = reactExports.useState(null);
   const [changesLoading, setChangesLoading] = reactExports.useState(false);
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
+  const [wizardsSidebarPane, setWizardsSidebarPane] = reactExports.useState("wizards");
   const [showNewMenu, setShowNewMenu] = reactExports.useState(false);
   const [showWizardSetup, setShowWizardSetup] = reactExports.useState(false);
+  const [showNexusSetup, setShowNexusSetup] = reactExports.useState(false);
   const [showWebSearchNotice, setShowWebSearchNotice] = reactExports.useState(false);
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
@@ -37357,20 +37971,26 @@ function App() {
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
   const [wizardDraft, setWizardDraft] = reactExports.useState(null);
+  const [nexusDraft, setNexusDraft] = reactExports.useState(null);
   const [wizardExportChat, setWizardExportChat] = reactExports.useState(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = reactExports.useState(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
+  const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
   const [wizardPromptApproval, setWizardPromptApproval] = reactExports.useState(null);
   const [toolApprovalRequest, setToolApprovalRequest] = reactExports.useState(null);
   const [expandedWizardIds, setExpandedWizardIds] = reactExports.useState(/* @__PURE__ */ new Set());
+  const [expandedNexusIds, setExpandedNexusIds] = reactExports.useState(/* @__PURE__ */ new Set());
   const saveTimerRef = reactExports.useRef(null);
   const settingsAutosaveTimerRef = reactExports.useRef(null);
   const wizardAutosaveTimerRef = reactExports.useRef(null);
+  const nexusAutosaveTimerRef = reactExports.useRef(null);
   const wizardDraftRef = reactExports.useRef(null);
+  const nexusDraftRef = reactExports.useRef(null);
   const lastContentFingerprintRef = reactExports.useRef(null);
   const skipNextRenameCommitRef = reactExports.useRef(false);
   activeChatIdRef.current = activeChatId;
+  activeRequestIdRef.current = activeRequestId;
   const findInFlightByChatId = (chatId) => {
     if (!chatId) return void 0;
     for (const item of inFlightChatsRef.current.values()) {
@@ -37426,11 +38046,14 @@ function App() {
     flushStreamingDeltaBufferRef.current();
   };
   const appendActivity = (activity) => {
-    const entry = { id: `activity-${activity.id}`, type: "activity", activity };
+    const nexusGroup = nexusMultiResponseGroupsRef.current.get(activity.requestId);
+    const routedActivity = nexusGroup ? { ...activity, requestId: nexusGroup.messageId } : activity;
+    const entry = { id: `activity-${routedActivity.id}`, type: "activity", activity: routedActivity };
     const snapshot = inFlightChatsRef.current.get(activity.requestId);
-    if (snapshot) {
-      snapshot.timeline = [...snapshot.timeline, entry];
-      showInFlightIfActive(snapshot);
+    const routedSnapshot = nexusGroup ? inFlightChatsRef.current.get(nexusGroup.messageId) : snapshot;
+    if (routedSnapshot) {
+      routedSnapshot.timeline = [...routedSnapshot.timeline, entry];
+      showInFlightIfActive(routedSnapshot);
       return;
     }
     setChatTimeline((current) => [...current, entry]);
@@ -37441,6 +38064,28 @@ function App() {
         (entry) => entry.type === "message" && entry.message.id === messageId ? { ...entry, message: recipe(entry.message) } : entry
       )
     );
+  };
+  const updateNexusMultiResponseMessage = (group, status) => {
+    const content2 = formatNexusMultiResponseContent(group);
+    const reasoning = formatNexusMultiResponseReasoning(group) || void 0;
+    const recipe = (m) => ({
+      ...m,
+      content: content2,
+      reasoning,
+      status
+    });
+    const snapshot = inFlightChatsRef.current.get(group.messageId);
+    if (snapshot) {
+      snapshot.messages = snapshot.messages.map((m) => m.id === group.messageId ? recipe(m) : m);
+      snapshot.timeline = snapshot.timeline.map(
+        (entry) => entry.type === "message" && entry.message.id === group.messageId ? { ...entry, message: recipe(entry.message) } : entry
+      );
+      showInFlightIfActive(snapshot);
+      return snapshot;
+    }
+    setChatMessages((current) => current.map((m) => m.id === group.messageId ? recipe(m) : m));
+    updateTimelineMessage(group.messageId, recipe);
+    return void 0;
   };
   const refreshChatList = reactExports.useCallback(async () => {
     const list2 = await window.electronAPI.listChats();
@@ -37474,12 +38119,34 @@ function App() {
     },
     [refreshChatList]
   );
+  finalizeNexusMultiResponseUiRef.current = (group, usage) => {
+    const snapshot = updateNexusMultiResponseMessage(group, "done");
+    if (snapshot && usage && activeChatIdRef.current === snapshot.chatId) {
+      setLastTokenUsage(usage);
+    }
+    if (activeChatIdRef.current === group.chatId) {
+      setChatStreaming(false);
+      setActiveRequestId(void 0);
+    }
+    for (const rid of group.requestIds) {
+      nexusMultiResponseGroupsRef.current.delete(rid);
+    }
+    const finalSnapshot = inFlightChatsRef.current.get(group.messageId) ?? snapshot;
+    if (finalSnapshot) {
+      void saveChatSnapshot(finalSnapshot.chatId, finalSnapshot.messages, finalSnapshot.timeline).finally(() => {
+        if (inFlightChatsRef.current.get(group.messageId) === finalSnapshot) {
+          inFlightChatsRef.current.delete(group.messageId);
+        }
+      });
+    }
+  };
   const activeChatMeta = reactExports.useMemo(
     () => activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0,
     [activeChatId, chatList]
   );
   const normalChatList = reactExports.useMemo(() => chatList.filter((c) => (c.kind ?? "normal") === "normal"), [chatList]);
   const wizardChatList = reactExports.useMemo(() => chatList.filter((c) => c.kind === "wizard"), [chatList]);
+  const nexusProjectList = reactExports.useMemo(() => chatList.filter((c) => c.kind === "nexus"), [chatList]);
   const wizardSessionsByWizardId = reactExports.useMemo(() => {
     const map2 = /* @__PURE__ */ new Map();
     for (const chat of chatList) {
@@ -37487,6 +38154,16 @@ function App() {
       const list2 = map2.get(chat.wizardId) ?? [];
       list2.push(chat);
       map2.set(chat.wizardId, list2);
+    }
+    return map2;
+  }, [chatList]);
+  const nexusSessionsByNexusId = reactExports.useMemo(() => {
+    const map2 = /* @__PURE__ */ new Map();
+    for (const chat of chatList) {
+      if (chat.kind !== "nexus-session" || !chat.nexusId) continue;
+      const list2 = map2.get(chat.nexusId) ?? [];
+      list2.push(chat);
+      map2.set(chat.nexusId, list2);
     }
     return map2;
   }, [chatList]);
@@ -37505,13 +38182,23 @@ function App() {
     return sidebarWizardListMeta;
   }, [activeChatMeta, chatList, sidebarWizardListMeta]);
   const activeWizard = activeWizardMeta?.wizard ?? null;
+  const activeNexusMeta = reactExports.useMemo(() => {
+    if (activeChatMeta?.kind === "nexus-session" && activeChatMeta.nexusId) {
+      return chatList.find((c) => c.id === activeChatMeta.nexusId && c.kind === "nexus");
+    }
+    if (activeChatMeta?.kind === "nexus") return activeChatMeta;
+    return void 0;
+  }, [activeChatMeta, chatList]);
+  const activeNexus = activeNexusMeta?.nexus ?? null;
   reactExports.useEffect(() => {
     setWizardDraft(activeWizard);
   }, [activeChatId, activeWizard]);
   reactExports.useEffect(() => {
+    setNexusDraft(activeNexus);
+  }, [activeChatId, activeNexus]);
+  reactExports.useEffect(() => {
     const id2 = activeWizardMeta?.id;
     if (!id2) {
-      setSettingsInspectorScope("general");
       settingsInspectorWizardIdRef.current = void 0;
       return;
     }
@@ -37522,8 +38209,24 @@ function App() {
     }
   }, [activeWizardMeta?.id]);
   reactExports.useEffect(() => {
+    const id2 = activeNexusMeta?.id;
+    if (!id2) {
+      settingsInspectorNexusIdRef.current = void 0;
+      setSettingsInspectorScope((s) => s === "nexus" ? "general" : s);
+      return;
+    }
+    const prev = settingsInspectorNexusIdRef.current;
+    if (prev !== id2) {
+      settingsInspectorNexusIdRef.current = id2;
+      if (prev === void 0) setSettingsInspectorScope("nexus");
+    }
+  }, [activeNexusMeta?.id]);
+  reactExports.useEffect(() => {
     wizardDraftRef.current = wizardDraft;
   }, [wizardDraft]);
+  reactExports.useEffect(() => {
+    nexusDraftRef.current = nexusDraft;
+  }, [nexusDraft]);
   reactExports.useEffect(() => {
     if (wizardAutosaveTimerRef.current) {
       clearTimeout(wizardAutosaveTimerRef.current);
@@ -37535,16 +38238,21 @@ function App() {
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
   const showWizardHubPlaceholder = reactExports.useMemo(
-    () => sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session",
+    () => sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session",
     [sidebarTab, sidebarFocusedWizardId, activeChatMeta?.kind]
   );
   const chatSessionSubheading = reactExports.useMemo(() => {
-    if (sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session") {
+    if (sidebarTab === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session") {
       return "Select a Wizard to get started";
     }
     if (activeWizard) {
       const session = activeChatMeta?.kind === "wizard-session" ? activeChatMeta.title : !activeChatId && sidebarFocusedWizardId && activeWizardMeta?.id === sidebarFocusedWizardId ? "New session on first send" : activeChatMeta?.kind === "wizard" ? "Home" : "Home";
       return `${activeWizard.name} · ${session} · ${pathLabel(activeWizard.workspaceRoot)}`;
+    }
+    if (activeNexus) {
+      const session = activeChatMeta?.kind === "nexus-session" ? activeChatMeta.title : "Project room";
+      const leaderName = chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.name ?? "Leader";
+      return `${activeNexus.name} · ${session} · ${leaderName} leads · ${pathLabel(activeNexus.workspaceRoot)}`;
     }
     if (chatMessages.length === 0) {
       if (newChatModelOverride?.model) {
@@ -37568,6 +38276,7 @@ function App() {
     activeChatMeta,
     activeWizard,
     activeWizardMeta?.id,
+    activeNexus,
     chatList,
     chatMessages,
     newChatModelOverride,
@@ -37592,10 +38301,12 @@ function App() {
       const kind = disk?.kind ?? existing?.kind ?? "normal";
       const wizard = disk?.wizard ?? existing?.wizard ?? null;
       const wizardId = disk?.wizardId ?? existing?.wizardId ?? null;
+      const nexus = disk?.nexus ?? existing?.nexus ?? null;
+      const nexusId = disk?.nexusId ?? existing?.nexusId ?? null;
       const chat = {
         id: id2,
         kind,
-        title: kind === "wizard-session" ? sessionTitle(msgs, nameOverride ?? void 0) : resolveChatTitle(msgs, nameOverride),
+        title: kind === "wizard-session" || kind === "nexus-session" ? sessionTitle(msgs, nameOverride ?? void 0) : resolveChatTitle(msgs, nameOverride),
         titleOverride: nameOverride == null || nameOverride === "" ? null : nameOverride.trim() || null,
         messages: msgs,
         timeline: tl,
@@ -37604,7 +38315,9 @@ function App() {
         pinned: disk?.pinned ?? existing?.pinned ?? false,
         modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : newChatModelOverrideRef.current ?? null),
         wizard,
-        wizardId
+        wizardId,
+        nexus,
+        nexusId
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
@@ -37719,6 +38432,23 @@ function App() {
       }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
+      const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
+      if (nexusGroup) {
+        if (delta) {
+          nexusGroup.contentByRequestId.set(
+            requestId,
+            `${nexusGroup.contentByRequestId.get(requestId) ?? ""}${delta}`
+          );
+        }
+        if (reasoningDelta) {
+          nexusGroup.reasoningByRequestId.set(
+            requestId,
+            `${nexusGroup.reasoningByRequestId.get(requestId) ?? ""}${reasoningDelta}`
+          );
+        }
+        updateNexusMultiResponseMessage(nexusGroup, "streaming");
+        return;
+      }
       const map2 = streamPendingDeltaRef.current;
       const cur = map2.get(requestId) ?? { text: "", reasoning: "" };
       if (delta) cur.text += delta;
@@ -37733,6 +38463,30 @@ function App() {
     });
     const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, usage }) => {
       cancelStreamDeltaFlushAndFlushNow();
+      const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
+      if (nexusGroup) {
+        nexusGroup.contentByRequestId.set(requestId, content2);
+        if (reasoning !== void 0) nexusGroup.reasoningByRequestId.set(requestId, reasoning);
+        nexusGroup.pending.delete(requestId);
+        if (nexusGroup.suppressFinalizeUntilOrchestrator) {
+          updateNexusMultiResponseMessage(nexusGroup, "streaming");
+          if (usage && activeChatIdRef.current === nexusGroup.chatId) {
+            setLastTokenUsage(usage);
+          }
+          return;
+        }
+        const snapshot2 = updateNexusMultiResponseMessage(
+          nexusGroup,
+          nexusGroup.pending.size === 0 ? "done" : "streaming"
+        );
+        if (snapshot2 && usage && activeChatIdRef.current === snapshot2.chatId) {
+          setLastTokenUsage(usage);
+        }
+        if (nexusGroup.pending.size === 0) {
+          finalizeNexusMultiResponseUiRef.current(nexusGroup, usage);
+        }
+        return;
+      }
       const snapshot = updateInFlightMessage(requestId, (m) => {
         const next = { ...m, content: content2, status: "done" };
         if (reasoning !== void 0) next.reasoning = reasoning;
@@ -37759,6 +38513,29 @@ function App() {
     });
     const offError = window.electronAPI.onChatError(({ requestId, error }) => {
       cancelStreamDeltaFlushAndFlushNow();
+      const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
+      if (nexusGroup) {
+        nexusGroup.contentByRequestId.set(requestId, `Error: ${error}`);
+        nexusGroup.pending.delete(requestId);
+        appendActivity({
+          id: uid(),
+          requestId: nexusGroup.messageId,
+          kind: error === "Request stopped." ? "stopped" : "error",
+          message: error === "Request stopped." ? "Model stopped." : `Model error: ${error}`
+        });
+        if (nexusGroup.suppressFinalizeUntilOrchestrator) {
+          updateNexusMultiResponseMessage(nexusGroup, "streaming");
+          return;
+        }
+        updateNexusMultiResponseMessage(
+          nexusGroup,
+          nexusGroup.pending.size === 0 ? "done" : "streaming"
+        );
+        if (nexusGroup.pending.size === 0) {
+          finalizeNexusMultiResponseUiRef.current(nexusGroup);
+        }
+        return;
+      }
       const s = settingsRef.current;
       if (s?.selectedProvider === "lmstudio" && looksLikeProviderTransportError(error)) {
         void refreshModelsRef.current();
@@ -37912,8 +38689,8 @@ function App() {
   };
   const clearWorkspace = () => {
     if (!workspaceRoot) return;
-    if (activeWizard) {
-      setSettingsStatus("Wizard workspaces stay attached while their Wizard is selected.");
+    if (activeWizard || activeNexus) {
+      setSettingsStatus("Wizard and Nexus workspaces stay attached while selected.");
       return;
     }
     void window.electronAPI.detachWorkspace().finally(() => {
@@ -37938,8 +38715,10 @@ function App() {
   const isWizardOwnedWorkspaceRoot = reactExports.useCallback(
     (root2) => wizardChatList.some(
       (w) => w.kind === "wizard" && w.wizard?.workspaceRoot && pathsEqual(w.wizard.workspaceRoot, root2)
+    ) || nexusProjectList.some(
+      (n) => n.kind === "nexus" && n.nexus?.workspaceRoot && pathsEqual(n.nexus.workspaceRoot, root2)
     ),
-    [wizardChatList]
+    [nexusProjectList, wizardChatList]
   );
   const switchAwayFromWizardMountedWorkspace = reactExports.useCallback(async () => {
     const root2 = workspaceRootRef.current;
@@ -38043,6 +38822,7 @@ function App() {
   };
   const SETTINGS_AUTOSAVE_MS = 450;
   const WIZARD_AUTOSAVE_MS = 450;
+  const NEXUS_AUTOSAVE_MS = 450;
   const flushSettingsAutosaveTimer = () => {
     if (settingsAutosaveTimerRef.current) {
       clearTimeout(settingsAutosaveTimerRef.current);
@@ -38053,6 +38833,12 @@ function App() {
     if (wizardAutosaveTimerRef.current) {
       clearTimeout(wizardAutosaveTimerRef.current);
       wizardAutosaveTimerRef.current = null;
+    }
+  };
+  const flushNexusAutosaveTimer = () => {
+    if (nexusAutosaveTimerRef.current) {
+      clearTimeout(nexusAutosaveTimerRef.current);
+      nexusAutosaveTimerRef.current = null;
     }
   };
   const handleSettingsPanelChange = reactExports.useCallback((next) => {
@@ -38189,7 +38975,7 @@ function App() {
     setSidebarTab("chats");
     const meta = activeChatId ? chatList.find((c) => c.id === activeChatId) : void 0;
     const comingFromWizardContext = Boolean(
-      sidebarFocusedWizardId || meta?.kind === "wizard" || meta?.kind === "wizard-session"
+      sidebarFocusedWizardId || meta?.kind === "wizard" || meta?.kind === "wizard-session" || meta?.kind === "nexus" || meta?.kind === "nexus-session"
     );
     if (comingFromWizardContext) void startNewChat();
   };
@@ -38202,6 +38988,7 @@ function App() {
     if (!chat) return;
     setSidebarFocusedWizardId(void 0);
     const parentWizard = chat.kind === "wizard-session" && chat.wizardId ? await window.electronAPI.loadChat(chat.wizardId) : chat.kind === "wizard" ? chat : null;
+    const parentNexus = chat.kind === "nexus-session" && chat.nexusId ? await window.electronAPI.loadChat(chat.nexusId) : chat.kind === "nexus" ? chat : null;
     if (parentWizard?.kind === "wizard" && parentWizard.wizard?.workspaceRoot) {
       try {
         await activateWorkspace(parentWizard.wizard.workspaceRoot);
@@ -38213,6 +39000,14 @@ function App() {
       if (expandInSidebar) {
         setExpandedWizardIds((current) => new Set(current).add(parentWizard.id));
       }
+    } else if (parentNexus?.kind === "nexus" && parentNexus.nexus?.workspaceRoot) {
+      try {
+        await activateWorkspace(parentNexus.nexus.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : "Nexus workspace could not be opened.");
+      }
+      setSidebarTab("wizards");
+      setExpandedNexusIds((current) => new Set(current).add(parentNexus.id));
     } else {
       setSidebarTab("chats");
       await switchAwayFromWizardMountedWorkspace();
@@ -38312,6 +39107,10 @@ function App() {
       setWizardSessionDeleteTarget(chat);
       return;
     }
+    if (chat.kind === "nexus-session") {
+      setNexusSessionDeleteTarget(chat);
+      return;
+    }
     void deleteChat(chat.id);
   };
   const clearActiveConversation = async () => {
@@ -38352,6 +39151,30 @@ function App() {
         await clearActiveConversation();
         setSidebarTab("wizards");
         if (wizardId) setExpandedWizardIds((current) => new Set(current).add(wizardId));
+      }
+    }
+    if (editingTitleId === session.id) {
+      setEditingTitleId(null);
+      setEditingTitleDraft("");
+    }
+    await refreshChatList();
+  };
+  const deleteNexusSession = async (session) => {
+    const nexusId = session.nexusId;
+    const inFlight = findInFlightByChatId(session.id);
+    if (inFlight) {
+      await window.electronAPI.stopChat(inFlight.requestId);
+      inFlightChatsRef.current.delete(inFlight.requestId);
+    }
+    await window.electronAPI.deleteChat(session.id);
+    if (activeChatId === session.id) {
+      const siblings = nexusId ? (nexusSessionsByNexusId.get(nexusId) ?? []).filter((item) => item.id !== session.id) : [];
+      if (siblings[0]) {
+        await loadChat(siblings[0].id);
+      } else {
+        await clearActiveConversation();
+        setSidebarTab("wizards");
+        if (nexusId) setExpandedNexusIds((current) => new Set(current).add(nexusId));
       }
     }
     if (editingTitleId === session.id) {
@@ -38402,7 +39225,8 @@ function App() {
       id: uid(),
       role: "assistant",
       content: `New session started for ${full.wizard.name}. Each message loads every Markdown file in your workspace into context automatically—core docs first—so custom notes are included too.`,
-      status: "done"
+      status: "done",
+      assistantDisplayName: full.wizard.name.trim() || void 0
     };
     const timeline = [{ id: `message-${assistantMessage.id}`, type: "message", message: assistantMessage }];
     const sessionId = uid();
@@ -38451,6 +39275,68 @@ function App() {
     setChatSessionId(sessionId);
     chatSessionIdRef.current = sessionId;
     setExpandedWizardIds((current) => new Set(current).add(full.id));
+    setSidebarTab("wizards");
+    await refreshChatList();
+    await activateWorkspace(bootstrap.workspaceRoot);
+    setSidebarFocusedWizardId(void 0);
+  };
+  const createNexusSessionBootstrapOnDisk = async (full) => {
+    if (!full?.nexus || full.kind !== "nexus") return null;
+    const now2 = Date.now();
+    const leaderDisk = full.nexus.leaderWizardId != null ? await window.electronAPI.loadChat(full.nexus.leaderWizardId) : null;
+    const leaderWizard = leaderDisk?.kind === "wizard" ? leaderDisk.wizard : null;
+    const leaderName = leaderWizard?.name?.trim() || chatList.find((c) => c.id === full.nexus?.leaderWizardId)?.wizard?.name?.trim() || "the leader Wizard";
+    const leaderDisplay = leaderWizard?.name?.trim() || chatList.find((c) => c.id === full.nexus?.leaderWizardId)?.wizard?.name?.trim();
+    const missionSnippet = full.nexus.mission.trim() ? `
+
+Project mission: ${full.nexus.mission.trim()}` : "";
+    const assistantMessage = {
+      id: uid(),
+      role: "assistant",
+      content: `Nexus room started for ${full.nexus.name}. ${leaderName} is the leader. The team will use the shared project workspace while keeping each Wizard's private Markdown docs in context.${missionSnippet}`,
+      status: "done",
+      assistantDisplayName: leaderDisplay || void 0
+    };
+    const timeline = [{ id: `message-${assistantMessage.id}`, type: "message", message: assistantMessage }];
+    const sessionId = uid();
+    const session = {
+      id: sessionId,
+      kind: "nexus-session",
+      title: "New Nexus session",
+      titleOverride: null,
+      messages: [assistantMessage],
+      timeline,
+      createdAt: now2,
+      updatedAt: now2,
+      pinned: false,
+      nexusId: full.id
+    };
+    await window.electronAPI.saveChat(session);
+    return { sessionId, assistantMessage, timeline, workspaceRoot: full.nexus.workspaceRoot };
+  };
+  const createNexusSession = async (nexusMeta) => {
+    const full = await window.electronAPI.loadChat(nexusMeta.id);
+    if (!full || full.kind !== "nexus" || !full.nexus) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const bootstrap = await createNexusSessionBootstrapOnDisk(full);
+    if (!bootstrap) return;
+    const { assistantMessage, timeline, sessionId } = bootstrap;
+    lastContentFingerprintRef.current = chatFingerprint([assistantMessage], timeline);
+    setChatMessages([assistantMessage]);
+    setChatTimeline(timeline);
+    setChatInput("");
+    setChatAttachments([]);
+    setLastTokenUsage(null);
+    setChatStreaming(false);
+    setActiveRequestId(void 0);
+    setActiveChatId(sessionId);
+    activeChatIdRef.current = sessionId;
+    setChatSessionId(sessionId);
+    chatSessionIdRef.current = sessionId;
+    setExpandedNexusIds((current) => new Set(current).add(full.id));
     setSidebarTab("wizards");
     await refreshChatList();
     await activateWorkspace(bootstrap.workspaceRoot);
@@ -38553,6 +39439,37 @@ function App() {
     },
     [saveActiveWizard]
   );
+  const saveActiveNexus = reactExports.useCallback(
+    async (project) => {
+      const nid = activeNexusMeta?.id;
+      if (!nid) return;
+      const full = await window.electronAPI.loadChat(nid);
+      if (!full || full.kind !== "nexus" || !full.nexus) return;
+      await window.electronAPI.saveChat({
+        ...full,
+        title: project.name,
+        titleOverride: project.name,
+        nexus: project,
+        updatedAt: Date.now()
+      });
+      await refreshChatList();
+      setNexusDraft(project);
+    },
+    [activeNexusMeta?.id, refreshChatList]
+  );
+  const handleNexusDraftChange = reactExports.useCallback(
+    (next) => {
+      setNexusDraft(next);
+      nexusDraftRef.current = next;
+      flushNexusAutosaveTimer();
+      nexusAutosaveTimerRef.current = setTimeout(() => {
+        nexusAutosaveTimerRef.current = null;
+        const draft = nexusDraftRef.current;
+        if (draft) void saveActiveNexus(draft);
+      }, NEXUS_AUTOSAVE_MS);
+    },
+    [saveActiveNexus]
+  );
   reactExports.useEffect(() => {
     const prev = lastInspectorTabRef.current;
     lastInspectorTabRef.current = inspectorTab;
@@ -38568,7 +39485,10 @@ function App() {
     flushWizardAutosaveTimer();
     const w = wizardDraftRef.current;
     if (w && activeWizardMeta?.id) void saveActiveWizard(w);
-  }, [inspectorTab, activeWizardMeta?.id, saveActiveWizard]);
+    flushNexusAutosaveTimer();
+    const nx = nexusDraftRef.current;
+    if (nx && activeNexusMeta?.id) void saveActiveNexus(nx);
+  }, [inspectorTab, activeWizardMeta?.id, activeNexusMeta?.id, saveActiveWizard, saveActiveNexus]);
   const refreshWizardModels = reactExports.useCallback(async (provider) => listModelsForWizardSetup(provider), [listModelsForWizardSetup]);
   const createWizard = reactExports.useCallback(
     async (request) => {
@@ -38606,6 +39526,64 @@ function App() {
       void refreshWorkspaceChanges(result.profile.workspaceRoot);
     },
     [refreshChatList, refreshWorkspaceChanges]
+  );
+  const createNexus = reactExports.useCallback(
+    async (request) => {
+      const leader = wizardChatList.find((wizard) => wizard.id === request.leaderWizardId);
+      if (!leader?.wizard) throw new Error("Choose a valid leader Wizard.");
+      const memberIds = [...new Set(request.memberWizardIds)];
+      if (!memberIds.includes(request.leaderWizardId)) memberIds.unshift(request.leaderWizardId);
+      const validMembers = memberIds.filter((id22) => wizardChatList.some((wizard) => wizard.id === id22));
+      if (validMembers.length < 2) throw new Error("Choose at least two Wizards for a Nexus.");
+      const now2 = Date.now();
+      const id2 = uid();
+      const nexus = {
+        name: request.name,
+        mission: request.mission,
+        workspaceRoot: request.workspaceRoot,
+        leaderWizardId: request.leaderWizardId,
+        members: validMembers.map((wizardId) => ({
+          wizardId,
+          role: wizardId === request.leaderWizardId ? "leader" : "member"
+        })),
+        tasks: [
+          {
+            id: uid(),
+            title: "Leader drafts the first project plan",
+            assigneeWizardId: request.leaderWizardId,
+            status: "planned"
+          }
+        ],
+        status: "active",
+        teamFullAccess: false,
+        leaderApprovesTools: false,
+        parallelWizardResponses: false,
+        maxSequentialWizardTurns: 24
+      };
+      await activateWorkspace(request.workspaceRoot);
+      const chat = {
+        id: id2,
+        kind: "nexus",
+        title: nexus.name,
+        titleOverride: nexus.name,
+        messages: [],
+        timeline: [],
+        createdAt: now2,
+        updatedAt: now2,
+        pinned: false,
+        nexus
+      };
+      await window.electronAPI.saveChat(chat);
+      await refreshChatList();
+      setShowNexusSetup(false);
+      await createNexusSession({
+        id: id2,
+        title: nexus.name,
+        titleOverride: nexus.name
+      });
+      void refreshWorkspaceChanges(request.workspaceRoot);
+    },
+    [refreshChatList, refreshWorkspaceChanges, wizardChatList]
   );
   const togglePinChat = reactExports.useCallback(
     async (e, id2) => {
@@ -38675,7 +39653,34 @@ function App() {
     const sendSettings = settingsRef.current;
     const trimmedInput = chatInput.trim();
     const attachmentsSnapshot = [...chatAttachments];
-    if (chatStreamingRef.current || !sendSettings || trimmedInput.length === 0 && attachmentsSnapshot.length === 0) {
+    if (!sendSettings || trimmedInput.length === 0 && attachmentsSnapshot.length === 0) {
+      return;
+    }
+    if (chatStreamingRef.current && nexusRelayComposeUnlockedRef.current && activeChatIdRef.current && activeRequestIdRef.current) {
+      const parentRequestId = activeRequestIdRef.current;
+      const userMessage2 = {
+        id: uid(),
+        role: "user",
+        content: trimmedInput.length > 0 ? trimmedInput : "Please use the attached image(s) as context for this request.",
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : void 0,
+        status: "done"
+      };
+      nexusQueuedUserTurnsRef.current.push(userMessage2);
+      const entry = { id: `message-${userMessage2.id}`, type: "message", message: userMessage2 };
+      setChatMessages((prev) => [...prev, userMessage2]);
+      setChatTimeline((prev) => [...prev, entry]);
+      const snapshot = inFlightChatsRef.current.get(parentRequestId);
+      if (snapshot) {
+        snapshot.messages = [...snapshot.messages, userMessage2];
+        snapshot.timeline = [...snapshot.timeline, entry];
+        showInFlightIfActive(snapshot);
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline);
+      }
+      setChatInput("");
+      setChatAttachments([]);
+      return;
+    }
+    if (chatStreamingRef.current) {
       return;
     }
     let messagesForHistory = chatMessages;
@@ -38724,13 +39729,42 @@ function App() {
       return;
     }
     const parentWizardChat = activeDiskChat?.kind === "wizard-session" && activeDiskChat.wizardId ? await window.electronAPI.loadChat(activeDiskChat.wizardId) : activeDiskChat?.kind === "wizard" ? activeDiskChat : null;
+    const parentNexusChat = activeDiskChat?.kind === "nexus-session" && activeDiskChat.nexusId ? await window.electronAPI.loadChat(activeDiskChat.nexusId) : activeDiskChat?.kind === "nexus" ? activeDiskChat : null;
     const wizardForStream = parentWizardChat?.kind === "wizard" ? parentWizardChat.wizard ?? null : activeChatMeta?.kind === "wizard" ? activeChatMeta.wizard ?? null : null;
+    const nexusForStream = parentNexusChat?.kind === "nexus" ? parentNexusChat.nexus ?? null : null;
+    let nexusTeam = [];
+    if (nexusForStream) {
+      const resolved = await Promise.all(
+        nexusForStream.members.map(async (member) => {
+          const disk2 = await window.electronAPI.loadChat(member.wizardId);
+          const diskWizard = disk2?.kind === "wizard" ? disk2.wizard ?? void 0 : void 0;
+          const meta = chatList.find((chat) => chat.kind === "wizard" && chat.id === member.wizardId);
+          const metaWizard = meta?.wizard ?? void 0;
+          const resolved2 = resolveWizardProfileForNexusTeam(diskWizard, metaWizard, nexusForStream.workspaceRoot);
+          const base = resolved2 ?? diskWizard ?? meta?.wizard;
+          if (!base?.workspaceRoot?.trim()) return null;
+          const wizard = await repairWizardWorkspaceRootIfNeeded(base, nexusForStream.workspaceRoot);
+          return { id: member.wizardId, wizard, role: member.role };
+        })
+      );
+      nexusTeam = resolved.filter((item) => item != null);
+    }
+    const nexusLeader = nexusForStream ? nexusTeam.find((member) => member.id === nexusForStream.leaderWizardId)?.wizard ?? null : null;
     if (wizardForStream && (!wizardForStream.model.trim() || !wizardForStream.workspaceRoot.trim())) return;
+    if (nexusForStream && (!nexusLeader?.model.trim() || !nexusForStream.workspaceRoot.trim())) return;
     if (wizardForStream && workspaceRootRef.current !== wizardForStream.workspaceRoot) {
       try {
         await activateWorkspace(wizardForStream.workspaceRoot);
       } catch (e) {
         setSettingsStatus(e instanceof Error ? e.message : "Wizard workspace could not be opened.");
+        return;
+      }
+    }
+    if (nexusForStream && workspaceRootRef.current !== nexusForStream.workspaceRoot) {
+      try {
+        await activateWorkspace(nexusForStream.workspaceRoot);
+      } catch (e) {
+        setSettingsStatus(e instanceof Error ? e.message : "Nexus workspace could not be opened.");
         return;
       }
     }
@@ -38742,13 +39776,21 @@ function App() {
       attachments: attachmentsSnapshot,
       status: "done"
     };
+    const nexusResponders = nexusForStream && nexusTeam.length >= 2 ? nexusTeam : [];
+    const useNexusMultiWizard = Boolean(nexusResponders.length >= 2);
+    const useParallelNexusStreams = Boolean(useNexusMultiWizard && nexusForStream?.parallelWizardResponses);
+    const parallelChildRequestIds = useNexusMultiWizard && useParallelNexusStreams ? nexusResponders.map(() => uid()) : [];
+    const relayIntroSpeaker = useNexusMultiWizard && nexusForStream && !useParallelNexusStreams ? sortNexusTeamLeaderFirst(nexusResponders, nexusForStream.leaderWizardId)[0]?.wizard.name ?? "Wizard" : "";
     const requestId = uid();
     const assistantStreaming = {
       id: requestId,
       role: "assistant",
-      content: "",
+      content: useParallelNexusStreams ? nexusResponders.map((member) => `**${member.wizard.name}:**
+Thinking...`).join("\n\n") : useNexusMultiWizard ? `**${relayIntroSpeaker}:**
+Thinking...` : "",
       status: "streaming",
-      reasoning: sendSettings.ui.sessionMode === "talk" && !wizardForStream ? "" : void 0
+      assistantDisplayName: (useNexusMultiWizard ? nexusResponders.map((member) => member.wizard.name).join(", ") : nexusLeader?.name?.trim()) || wizardForStream?.name?.trim() || void 0,
+      reasoning: sendSettings.ui.sessionMode === "talk" && !wizardForStream && !nexusForStream ? "" : void 0
     };
     const nextHistory = [...messagesForHistory, userMessage];
     const nextTimeline = [
@@ -38799,7 +39841,52 @@ function App() {
       messages: [...nextHistory, assistantStreaming],
       timeline: nextTimeline
     });
-    const streamSettings = wizardForStream ? {
+    let nexusMultiGroup = null;
+    if (useNexusMultiWizard && nexusForStream) {
+      nexusMultiGroup = {
+        chatId: chatIdForStream,
+        messageId: requestId,
+        requestIds: new Set(parallelChildRequestIds),
+        pending: new Set(parallelChildRequestIds),
+        responders: useParallelNexusStreams ? nexusResponders.map((member, index2) => ({
+          requestId: parallelChildRequestIds[index2],
+          name: member.wizard.name
+        })) : [],
+        contentByRequestId: new Map(parallelChildRequestIds.map((rid) => [rid, ""])),
+        reasoningByRequestId: /* @__PURE__ */ new Map(),
+        timeline: nextTimeline,
+        suppressFinalizeUntilOrchestrator: !useParallelNexusStreams
+      };
+      if (useParallelNexusStreams) {
+        for (const rid of parallelChildRequestIds) {
+          nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
+        }
+      }
+    }
+    const streamSettings = nexusForStream && nexusLeader ? {
+      ...sendSettings,
+      selectedProvider: nexusLeader.provider,
+      providers: {
+        ...sendSettings.providers,
+        [nexusLeader.provider]: {
+          ...sendSettings.providers[nexusLeader.provider],
+          model: nexusLeader.model,
+          systemPrompt: buildNexusSystemPrompt(
+            nexusLeader,
+            nexusForStream,
+            nexusTeam.map((member) => `${member.wizard.name}${member.role === "leader" ? " (leader)" : ""}`)
+          )
+        }
+      },
+      tools: {
+        ...sendSettings.tools,
+        allowModelSystemPrompt: false
+      },
+      ui: {
+        ...sendSettings.ui,
+        sessionMode: "agent"
+      }
+    } : wizardForStream ? {
       ...sendSettings,
       selectedProvider: wizardForStream.provider,
       providers: {
@@ -38819,7 +39906,7 @@ function App() {
         sessionMode: "agent"
       }
     } : applyChatModelOverride(sendSettings, overrideForStream);
-    const wizardDocsContext = wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
+    const wizardDocsContext = nexusForStream ? await buildNexusDocsContext(nexusTeam) : wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
     if (wizardForStream) {
       const loadedDocs = wizardDocsContext.loaded;
       const okCount = loadedDocs.filter((doc) => doc.ok).length;
@@ -38842,21 +39929,218 @@ function App() {
         snapshot.timeline = timelineWithChecklist;
       }
     }
+    if (nexusForStream) {
+      const loadedDocs = wizardDocsContext.loaded;
+      const okCount = loadedDocs.filter((doc) => doc.ok).length;
+      const missingProfiles = nexusForStream.members.length - nexusTeam.length;
+      const checklist = [
+        `Nexus workspace active: ${nexusForStream.workspaceRoot}`,
+        `Leader: ${nexusLeader?.name ?? "Unknown"}`,
+        `Team (resolved): ${nexusTeam.map((member) => member.wizard.name).join(", ") || "none"}`,
+        ...missingProfiles > 0 ? [`Could not load ${missingProfiles} Wizard workspace profile(s); those Markdown folders were skipped.`] : [],
+        ...useNexusMultiWizard ? useParallelNexusStreams ? [`Parallel mode: ${nexusTeam.length} Wizard streams ran concurrently on this message (each uses its own model profile).`] : [
+          `Relay mode: teammates respond one stream at a time in one assistant bubble (cap ${Math.min(
+            96,
+            Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24)
+          )} wizard turns unless the Nexus emits [NEXUS_END]).`
+        ] : [],
+        `Injected ${okCount}/${loadedDocs.length} team Markdown documents into this request.`
+      ].join("\n");
+      const activity = {
+        id: uid(),
+        requestId,
+        kind: okCount === loadedDocs.length ? "success" : "warning",
+        message: checklist
+      };
+      const activityEntry = { id: `activity-${activity.id}`, type: "activity", activity };
+      const timelineWithChecklist = [...nextTimeline, activityEntry];
+      setChatTimeline(timelineWithChecklist);
+      const snapshot = inFlightChatsRef.current.get(requestId);
+      if (snapshot) {
+        snapshot.timeline = timelineWithChecklist;
+      }
+    }
     const streamHistory = wizardDocsContext.message ? [wizardDocsContext.message, ...nextHistory] : nextHistory;
+    if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && useParallelNexusStreams) {
+      await Promise.all(
+        nexusResponders.map((member, index2) => {
+          const rid = parallelChildRequestIds[index2];
+          const memberSettings = {
+            ...sendSettings,
+            selectedProvider: member.wizard.provider,
+            providers: {
+              ...sendSettings.providers,
+              [member.wizard.provider]: {
+                ...sendSettings.providers[member.wizard.provider],
+                model: member.wizard.model,
+                systemPrompt: buildNexusResponderSystemPrompt(
+                  member.wizard,
+                  nexusForStream,
+                  nexusTeam.map((item) => `${item.wizard.name}${item.role === "leader" ? " (leader)" : ""}`),
+                  member.role,
+                  "parallel"
+                )
+              }
+            },
+            tools: {
+              ...sendSettings.tools,
+              allowModelSystemPrompt: false
+            },
+            ui: {
+              ...sendSettings.ui,
+              sessionMode: "agent"
+            }
+          };
+          return window.electronAPI.streamChat(rid, memberSettings, streamHistory, {
+            workspaceRoot: nexusForStream.workspaceRoot,
+            activeFilePath: activeFilePathRef.current,
+            conversationId: `${chatSessionIdRef.current}:${member.id}`,
+            wizardId: void 0,
+            wizardName: void 0,
+            wizardSystemPrompt: void 0,
+            wizardFullAccess: void 0,
+            wizardAllowOutsideWorkspace: void 0,
+            nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
+            nexusLeaderProvider: nexusLeader.provider,
+            nexusLeaderModel: nexusLeader.model,
+            nexusLeaderName: nexusLeader.name.trim() || void 0
+          });
+        })
+      );
+      return;
+    }
+    if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && !useParallelNexusStreams) {
+      try {
+        nexusRelayComposeUnlockedRef.current = true;
+        const ordered = sortNexusTeamLeaderFirst(nexusResponders, nexusForStream.leaderWizardId);
+        const maxTurns = Math.min(96, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24));
+        const relayHardCap = Math.min(160, maxTurns + 40);
+        let relayAssistantDigest = "";
+        let turn = 0;
+        while (turn < relayHardCap) {
+          if (turn >= maxTurns && nexusQueuedUserTurnsRef.current.length === 0) {
+            break;
+          }
+          const queuedSlice = nexusQueuedUserTurnsRef.current.splice(0);
+          const member = ordered[turn % ordered.length];
+          const rid = uid();
+          nexusMultiGroup.requestIds.add(rid);
+          nexusMultiGroup.pending.add(rid);
+          nexusMultiGroup.responders.push({ requestId: rid, name: member.wizard.name });
+          nexusMultiGroup.contentByRequestId.set(rid, "");
+          nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
+          setNexusRelayProgress({ wizardName: member.wizard.name, segmentStartedAt: Date.now() });
+          updateNexusMultiResponseMessage(nexusMultiGroup, "streaming");
+          const continuationHistoryBase = relayAssistantDigest.trim().length === 0 ? streamHistory : [
+            ...streamHistory,
+            {
+              id: `nexus-relay-${requestId}-${turn}`,
+              role: "assistant",
+              content: relayAssistantDigest,
+              status: "done"
+            }
+          ];
+          const continuationHistory = queuedSlice.length > 0 ? [...continuationHistoryBase, ...queuedSlice] : continuationHistoryBase;
+          const memberSettings = {
+            ...sendSettings,
+            selectedProvider: member.wizard.provider,
+            providers: {
+              ...sendSettings.providers,
+              [member.wizard.provider]: {
+                ...sendSettings.providers[member.wizard.provider],
+                model: member.wizard.model,
+                systemPrompt: buildNexusResponderSystemPrompt(
+                  member.wizard,
+                  nexusForStream,
+                  nexusTeam.map((item) => `${item.wizard.name}${item.role === "leader" ? " (leader)" : ""}`),
+                  member.role,
+                  "relay"
+                )
+              }
+            },
+            tools: {
+              ...sendSettings.tools,
+              allowModelSystemPrompt: false
+            },
+            ui: {
+              ...sendSettings.ui,
+              sessionMode: "agent"
+            }
+          };
+          const streamResult = await window.electronAPI.streamChat(rid, memberSettings, continuationHistory, {
+            workspaceRoot: nexusForStream.workspaceRoot,
+            activeFilePath: activeFilePathRef.current,
+            conversationId: `${chatSessionIdRef.current}:${member.id}:relay:${turn}`,
+            wizardId: void 0,
+            wizardName: void 0,
+            wizardSystemPrompt: void 0,
+            wizardFullAccess: void 0,
+            wizardAllowOutsideWorkspace: void 0,
+            nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
+            nexusLeaderProvider: nexusLeader.provider,
+            nexusLeaderModel: nexusLeader.model,
+            nexusLeaderName: nexusLeader.name.trim() || void 0
+          });
+          if (!streamResult.ok) {
+            break;
+          }
+          const rawSegment = nexusMultiGroup.contentByRequestId.get(rid) ?? "";
+          const wantsEnd = parseNexusRelayWantsEnd(rawSegment);
+          const cleaned = stripNexusRelayControlMarkers(rawSegment);
+          nexusMultiGroup.contentByRequestId.set(rid, cleaned);
+          updateNexusMultiResponseMessage(nexusMultiGroup, "streaming");
+          relayAssistantDigest = formatNexusMultiResponseContent(nexusMultiGroup);
+          if (wantsEnd) {
+            if (nexusQueuedUserTurnsRef.current.length > 0) {
+              turn += 1;
+              continue;
+            }
+            break;
+          }
+          turn += 1;
+        }
+      } finally {
+        nexusRelayComposeUnlockedRef.current = false;
+        nexusQueuedUserTurnsRef.current = [];
+        setNexusRelayProgress(null);
+        nexusMultiGroup.suppressFinalizeUntilOrchestrator = false;
+        finalizeNexusMultiResponseUiRef.current(nexusMultiGroup);
+      }
+      return;
+    }
     await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
-      workspaceRoot: wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
+      workspaceRoot: nexusForStream?.workspaceRoot ?? wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current,
-      wizardId: parentWizardChat?.kind === "wizard" ? parentWizardChat.id : void 0,
-      wizardName: wizardForStream?.name,
-      wizardSystemPrompt: wizardForStream?.systemPrompt,
-      wizardFullAccess: wizardForStream ? Boolean(wizardForStream.fullAccess) : void 0,
-      wizardAllowOutsideWorkspace: wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : void 0
+      wizardId: nexusForStream ? void 0 : parentWizardChat?.kind === "wizard" ? parentWizardChat.id : void 0,
+      wizardName: nexusForStream ? void 0 : wizardForStream?.name,
+      wizardSystemPrompt: nexusForStream ? void 0 : wizardForStream?.systemPrompt,
+      wizardFullAccess: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.fullAccess) : void 0,
+      wizardAllowOutsideWorkspace: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : void 0,
+      ...nexusForStream && nexusLeader ? {
+        nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+        nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
+        nexusLeaderProvider: nexusLeader.provider,
+        nexusLeaderModel: nexusLeader.model,
+        nexusLeaderName: nexusLeader.name.trim() || void 0
+      } : {}
     });
   };
   const stopChat = async () => {
     if (!activeRequestId) return;
-    await window.electronAPI.stopChat(activeRequestId);
+    const groupSnapshot = inFlightChatsRef.current.get(activeRequestId);
+    const group = groupSnapshot != null ? [...nexusMultiResponseGroupsRef.current.values()].find((item) => item.messageId === activeRequestId) : void 0;
+    if (group) {
+      await Promise.all([...group.pending].map((rid) => window.electronAPI.stopChat(rid)));
+      for (const rid of group.requestIds) {
+        nexusMultiResponseGroupsRef.current.delete(rid);
+      }
+      inFlightChatsRef.current.delete(group.messageId);
+    } else {
+      await window.electronAPI.stopChat(activeRequestId);
+    }
     setChatStreaming(false);
     setActiveRequestId(void 0);
   };
@@ -38875,21 +40159,44 @@ function App() {
     inlineTerminalJobIdRef.current = void 0;
     setInlineTerminalLogs((c) => c + "\n[termination requested]\n");
   }, [inlineTerminalJobId]);
+  const nexusSettingsParticipants = reactExports.useMemo(() => {
+    if (!nexusDraft) return [];
+    const sorted = [...nexusDraft.members].sort((a, b) => {
+      if (a.role === "leader" && b.role !== "leader") return -1;
+      if (b.role === "leader" && a.role !== "leader") return 1;
+      return 0;
+    });
+    return sorted.map((m) => {
+      const meta = chatList.find((c) => c.id === m.wizardId && c.kind === "wizard");
+      return {
+        wizardId: m.wizardId,
+        role: m.role,
+        name: meta?.wizard?.name ?? "Wizard",
+        workspaceRoot: meta?.wizard?.workspaceRoot
+      };
+    });
+  }, [nexusDraft, chatList]);
+  const nexusAvailableWizardsToAdd = reactExports.useMemo(() => {
+    if (!nexusDraft) return [];
+    const memberIds = new Set(nexusDraft.members.map((m) => m.wizardId));
+    return wizardChatList.filter((w) => !memberIds.has(w.id)).map((w) => ({ id: w.id, name: w.wizard?.name ?? w.title }));
+  }, [nexusDraft, wizardChatList]);
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : void 0;
   const selectedProvider = settings?.providers[settings.selectedProvider];
   const isWizardActive = Boolean(activeWizard);
+  const isNexusActive = Boolean(activeNexus);
   const chatPanelIsWizard = Boolean(isWizardActive && !showWizardHubPlaceholder);
-  const effectiveHeaderModelId = activeWizard?.model ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
+  const effectiveHeaderModelId = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.model : activeWizard?.model) ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
   const openRouterReady = settings && settings.selectedProvider === "openrouter" ? Boolean(settings.providers.openrouter.apiKey?.trim()) : true;
-  const providerConnected = activeWizard ? Boolean(activeWizard.model) : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
+  const providerConnected = activeNexus ? Boolean(effectiveHeaderModelId) : activeWizard ? Boolean(activeWizard.model) : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
   const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
   const resolvedContextLimit = (() => {
     const id2 = effectiveHeaderModelId.trim();
     if (!id2) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
-  const selectedProviderLabel = (activeWizard?.provider ?? settings?.selectedProvider) === "openrouter" ? "OpenRouter" : "LM Studio";
-  const sessionMode = activeWizard ? "agent" : settings?.ui.sessionMode ?? "agent";
+  const selectedProviderLabel = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? settings?.selectedProvider) === "openrouter" ? "OpenRouter" : "LM Studio";
+  const sessionMode = activeWizard || activeNexus ? "agent" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
   const toolApprovalDiff = toolApprovalRequest && typeof toolApprovalRequest.diffBefore === "string" && typeof toolApprovalRequest.diffAfter === "string" ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter) : null;
@@ -38990,6 +40297,15 @@ function App() {
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
+      NexusSetupModal,
+      {
+        onClose: () => setShowNexusSetup(false),
+        onCreate: createNexus,
+        open: showNexusSetup,
+        wizards: wizardChatList
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
       AppConfirmDialog,
       {
         cancelLabel: "Cancel",
@@ -39060,6 +40376,28 @@ function App() {
         },
         open: Boolean(wizardSessionDeleteTarget),
         title: "Delete this Wizard session?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Cancel",
+        confirmLabel: "Delete room",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete Nexus room ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: nexusSessionDeleteTarget?.title ?? "this session" }),
+          "? This only removes this conversation. The Nexus project, shared workspace, and Wizard profiles stay."
+        ] }),
+        kicker: "Delete Nexus room",
+        onCancel: () => setNexusSessionDeleteTarget(null),
+        onConfirm: () => {
+          const target = nexusSessionDeleteTarget;
+          setNexusSessionDeleteTarget(null);
+          if (target) void deleteNexusSession(target);
+        },
+        open: Boolean(nexusSessionDeleteTarget),
+        title: "Delete this Nexus room?"
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: wizardPromptApproval ? /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -39349,6 +40687,21 @@ function App() {
                             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Named AI with its own model, memory, and local workspace." })
                           ]
                         }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                        "button",
+                        {
+                          disabled: wizardChatList.length < 2,
+                          onClick: () => {
+                            setShowNewMenu(false);
+                            setShowNexusSetup(true);
+                          },
+                          type: "button",
+                          children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Nexus" }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Shared project room where multiple Wizards coordinate." })
+                          ]
+                        }
                       )
                     ]
                   }
@@ -39358,23 +40711,23 @@ function App() {
                 "button",
                 {
                   className: "sidebar-quick__btn",
-                  disabled: Boolean(activeWizard),
+                  disabled: Boolean(activeWizard || activeNexus),
                   onClick: chooseWorkspace,
-                  title: activeWizard ? "This Wizard uses its own private workspace." : void 0,
+                  title: activeWizard || activeNexus ? "This session uses its own workspace." : void 0,
                   type: "button",
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 4.5l5-3 5 3v6l-5 3-5-3v-6z", stroke: "currentColor", strokeWidth: "1.4", strokeLinejoin: "round" }) }),
-                    activeWizard ? "Wizard workspace" : workspaceRoot ? "Switch workspace" : "Open workspace"
+                    activeWizard ? "Wizard workspace" : activeNexus ? "Nexus workspace" : workspaceRoot ? "Switch workspace" : "Open workspace"
                   ]
                 }
               ),
-              workspaceRoot && activeWizard ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              workspaceRoot && (activeWizard || activeNexus) ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
                   className: "sidebar-quick__btn",
                   disabled: true,
                   type: "button",
-                  title: "Wizard workspaces stay attached while their Wizard is selected",
+                  title: "This workspace stays attached while the Wizard or Nexus is selected",
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
                       "path",
@@ -39753,138 +41106,266 @@ function App() {
                 animate: { opacity: 1 },
                 exit: { opacity: 0 },
                 transition: { duration: 0.15 },
-                children: wizardChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No Wizards yet. Create one from New to give it a model, memory, and workspace." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: wizardChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                    "div",
-                    {
-                      "aria-expanded": expandedWizardIds.has(chat.id),
-                      className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
-                      onClick: () => {
-                        void handleWizardSidebarRowActivate(chat);
-                      },
-                      children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "svg",
+                children: wizardChatList.length === 0 && nexusProjectList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No Wizards yet. Create one from New to give it a model, memory, and workspace." }) }) : wizardsSidebarPane === "nexus" ? nexusProjectList.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-sidebar-section", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "nexus-sidebar-section__label", children: "Nexus" }),
+                  nexusProjectList.map((project) => {
+                    const sessions = nexusSessionsByNexusId.get(project.id) ?? [];
+                    const leader = project.nexus ? chatList.find((chat) => chat.id === project.nexus?.leaderWizardId)?.wizard?.name : void 0;
+                    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group wizard-group--nexus", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "div",
+                        {
+                          "aria-expanded": expandedNexusIds.has(project.id),
+                          className: `chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? "is-active" : ""}`,
+                          onClick: () => {
+                            setExpandedNexusIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(project.id)) next.delete(project.id);
+                              else next.add(project.id);
+                              return next;
+                            });
+                          },
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "svg",
+                                {
+                                  className: `wizard-title-row__chevron ${expandedNexusIds.has(project.id) ? "is-open" : ""}`,
+                                  width: "12",
+                                  height: "12",
+                                  viewBox: "0 0 12 12",
+                                  fill: "none",
+                                  "aria-hidden": true,
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                }
+                              ),
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: project.title, children: project.title })
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
+                              "Nexus · ",
+                              leader ?? "Leader",
+                              " · ",
+                              sessions.length,
+                              " sessions"
+                            ] })
+                          ] })
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        motion.div,
+                        {
+                          "aria-hidden": !expandedNexusIds.has(project.id),
+                          className: "wizard-session-list-anim",
+                          initial: false,
+                          animate: { height: expandedNexusIds.has(project.id) ? "auto" : 0 },
+                          style: {
+                            overflow: "hidden",
+                            pointerEvents: expandedNexusIds.has(project.id) ? "auto" : "none"
+                          },
+                          transition: { duration: 0.32, ease: [0.4, 0, 0.2, 1] },
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button wizard-session-button--nexus", onClick: () => void createNexusSession(project), type: "button", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
+                              "New room"
+                            ] }),
+                            sessions.map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                              "div",
                               {
-                                className: `wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? "is-open" : ""}`,
-                                width: "12",
-                                height: "12",
-                                viewBox: "0 0 12 12",
-                                fill: "none",
-                                "aria-hidden": true,
-                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
+                                onClick: () => void loadChat(session.id),
+                                role: "button",
+                                tabIndex: 0,
+                                onKeyDown: (e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    void loadChat(session.id);
+                                  }
+                                },
+                                children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                      "button",
+                                      {
+                                        "aria-label": `Delete ${session.title}`,
+                                        className: "wizard-session-row__delete",
+                                        onClick: (e) => {
+                                          e.stopPropagation();
+                                          requestDeleteChat(session);
+                                        },
+                                        title: "Delete room",
+                                        type: "button",
+                                        children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                      }
+                                    )
+                                  ] })
+                                ]
+                              },
+                              session.id
+                            ))
+                          ] })
+                        }
+                      )
+                    ] }, project.id);
+                  })
+                ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-empty", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                    "No Nexus projects yet. Use ",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "New → Nexus" }),
+                    " with at least two Wizards."
+                  ] }),
+                  wizardChatList.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                    "Switch to ",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Wizards" }),
+                    " below to open individual Wizard workspaces."
+                  ] }) : null
+                ] }) : wizardChatList.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-sidebar-section", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "nexus-sidebar-section__label", children: "Wizards" }),
+                  wizardChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "div",
+                      {
+                        "aria-expanded": expandedWizardIds.has(chat.id),
+                        className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
+                        onClick: () => {
+                          void handleWizardSidebarRowActivate(chat);
+                        },
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "svg",
+                                {
+                                  className: `wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? "is-open" : ""}`,
+                                  width: "12",
+                                  height: "12",
+                                  viewBox: "0 0 12 12",
+                                  fill: "none",
+                                  "aria-hidden": true,
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                }
+                              ),
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: chat.title, children: chat.title })
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
+                              "Wizard · ",
+                              (wizardSessionsByWizardId.get(chat.id) ?? []).length,
+                              " sessions"
+                            ] })
+                          ] }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "button",
+                              {
+                                className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
+                                onClick: (e) => void togglePinChat(e, chat.id),
+                                type: "button",
+                                title: chat.pinned ? "Unpin" : "Pin to top",
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z", fill: chat.pinned ? "currentColor" : "none", stroke: "currentColor", strokeLinejoin: "round", strokeWidth: "1.1" }) })
                               }
                             ),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: chat.title, children: chat.title })
-                          ] }),
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
-                            "Wizard · ",
-                            (wizardSessionsByWizardId.get(chat.id) ?? []).length,
-                            " sessions"
-                          ] })
-                        ] }),
-                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "button",
-                            {
-                              className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
-                              onClick: (e) => void togglePinChat(e, chat.id),
-                              type: "button",
-                              title: chat.pinned ? "Unpin" : "Pin to top",
-                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z", fill: chat.pinned ? "currentColor" : "none", stroke: "currentColor", strokeLinejoin: "round", strokeWidth: "1.1" }) })
-                            }
-                          ),
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "button",
-                            {
-                              className: "chat-list__export",
-                              onClick: (e) => beginWizardExport(e, chat),
-                              type: "button",
-                              title: "Export Wizard bundle",
-                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "path",
-                                {
-                                  d: "M6 1v6m0 0l2.8-2.8M6 7L3.2 4.2M2 11h8",
-                                  stroke: "currentColor",
-                                  strokeWidth: "1.25",
-                                  strokeLinecap: "round",
-                                  strokeLinejoin: "round"
-                                }
-                              ) })
-                            }
-                          ),
-                          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__delete", onClick: (e) => {
-                            e.stopPropagation();
-                            requestDeleteChat(chat);
-                          }, onMouseDown: (e) => e.preventDefault(), type: "button", title: "Delete Wizard", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
-                        ] })
-                      ]
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    motion.div,
-                    {
-                      "aria-hidden": !expandedWizardIds.has(chat.id),
-                      className: "wizard-session-list-anim",
-                      initial: false,
-                      animate: {
-                        height: expandedWizardIds.has(chat.id) ? "auto" : 0
-                      },
-                      style: {
-                        overflow: "hidden",
-                        pointerEvents: expandedWizardIds.has(chat.id) ? "auto" : "none"
-                      },
-                      transition: {
-                        duration: 0.32,
-                        ease: [0.4, 0, 0.2, 1]
-                      },
-                      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button", onClick: () => void createWizardSession(chat), type: "button", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
-                          "New session"
-                        ] }),
-                        (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                          "div",
-                          {
-                            className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
-                            onClick: () => void loadChat(session.id),
-                            role: "button",
-                            tabIndex: 0,
-                            onKeyDown: (e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                void loadChat(session.id);
-                              }
-                            },
-                            children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
-                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
-                                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
-                                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                  "button",
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "button",
+                              {
+                                className: "chat-list__export",
+                                onClick: (e) => beginWizardExport(e, chat),
+                                type: "button",
+                                title: "Export Wizard bundle",
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "path",
                                   {
-                                    "aria-label": `Delete ${session.title}`,
-                                    className: "wizard-session-row__delete",
-                                    onClick: (e) => {
-                                      e.stopPropagation();
-                                      requestDeleteChat(session);
-                                    },
-                                    title: "Delete session",
-                                    type: "button",
-                                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                    d: "M6 1v6m0 0l2.8-2.8M6 7L3.2 4.2M2 11h8",
+                                    stroke: "currentColor",
+                                    strokeWidth: "1.25",
+                                    strokeLinecap: "round",
+                                    strokeLinejoin: "round"
                                   }
-                                )
-                              ] })
-                            ]
-                          },
-                          session.id
-                        ))
-                      ] })
-                    }
-                  )
-                ] }, chat.id)) }) })
+                                ) })
+                              }
+                            ),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__delete", onClick: (e) => {
+                              e.stopPropagation();
+                              requestDeleteChat(chat);
+                            }, onMouseDown: (e) => e.preventDefault(), type: "button", title: "Delete Wizard", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
+                          ] })
+                        ]
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      motion.div,
+                      {
+                        "aria-hidden": !expandedWizardIds.has(chat.id),
+                        className: "wizard-session-list-anim",
+                        initial: false,
+                        animate: {
+                          height: expandedWizardIds.has(chat.id) ? "auto" : 0
+                        },
+                        style: {
+                          overflow: "hidden",
+                          pointerEvents: expandedWizardIds.has(chat.id) ? "auto" : "none"
+                        },
+                        transition: {
+                          duration: 0.32,
+                          ease: [0.4, 0, 0.2, 1]
+                        },
+                        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button", onClick: () => void createWizardSession(chat), type: "button", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
+                            "New session"
+                          ] }),
+                          (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                            "div",
+                            {
+                              className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
+                              onClick: () => void loadChat(session.id),
+                              role: "button",
+                              tabIndex: 0,
+                              onKeyDown: (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  void loadChat(session.id);
+                                }
+                              },
+                              children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "button",
+                                    {
+                                      "aria-label": `Delete ${session.title}`,
+                                      className: "wizard-session-row__delete",
+                                      onClick: (e) => {
+                                        e.stopPropagation();
+                                        requestDeleteChat(session);
+                                      },
+                                      title: "Delete session",
+                                      type: "button",
+                                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                    }
+                                  )
+                                ] })
+                              ]
+                            },
+                            session.id
+                          ))
+                        ] })
+                      }
+                    )
+                  ] }, chat.id))
+                ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-empty", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                    "No Wizards yet. Create one from ",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "New" }),
+                    "."
+                  ] }),
+                  nexusProjectList.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                    "Or switch to ",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Nexus" }),
+                    " below for shared projects."
+                  ] }) : null
+                ] })
               },
               "wizards"
             ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -39905,16 +41386,51 @@ function App() {
               },
               "files"
             ) }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-footer", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-footer__meta", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: selectedProviderLabel }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "span",
-                {
-                  className: `sidebar-footer__dot ${providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : ""}`
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: effectiveHeaderModelId ? pathLabel(effectiveHeaderModelId) : "No model" })
-            ] }) })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-footer", children: [
+              sidebarTab === "wizards" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizards-pane-mode-toggle", role: "tablist", "aria-label": "Wizards sidebar view", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    "aria-selected": wizardsSidebarPane === "wizards",
+                    className: `wizards-pane-mode-toggle__btn ${wizardsSidebarPane === "wizards" ? "is-active" : ""}`,
+                    onClick: () => setWizardsSidebarPane("wizards"),
+                    role: "tab",
+                    type: "button",
+                    children: "Wizards"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    "aria-selected": wizardsSidebarPane === "nexus",
+                    className: `wizards-pane-mode-toggle__btn ${wizardsSidebarPane === "nexus" ? "is-active" : ""}`,
+                    onClick: () => setWizardsSidebarPane("nexus"),
+                    role: "tab",
+                    type: "button",
+                    children: "Nexus"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "span",
+                  {
+                    className: "wizards-pane-mode-toggle__slider",
+                    style: {
+                      transform: wizardsSidebarPane === "wizards" ? "translateX(0)" : "translateX(100%)"
+                    }
+                  }
+                )
+              ] }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-footer__meta", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: selectedProviderLabel }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "span",
+                  {
+                    className: `sidebar-footer__dot ${providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : ""}`
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: effectiveHeaderModelId ? pathLabel(effectiveHeaderModelId) : "No model" })
+              ] })
+            ] })
           ] })
         }
       ),
@@ -39933,8 +41449,11 @@ function App() {
               contextLimit: resolvedContextLimit,
               input: chatInput,
               isStreaming: chatStreaming,
+              isNexus: isNexusActive,
               isWizard: chatPanelIsWizard,
               lastTokenUsage,
+              nexusRelayProgress,
+              nexusRelayQueueDuringStream: Boolean(nexusRelayProgress),
               sessionSubheading: chatSessionSubheading,
               timeline: chatTimeline,
               wizardHubPlaceholder: showWizardHubPlaceholder,
@@ -39950,7 +41469,7 @@ function App() {
               webSearchDisabled: !settings,
               onWebSearchChange: handleWebSearchChange,
               onSessionModeToggle: handleSessionModeToggle,
-              sessionModeToggleDisabled: !settings || chatPanelIsWizard,
+              sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive,
               sessionMode,
               selectedModel: effectiveHeaderModelId,
               selectedProviderLabel,
@@ -40068,6 +41587,34 @@ function App() {
                           }
                         }
                       )
+                    ] }) }) : activeNexus ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inspector-settings-scope", role: "group", "aria-label": "Which settings to edit", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "session-mode-toggle", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          className: `session-mode-toggle__option ${settingsInspectorScope === "general" ? "is-active" : ""}`,
+                          onClick: () => setSettingsInspectorScope("general"),
+                          type: "button",
+                          children: "General"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "button",
+                        {
+                          className: `session-mode-toggle__option ${settingsInspectorScope === "nexus" ? "is-active" : ""}`,
+                          onClick: () => setSettingsInspectorScope("nexus"),
+                          type: "button",
+                          children: "Nexus"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "span",
+                        {
+                          className: "session-mode-toggle__slider",
+                          style: {
+                            transform: settingsInspectorScope === "nexus" ? "translateX(100%)" : "translateX(0)"
+                          }
+                        }
+                      )
                     ] }) }) : null,
                     settingsInspectorScope === "wizard" && wizardDraft ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                       WizardSettingsPanel,
@@ -40082,6 +41629,20 @@ function App() {
                         settings,
                         statusMessage: settingsStatus,
                         wizard: wizardDraft
+                      }
+                    ) : settingsInspectorScope === "nexus" && nexusDraft ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      NexusSettingsPanel,
+                      {
+                        availableWizards: nexusAvailableWizardsToAdd,
+                        participants: nexusSettingsParticipants,
+                        project: nexusDraft,
+                        statusMessage: settingsStatus,
+                        onChange: handleNexusDraftChange,
+                        onOpenWizard: (wizardId) => {
+                          const meta = chatList.find((c) => c.id === wizardId && c.kind === "wizard");
+                          if (meta) void handleWizardSidebarRowActivate(meta);
+                        },
+                        onTeamConstraint: (msg) => setSettingsStatus(msg)
                       }
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,

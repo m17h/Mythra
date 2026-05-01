@@ -687,6 +687,11 @@ html[data-platform='darwin'] .app-shell {
   background: var(--accent-subtle);
 }
 
+.sidebar-new__menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .sidebar-new__menu strong {
   color: var(--text-0);
   font-size: 0.78rem;
@@ -762,6 +767,11 @@ html[data-platform='darwin'] .app-shell {
   color: var(--text-2);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.sidebar-empty p + p {
+  margin-top: 10px;
+  font-size: 0.78rem;
 }
 
 /* Per-thread model override (sidebar, collapsible) */
@@ -1053,6 +1063,38 @@ html[data-platform='darwin'] .app-shell {
   background: var(--accent-subtle);
 }
 
+.wizard-session-button--nexus {
+  color: color-mix(in srgb, var(--accent-light) 72%, #67e8f9);
+}
+
+.nexus-sidebar-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nexus-sidebar-section + .nexus-sidebar-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.nexus-sidebar-section__label {
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.chat-list__item--nexus {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-subtle) 70%, transparent), transparent),
+    rgba(255, 255, 255, 0.02);
+}
+
 .wizard-group {
   display: grid;
   gap: 4px;
@@ -1254,6 +1296,55 @@ html[data-platform='darwin'] .app-shell {
   border-top: 1px solid var(--line);
 }
 
+.wizards-pane-mode-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 10px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.07);
+  -webkit-app-region: no-drag;
+}
+
+:root[data-theme='ice-station'] .wizards-pane-mode-toggle,
+:root[data-theme='kiwi'] .wizards-pane-mode-toggle,
+:root[data-theme='custom'][data-custom-light='true'] .wizards-pane-mode-toggle {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.wizards-pane-mode-toggle__btn {
+  position: relative;
+  z-index: 1;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.wizards-pane-mode-toggle__btn.is-active {
+  color: #fff;
+}
+
+.wizards-pane-mode-toggle__slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  border-radius: 6px;
+  background: var(--accent);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
 .sidebar-footer__meta {
   display: flex;
   align-items: center;
@@ -1449,6 +1540,10 @@ html[data-platform='darwin'] .app-shell {
   color: #fff;
   font-size: 0.74rem;
   font-weight: 700;
+}
+
+.chat-panel__wizard-pill--nexus {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 58%, #06b6d4));
 }
 
 .chat-panel__model {
@@ -2236,6 +2331,73 @@ details.chat-activity--collapsible {
   padding: 12px 14px;
   border-top: 1px solid var(--line);
   background: var(--composer-bg, transparent);
+}
+
+.chat-compose__relay-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--accent-subtle);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
+.chat-compose__relay-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  animation: mythra-chat-relay-pulse 1.15s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes mythra-chat-relay-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.chat-compose__relay-primary {
+  flex: 1;
+  min-width: 140px;
+}
+
+.chat-compose__relay-muted {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.chat-compose__relay-elapsed {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent-light);
+}
+
+.chat-compose__relay-hint {
+  flex-basis: 100%;
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--text-2);
+}
+
+.chat-compose__send.chat-compose__send--alongside-stop {
+  opacity: 1;
+}
+
+.chat-compose__send.chat-compose__send--alongside-stop:disabled {
+  opacity: 0.3;
 }
 
 .chat-compose__notice {
@@ -3062,6 +3224,122 @@ details.chat-activity--collapsible {
   margin: 0;
 }
 
+.nexus-settings-team-hint {
+  margin: -6px 0 12px;
+}
+
+.nexus-settings-team {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nexus-settings-team__member {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme='ice-station'] .nexus-settings-team__member,
+:root[data-theme='kiwi'] .nexus-settings-team__member,
+:root[data-theme='custom'][data-custom-light='true'] .nexus-settings-team__member {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.nexus-settings-team__identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nexus-settings-team__name {
+  font-weight: 600;
+  color: var(--text-0);
+  font-size: 0.88rem;
+}
+
+.nexus-settings-team__badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-2);
+}
+
+.nexus-settings-team__badge--leader {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent-light);
+}
+
+.nexus-settings-team__path {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-2);
+  word-break: break-all;
+  line-height: 1.35;
+}
+
+.nexus-settings-team__open {
+  justify-self: start;
+  margin-top: 2px;
+  padding: 5px 12px;
+  font-size: 0.74rem;
+}
+
+.nexus-settings-leader-field {
+  margin-bottom: 14px;
+}
+
+.nexus-settings-team__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.nexus-settings-team__remove {
+  padding: 5px 12px;
+  font-size: 0.74rem;
+}
+
+.nexus-settings-add-wizard {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.nexus-settings-add-wizard__title {
+  margin: 0 0 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-light);
+}
+
+.nexus-settings-add-wizard__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.nexus-settings-add-wizard__row > .app-select {
+  flex: 1;
+  min-width: 160px;
+}
+
 .settings-info-button {
   flex-shrink: 0;
   display: inline-flex;
@@ -3208,6 +3486,66 @@ details.chat-activity--collapsible {
   color: var(--accent-light);
   font-family: var(--font-mono);
   font-size: 0.7rem;
+}
+
+.nexus-setup {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.nexus-setup__wizard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.nexus-setup__wizard {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-1);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.nexus-setup__wizard:hover,
+.nexus-setup__wizard.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: var(--accent-subtle);
+}
+
+.nexus-setup__wizard input {
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.nexus-setup__wizard span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nexus-setup__wizard strong,
+.nexus-setup__wizard small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-setup__wizard strong {
+  color: var(--text-0);
+  font-size: 0.8rem;
+}
+
+.nexus-setup__wizard small {
+  color: var(--text-2);
+  font-size: 0.68rem;
 }
 
 .wizard-doc-list {
@@ -3426,7 +3764,7 @@ details.chat-activity--collapsible {
   margin-top: 10px;
 }
 
-.field span {
+.field > span {
   color: var(--text-2);
   font-size: 0.72rem;
   font-weight: 600;
@@ -3445,7 +3783,7 @@ details.chat-activity--collapsible {
   min-width: 0;
 }
 
-.field input,
+.field input:not([type='checkbox']):not([type='radio']),
 .field textarea,
 .field select {
   width: 100%;
@@ -3459,19 +3797,19 @@ details.chat-activity--collapsible {
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-:root[data-theme='ice-station'] .field input,
+:root[data-theme='ice-station'] .field input:not([type='checkbox']):not([type='radio']),
 :root[data-theme='ice-station'] .field textarea,
 :root[data-theme='ice-station'] .field select,
-:root[data-theme='kiwi'] .field input,
+:root[data-theme='kiwi'] .field input:not([type='checkbox']):not([type='radio']),
 :root[data-theme='kiwi'] .field textarea,
 :root[data-theme='kiwi'] .field select,
-:root[data-theme='custom'][data-custom-light='true'] .field input,
+:root[data-theme='custom'][data-custom-light='true'] .field input:not([type='checkbox']):not([type='radio']),
 :root[data-theme='custom'][data-custom-light='true'] .field textarea,
 :root[data-theme='custom'][data-custom-light='true'] .field select {
   background: rgba(255, 255, 255, 0.6);
 }
 
-.field input:focus,
+.field input:focus:not([type='checkbox']):not([type='radio']),
 .field textarea:focus,
 .field select:focus {
   border-color: var(--accent);

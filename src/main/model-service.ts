@@ -141,7 +141,7 @@ const mythraModelSystemPromptInstruction =
 const mythraToolAccessReadInstruction =
   'Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.';
 const mythraCodingToolInstruction =
-  'Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.';
+  'Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful. Every tool call must use strict JSON arguments (double quotes, escaped strings). If arguments were malformed, fix escaping and retry instead of blaming Mythra or “relay” issues.';
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -165,6 +165,88 @@ function streamingToolAccToFunctionCalls(acc: StreamingToolAcc): ChatCompletionM
       type: 'function' as const,
       function: { name, arguments: args }
     }));
+}
+
+/**
+ * Some providers/models emit markdown fences or minor garbage around tool JSON; others stream broken JSON.
+ * When this returns `ok: false`, the host returns a synthetic tool error so the model can self-correct instead of aborting the whole stream.
+ */
+function parseToolCallArgumentsJson(raw: string): { ok: true; args: Record<string, unknown> } | { ok: false } {
+  let candidate = raw.trim();
+  if (!candidate) {
+    return { ok: true, args: {} };
+  }
+  if (candidate.startsWith('```')) {
+    const close = candidate.lastIndexOf('```');
+    const firstNl = candidate.indexOf('\n');
+    if (firstNl !== -1 && close > firstNl) {
+      candidate = candidate.slice(firstNl + 1, close).trim();
+    }
+  }
+  try {
+    const parsed = JSON.parse(candidate) as unknown;
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { ok: true, args: parsed as Record<string, unknown> };
+    }
+  } catch {
+    // fall through
+  }
+  return { ok: false };
+}
+
+/** Default 30 minutes per `streamChat` invocation; override with `MYTHRA_STREAM_CHAT_WALL_MS` (milliseconds). */
+function resolveStreamChatWallMs(): number {
+  const raw = process.env.MYTHRA_STREAM_CHAT_WALL_MS;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 1_800_000;
+}
+
+/** Abort when either the user stops the request or the wall-clock deadline is reached (requires runtime AbortSignal.timeout/any). */
+function mergeStreamDeadline(controller: AbortController, wallMs: number): AbortSignal {
+  if (wallMs <= 0) {
+    return controller.signal;
+  }
+  try {
+    const AS = AbortSignal as typeof AbortSignal & {
+      timeout?: (ms: number) => AbortSignal;
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    };
+    if (typeof AS.timeout === 'function' && typeof AS.any === 'function') {
+      return AS.any([controller.signal, AS.timeout(wallMs)]);
+    }
+  } catch {
+    // ignore — fall back to user abort only
+  }
+  return controller.signal;
+}
+
+/** Leader APPROVE/DENY mini-call deadline (`MYTHRA_LEADER_APPROVAL_MS`, default 90s). */
+function mergeLeaderApprovalDeadline(user: AbortSignal | undefined, timeoutMs: number): AbortSignal | undefined {
+  if (timeoutMs <= 0) {
+    return user;
+  }
+  try {
+    const AS = AbortSignal as typeof AbortSignal & {
+      timeout?: (ms: number) => AbortSignal;
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    };
+    if (typeof AS.timeout !== 'function' || typeof AS.any !== 'function') {
+      return user;
+    }
+    const wall = AS.timeout(timeoutMs);
+    if (!user) {
+      return wall;
+    }
+    return AS.any([user, wall]);
+  } catch {
+    return user;
+  }
+}
+
+function resolveLeaderApprovalWallMs(): number {
+  const raw = process.env.MYTHRA_LEADER_APPROVAL_MS;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 90_000;
 }
 
 const extractModelReasoning = (message: unknown): string | undefined => {
@@ -234,6 +316,13 @@ interface ChatRuntimeContext {
   wizardFullAccess?: boolean;
   /** Per-Wizard: file tools may resolve paths outside workspaceRoot (local paths only). */
   wizardAllowOutsideWorkspace?: boolean;
+  /** Nexus sessions: grant Full-access-equivalent tool approvals for every teammate stream. */
+  nexusTeamFullAccess?: boolean;
+  /** Nexus sessions: resolve risky tools via leader mini-completion instead of the human modal (ignored when nexusTeamFullAccess). */
+  nexusLeaderApprovesTools?: boolean;
+  nexusLeaderProvider?: ProviderKind;
+  nexusLeaderModel?: string;
+  nexusLeaderName?: string;
 }
 
 /** Hidden Agent routing tokens that must never be pasted into `set_wizard_system_prompt`. */
@@ -358,6 +447,7 @@ export class ModelService {
       const isTalk = settings.ui.sessionMode === 'talk';
       const sessionContext = await this.buildSessionContext(settings, runtime);
       let lastVisibleAssistantContent = '';
+      const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
 
       const apiMessages: ChatCompletionMessageParam[] = [
         { role: 'system', content: provider.systemPrompt },
@@ -389,7 +479,7 @@ export class ModelService {
             stream_options: { include_usage: true }
           },
           {
-            signal: controller.signal
+            signal: streamDeadlineSignal
           }
         );
 
@@ -455,6 +545,36 @@ export class ModelService {
             }
 
             const rawArgs = toolCall.function.arguments ?? '';
+            const parsedArgs = parseToolCallArgumentsJson(rawArgs);
+            if (!parsedArgs.ok) {
+              this.emitActivity(
+                window,
+                requestId,
+                'warning',
+                `${toolCall.function.name}: invalid JSON tool arguments — sending recovery hint to the model.`
+              );
+              apiMessages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: truncate(
+                  JSON.stringify(
+                    {
+                      ok: false,
+                      error: 'invalid_tool_arguments_json',
+                      tool: toolCall.function.name,
+                      guidance:
+                        'Arguments must be one JSON object with double-quoted keys and strings. For write_file use {"path":"relative/path.ext","content":"<file body as an escaped JSON string>"}. Escape literal quotes as \\", tabs/newlines as \\t / \\n.',
+                      raw_preview: truncate(rawArgs, 2000)
+                    },
+                    null,
+                    2
+                  ),
+                  18_000
+                )
+              });
+              continue;
+            }
+
             this.emitActivity(
               window,
               requestId,
@@ -462,7 +582,14 @@ export class ModelService {
               formatToolActivityStart(toolCall.function.name, rawArgs, settings)
             );
 
-            const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
+            const toolResult = await this.executeToolCall(
+              window,
+              requestId,
+              settings,
+              runtime,
+              toolCall,
+              parsedArgs.args
+            );
             this.assertNotStopped(requestId);
 
             apiMessages.push({
@@ -542,9 +669,10 @@ export class ModelService {
     };
 
     try {
+      const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const stream = await client.chat.completions.create(
         { model, messages: apiMessages, stream: true, stream_options: { include_usage: true } },
-        { signal: controller.signal }
+        { signal: streamSignal }
       );
 
       let assembled = '';
@@ -611,7 +739,10 @@ export class ModelService {
         throw err;
       }
 
-      const completion = await client.chat.completions.create({ model, messages: apiMessages }, { signal: controller.signal });
+      const completion = await client.chat.completions.create(
+        { model, messages: apiMessages },
+        { signal: mergeStreamDeadline(controller, resolveStreamChatWallMs()) }
+      );
       this.assertNotStopped(requestId);
       const fallbackUsage = mapCompletionUsage(completion.usage ?? undefined);
       const assistantMessage = completion.choices[0]?.message;
@@ -1357,15 +1488,10 @@ export class ModelService {
     requestId: string,
     settings: AppSettings,
     runtime: ChatRuntimeContext,
-    toolCall: ChatCompletionMessageFunctionToolCall
+    toolCall: ChatCompletionMessageFunctionToolCall,
+    args: Record<string, unknown>
   ) {
     const workspaceRoot = runtime.workspaceRoot;
-    let args: Record<string, unknown>;
-    try {
-      args = toolCall.function.arguments ? (JSON.parse(toolCall.function.arguments) as Record<string, unknown>) : {};
-    } catch {
-      throw new Error(`Tool ${toolCall.function.name} received invalid JSON arguments.`);
-    }
 
     if (toolCall.function.name === 'web_search') {
       if (!settings.ui.webSearch) {
@@ -2081,10 +2207,76 @@ export class ModelService {
   }
 
   private effectiveFullAccess(settings: AppSettings, runtime: ChatRuntimeContext): boolean {
+    if (runtime.nexusTeamFullAccess) {
+      return true;
+    }
     if (runtime.wizardId != null) {
       return Boolean(runtime.wizardFullAccess);
     }
     return settings.agent.fullAccess;
+  }
+
+  private async resolveNexusLeaderToolApproval(
+    settings: AppSettings,
+    runtime: ChatRuntimeContext,
+    title: string,
+    detail: string,
+    textDiff: { before: string; after: string } | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<boolean> {
+    const kind = runtime.nexusLeaderProvider;
+    const model = runtime.nexusLeaderModel?.trim();
+    if (!kind || !model) {
+      return false;
+    }
+
+    const profile = settings.providers[kind];
+    if (!profile?.baseUrl?.trim()) {
+      return false;
+    }
+
+    let body = truncate(detail, 12_000);
+    if (textDiff) {
+      body += `\n\n--- proposed change (truncated) ---\nBefore:\n${truncate(textDiff.before, 6_000)}\n\nAfter:\n${truncate(textDiff.after, 6_000)}`;
+    }
+
+    const leaderName = runtime.nexusLeaderName?.trim() || 'Nexus leader';
+    const client = createClient(settings, kind);
+
+    const approvalSignal = mergeLeaderApprovalDeadline(signal, resolveLeaderApprovalWallMs());
+
+    try {
+      const completion = await client.chat.completions.create(
+        {
+          model,
+          messages: [
+            {
+              role: 'system',
+              content:
+                `You are ${leaderName}, the Nexus leader. Teammates proposed tool actions that require approval.\n\n` +
+                `Reply with exactly one uppercase word: APPROVE or DENY.\n\n` +
+                `Approve only when the action fits the Nexus mission, respects the shared workspace, and is not reckless. Deny unclear or destructive requests.`
+            },
+            {
+              role: 'user',
+              content: `Approval title: ${title}\n\nDetails:\n${body}`
+            }
+          ],
+          max_tokens: 16,
+          temperature: 0
+        },
+        approvalSignal ? { signal: approvalSignal } : signal ? { signal } : undefined
+      );
+
+      const raw = contentToString(completion.choices[0]?.message?.content ?? '').trim().toUpperCase();
+      const token = raw.split(/\s+/)[0] ?? '';
+      return token === 'APPROVE';
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return false;
+      }
+      throw err;
+    }
   }
 
   private async requestApprovalIfNeeded(
@@ -2097,6 +2289,27 @@ export class ModelService {
     textDiff?: { before: string; after: string }
   ) {
     if (this.effectiveFullAccess(settings, runtime)) {
+      return;
+    }
+
+    if (
+      runtime.nexusLeaderApprovesTools &&
+      runtime.nexusLeaderProvider &&
+      runtime.nexusLeaderModel?.trim()
+    ) {
+      this.emitActivity(window, requestId, 'approval', `${title}: Nexus leader reviewing…`);
+      const active = this.activeRequests.get(requestId);
+      const approved = await this.resolveNexusLeaderToolApproval(
+        settings,
+        runtime,
+        title,
+        detail,
+        textDiff,
+        active?.controller.signal
+      );
+      if (!approved) {
+        throw new Error('Nexus leader denied this tool action.');
+      }
       return;
     }
 

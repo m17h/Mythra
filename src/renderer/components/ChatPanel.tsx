@@ -21,6 +21,32 @@ import { ChatMarkdown } from './ChatMarkdown';
 /** How close to the true bottom counts as “pinned” for auto-follow while the model streams. */
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
 
+function NexusRelayProgressBar(props: { wizardName: string; segmentStartedAt: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((x) => x + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [props.segmentStartedAt, props.wizardName]);
+  const sec = Math.max(0, Math.floor((Date.now() - props.segmentStartedAt) / 1000));
+  const mm = Math.floor(sec / 60);
+  const ss = sec % 60;
+  const elapsed = mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${sec}s`;
+
+  return (
+    <div className="chat-compose__relay-status" role="status">
+      <span className="chat-compose__relay-pulse" aria-hidden />
+      <span className="chat-compose__relay-primary">
+        <strong>{props.wizardName}</strong>
+        <span className="chat-compose__relay-muted"> · responding</span>
+      </span>
+      <span className="chat-compose__relay-elapsed">{elapsed}</span>
+      <span className="chat-compose__relay-hint">
+        Still working — queue a message for the next teammate. Name someone (<strong>@WizardName</strong> or their display name) so Mythra routes the next reply to them.
+      </span>
+    </div>
+  );
+}
+
 function distanceFromChatBottom(node: HTMLElement): number {
   const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
   return maxScroll - node.scrollTop;
@@ -224,6 +250,7 @@ interface ChatPanelProps {
   selectedModel: string;
   sessionMode: SessionMode;
   isWizard?: boolean;
+  isNexus?: boolean;
   /** True after first model-list fetch (so we can show "Disconnected" vs initial "Waiting"). */
   modelCatalogSettled: boolean;
   providerConnected: boolean;
@@ -235,6 +262,10 @@ interface ChatPanelProps {
   onInputChange: (value: string) => void;
   onAttachImages: (files: FileList | null) => void;
   onRemoveAttachment: (id: string) => void;
+  /** Nexus relay only: footer progress while one teammate streams (live elapsed timer). */
+  nexusRelayProgress?: { wizardName: string; segmentStartedAt: number } | null;
+  /** Nexus relay only: allow Send during streaming (queues user turns for the next teammate). */
+  nexusRelayQueueDuringStream?: boolean;
   onSend: () => void;
   onStop: () => void;
   /** Messages in the active thread (for rough context estimate). */
@@ -479,6 +510,7 @@ export function ChatPanel({
   selectedModel,
   sessionMode,
   isWizard = false,
+  isNexus = false,
   modelCatalogSettled,
   providerConnected,
   isStreaming,
@@ -501,7 +533,9 @@ export function ChatPanel({
   onTerminalRun,
   onTerminalKill,
   wizardHubPlaceholder = false,
-  onOpenWizardCreator
+  onOpenWizardCreator,
+  nexusRelayProgress = null,
+  nexusRelayQueueDuringStream = false
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -759,7 +793,7 @@ export function ChatPanel({
     setTerminalOpen((v) => !v);
   }, [hasWorkspace, showWorkspaceGateNotice]);
 
-  const isTalk = !isWizard && sessionMode === 'talk';
+  const isTalk = !isWizard && !isNexus && sessionMode === 'talk';
 
   const statusLabel = isStreaming
     ? 'Working'
@@ -778,9 +812,12 @@ export function ChatPanel({
       <div className="chat-panel__header">
         <div className="chat-panel__header-left">
           <div className="chat-panel__header-titles">
-            {isWizard ? (
-              <div className="chat-panel__wizard-pill" title="Wizards always work with tools and their own workspace">
-                Wizard
+            {isWizard || isNexus ? (
+              <div
+                className={`chat-panel__wizard-pill ${isNexus ? 'chat-panel__wizard-pill--nexus' : ''}`}
+                title={isNexus ? 'Nexus projects coordinate multiple Wizards in a shared workspace' : 'Wizards always work with tools and their own workspace'}
+              >
+                {isNexus ? 'Nexus' : 'Wizard'}
               </div>
             ) : (
               <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
@@ -892,12 +929,14 @@ export function ChatPanel({
               </svg>
             </div>
             <h3 className="chat-empty__title">
-              {isWizard ? 'Wizard ready' : isTalk ? 'Start a conversation' : 'Ready to build'}
+              {isNexus ? 'Nexus ready' : isWizard ? 'Wizard ready' : isTalk ? 'Start a conversation' : 'Ready to build'}
             </h3>
             <p className="chat-empty__desc">
               {providerConnected
                 ? isTalk
                   ? 'You\'re in Chat mode. Ask anything or switch to Agent for tools and file access.'
+                  : isNexus
+                    ? 'The leader Wizard can plan with its team and work in the shared Nexus workspace.'
                   : isWizard
                     ? 'This Wizard is connected to its own local workspace and memory documents.'
                   : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.`
@@ -941,7 +980,11 @@ export function ChatPanel({
               transition={{ duration: 0.22, ease: 'easeOut' }}
             >
               <header className="chat-bubble__header">
-                <span className="chat-bubble__header-title">{message.role === 'user' ? 'You' : 'Assistant'}</span>
+                <span className="chat-bubble__header-title">
+                  {message.role === 'user'
+                    ? 'You'
+                    : message.assistantDisplayName?.trim() || 'Assistant'}
+                </span>
                 {getCopyableMessageText(message.content).length > 0 ? (
                   <button
                     className={`chat-bubble__copy${copiedMessageId === entry.id ? ' is-done' : ''}`}
@@ -1049,6 +1092,7 @@ export function ChatPanel({
       </AnimatePresence>
 
       <div className="chat-compose">
+        {nexusRelayProgress ? <NexusRelayProgressBar {...nexusRelayProgress} /> : null}
         {workspaceGateNotice ? (
           <div className="chat-compose__notice" role="alert">
             <p className="chat-compose__notice-text">{workspaceGateNotice}</p>
@@ -1095,7 +1139,10 @@ export function ChatPanel({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (!isStreaming) {
+                const canSend =
+                  !isStreaming ||
+                  (nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0));
+                if (canSend) {
                   onSend();
                 }
               }
@@ -1117,9 +1164,26 @@ export function ChatPanel({
             </svg>
           </button>
           {isStreaming ? (
-            <button className="chat-compose__stop" onClick={onStop} type="button" title="Stop">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor"/></svg>
-            </button>
+            <>
+              {nexusRelayQueueDuringStream ? (
+                <button
+                  className="chat-compose__send chat-compose__send--alongside-stop"
+                  disabled={input.trim().length === 0 && attachments.length === 0}
+                  onClick={onSend}
+                  type="button"
+                  title="Queue message for next teammate turn"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              ) : null}
+              <button className="chat-compose__stop" onClick={onStop} type="button" title="Stop">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <rect x="3" y="3" width="8" height="8" rx="1.5" fill="currentColor" />
+                </svg>
+              </button>
+            </>
           ) : (
             <button
               className="chat-compose__send"

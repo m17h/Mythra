@@ -8,7 +8,7 @@ export interface ChatModelOverride {
   model: string;
 }
 
-export type ChatKind = 'normal' | 'wizard' | 'wizard-session';
+export type ChatKind = 'normal' | 'wizard' | 'wizard-session' | 'nexus' | 'nexus-session';
 
 export interface WizardDocument {
   path: string;
@@ -33,6 +33,52 @@ export interface WizardProfile {
    * ../ escapes or absolute paths). Cloud-sync folders remain blocked; listing/search/git-patch scope unchanged.
    */
   allowOutsideWorkspace?: boolean;
+}
+
+export interface NexusMember {
+  wizardId: string;
+  role: 'leader' | 'member';
+}
+
+export interface NexusTask {
+  id: string;
+  title: string;
+  assigneeWizardId: string;
+  status: 'planned' | 'active' | 'blocked' | 'done';
+}
+
+export interface NexusProject {
+  name: string;
+  mission: string;
+  workspaceRoot: string;
+  leaderWizardId: string;
+  members: NexusMember[];
+  tasks: NexusTask[];
+  status: 'draft' | 'active' | 'done';
+  /**
+   * When true, every teammate stream in Nexus sessions skips per-action tool approvals (same effect as Full access).
+   * Takes precedence over leaderApprovesTools.
+   */
+  teamFullAccess?: boolean;
+  /**
+   * When true (and teamFullAccess is false), tool approvals use an automated Nexus leader model decision instead of the human modal.
+   */
+  leaderApprovesTools?: boolean;
+  /**
+   * When true, two or more teammates answer in parallel on each message (legacy Nexus behavior).
+   * When false or omitted, teammates speak one at a time in leader-first round-robin inside one assistant bubble until `[NEXUS_END]` or maxSequentialWizardTurns.
+   */
+  parallelWizardResponses?: boolean;
+  /** Cap for sequential relay turns per user message (each teammate reply counts as one turn). Default applied in UI/runtime when unset. */
+  maxSequentialWizardTurns?: number;
+}
+
+export interface NexusSetupRequest {
+  name: string;
+  mission: string;
+  workspaceRoot: string;
+  leaderWizardId: string;
+  memberWizardIds: string[];
 }
 
 export interface WizardSetupRequest {
@@ -239,6 +285,8 @@ export interface ChatMessage {
   id: string;
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** When set on assistant turns, shown instead of “Assistant” in the bubble header (Wizard / Nexus leader name). */
+  assistantDisplayName?: string;
   /** When the API returns separable model reasoning (e.g. OpenRouter), shown in a collapsible "Thinking" block. */
   reasoning?: string;
   attachments?: ChatAttachment[];
@@ -335,6 +383,8 @@ export interface SavedChat {
   modelOverride?: ChatModelOverride | null;
   wizard?: WizardProfile | null;
   wizardId?: string | null;
+  nexus?: NexusProject | null;
+  nexusId?: string | null;
 }
 
 export interface SavedChatMeta {
@@ -348,6 +398,8 @@ export interface SavedChatMeta {
   modelOverride?: ChatModelOverride | null;
   wizard?: WizardProfile | null;
   wizardId?: string | null;
+  nexus?: NexusProject | null;
+  nexusId?: string | null;
 }
 
 export const defaultSettings: AppSettings = {

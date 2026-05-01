@@ -11,7 +11,7 @@ const LEGACY_SETTINGS_FILES = ['openkiwi-settings.json', 'pixel-forge-settings.j
 
 function normalizeMergedSearch(saved: Partial<AppSettings['search']> | undefined): AppSettings['search'] {
   const base = { ...defaultSettings.search, ...saved };
-  let provider = typeof base.provider === 'string' ? base.provider : defaultSettings.search.provider;
+  let provider: string = typeof base.provider === 'string' ? base.provider : defaultSettings.search.provider;
   /** Legacy single-provider enum before chain preferences. */
   if (provider === 'tavily') provider = 'tavily_then_brave';
   if (provider === 'brave') provider = 'brave_then_tavily';
@@ -20,7 +20,7 @@ function normalizeMergedSearch(saved: Partial<AppSettings['search']> | undefined
   }
 
   return {
-    provider,
+    provider: provider as AppSettings['search']['provider'],
     tavilyApiKey: typeof base.tavilyApiKey === 'string' ? base.tavilyApiKey : '',
     braveApiKey: typeof base.braveApiKey === 'string' ? base.braveApiKey : ''
   };

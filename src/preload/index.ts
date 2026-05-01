@@ -23,7 +23,8 @@ import type {
   WizardMythwizExportResult,
   WizardMythwizPickImportResult,
   WizardSetupRequest,
-  WizardSetupResult
+  WizardSetupResult,
+  ProviderKind
 } from '@shared/types';
 
 const electronAPI = {
@@ -58,6 +59,8 @@ const electronAPI = {
     ipcRenderer.invoke('wizard:sync-workspace-folder', profile) as Promise<WizardProfile>,
   listWizardDocuments: (workspaceRoot: string) =>
     ipcRenderer.invoke('wizard:list-documents', workspaceRoot) as Promise<WizardDocument[]>,
+  readWizardDocument: (workspaceRoot: string, target: string) =>
+    ipcRenderer.invoke('wizard:read-document', workspaceRoot, target) as Promise<OpenFile>,
   listWizardExportFiles: (workspaceRoot: string) =>
     ipcRenderer.invoke('wizard:list-export-files', workspaceRoot) as Promise<string[]>,
   exportWizardMythwiz: (request: WizardMythwizExportRequest) =>
@@ -66,6 +69,8 @@ const electronAPI = {
     ipcRenderer.invoke('wizard:choose-import-mythwiz') as Promise<WizardMythwizPickImportResult>,
   deleteWizardWorkspace: (root: string) =>
     ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
+  chooseNexusWorkspace: (preferredDefaultPath?: string) =>
+    ipcRenderer.invoke('nexus:choose-workspace', preferredDefaultPath) as Promise<string | null>,
   respondWizardPromptApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke('wizard:prompt-approval-response', id, approved) as Promise<void>,
   respondToolApproval: (id: string, approved: boolean) =>
@@ -96,6 +101,11 @@ const electronAPI = {
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
       wizardAllowOutsideWorkspace?: boolean;
+      nexusTeamFullAccess?: boolean;
+      nexusLeaderApprovesTools?: boolean;
+      nexusLeaderProvider?: ProviderKind;
+      nexusLeaderModel?: string;
+      nexusLeaderName?: string;
     }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,

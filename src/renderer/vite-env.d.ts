@@ -24,7 +24,8 @@ import type {
   WizardPromptApprovalRequest,
   WizardSetupRequest,
   WizardSetupResult,
-  WizardProfile
+  WizardProfile,
+  ProviderKind
 } from '@shared/types';
 
 declare global {
@@ -45,8 +46,10 @@ declare global {
       getRecommendedWizardWorkspace: (name: string) => Promise<string>;
       chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) => Promise<string | null>;
       chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
+      chooseNexusWorkspace: (preferredDefaultPath?: string) => Promise<string | null>;
       setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
       listWizardDocuments: (workspaceRoot: string) => Promise<WizardDocument[]>;
+      readWizardDocument: (workspaceRoot: string, target: string) => Promise<OpenFile>;
       listWizardExportFiles: (workspaceRoot: string) => Promise<string[]>;
       exportWizardMythwiz: (request: WizardMythwizExportRequest) => Promise<WizardMythwizExportResult>;
       chooseWizardImportMythwiz: () => Promise<WizardMythwizPickImportResult>;
@@ -71,6 +74,11 @@ declare global {
           wizardSystemPrompt?: string;
           wizardFullAccess?: boolean;
           wizardAllowOutsideWorkspace?: boolean;
+          nexusTeamFullAccess?: boolean;
+          nexusLeaderApprovesTools?: boolean;
+          nexusLeaderProvider?: ProviderKind;
+          nexusLeaderModel?: string;
+          nexusLeaderName?: string;
         }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;

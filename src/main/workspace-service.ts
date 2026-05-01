@@ -309,6 +309,31 @@ export class WorkspaceService {
     return this.assertUsableLocalWorkspace(result.filePaths[0]);
   }
 
+  async chooseNexusWorkspace(preferredDefaultPath?: string): Promise<string | null> {
+    let defaultPath = join(process.env.HOME ?? '', 'Desktop');
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+        // Missing or invalid — fall back to Desktop.
+      }
+    }
+
+    const result = await dialog.showOpenDialog({
+      buttonLabel: 'Use this folder',
+      defaultPath,
+      message: 'Choose a local project folder that the Nexus team will share.',
+      properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+
   getRecommendedWizardWorkspace(name: string): string {
     return join(process.env.HOME ?? '', 'Desktop', sanitizeWizardFolderSegment(name));
   }

@@ -70,7 +70,9 @@ class ChatStore {
           pinned: chat.pinned ?? false,
           modelOverride: chat.modelOverride ?? null,
           wizard: chat.wizard ?? null,
-          wizardId: chat.wizardId ?? null
+          wizardId: chat.wizardId ?? null,
+          nexus: chat.nexus ?? null,
+          nexusId: chat.nexusId ?? null
         });
       } catch {
       }
@@ -1273,7 +1275,7 @@ const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot rea
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
-const mythraCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful.";
+const mythraCodingToolInstruction = "Coding tools: prefer read_file plus apply_patch for code edits. Use replace_in_file for one exact string replacement, insert_after for small insertions anchored to stable text, and rename_file for moves. Use get_git_diff after edits to inspect the patch before summarizing. Use search_symbols/get_file_outline to orient in code instead of reading many full files. Use run_tests for project test/build checks when useful. Every tool call must use strict JSON arguments (double quotes, escaped strings). If arguments were malformed, fix escaping and retry instead of blaming Mythra or “relay” issues.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -1288,6 +1290,68 @@ function streamingToolAccToFunctionCalls(acc) {
     type: "function",
     function: { name, arguments: args }
   }));
+}
+function parseToolCallArgumentsJson(raw) {
+  let candidate = raw.trim();
+  if (!candidate) {
+    return { ok: true, args: {} };
+  }
+  if (candidate.startsWith("```")) {
+    const close = candidate.lastIndexOf("```");
+    const firstNl = candidate.indexOf("\n");
+    if (firstNl !== -1 && close > firstNl) {
+      candidate = candidate.slice(firstNl + 1, close).trim();
+    }
+  }
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { ok: true, args: parsed };
+    }
+  } catch {
+  }
+  return { ok: false };
+}
+function resolveStreamChatWallMs() {
+  const raw = process.env.MYTHRA_STREAM_CHAT_WALL_MS;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 18e5;
+}
+function mergeStreamDeadline(controller, wallMs) {
+  if (wallMs <= 0) {
+    return controller.signal;
+  }
+  try {
+    const AS = AbortSignal;
+    if (typeof AS.timeout === "function" && typeof AS.any === "function") {
+      return AS.any([controller.signal, AS.timeout(wallMs)]);
+    }
+  } catch {
+  }
+  return controller.signal;
+}
+function mergeLeaderApprovalDeadline(user, timeoutMs) {
+  if (timeoutMs <= 0) {
+    return user;
+  }
+  try {
+    const AS = AbortSignal;
+    if (typeof AS.timeout !== "function" || typeof AS.any !== "function") {
+      return user;
+    }
+    const wall = AS.timeout(timeoutMs);
+    if (!user) {
+      return wall;
+    }
+    return AS.any([user, wall]);
+  } catch {
+    return user;
+  }
+}
+function resolveLeaderApprovalWallMs() {
+  const raw = process.env.MYTHRA_LEADER_APPROVAL_MS;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 9e4;
 }
 const extractModelReasoning = (message) => {
   if (!message || typeof message !== "object") {
@@ -1425,6 +1489,7 @@ class ModelService {
       const isTalk = settings.ui.sessionMode === "talk";
       const sessionContext = await this.buildSessionContext(settings, runtime);
       let lastVisibleAssistantContent = "";
+      const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const apiMessages = [
         { role: "system", content: provider.systemPrompt },
         { role: "system", content: sessionContext },
@@ -1449,7 +1514,7 @@ class ModelService {
             stream_options: { include_usage: true }
           },
           {
-            signal: controller.signal
+            signal: streamDeadlineSignal
           }
         );
         let assembled = "";
@@ -1508,13 +1573,48 @@ class ModelService {
               continue;
             }
             const rawArgs = toolCall.function.arguments ?? "";
+            const parsedArgs = parseToolCallArgumentsJson(rawArgs);
+            if (!parsedArgs.ok) {
+              this.emitActivity(
+                window,
+                requestId,
+                "warning",
+                `${toolCall.function.name}: invalid JSON tool arguments — sending recovery hint to the model.`
+              );
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: truncate(
+                  JSON.stringify(
+                    {
+                      ok: false,
+                      error: "invalid_tool_arguments_json",
+                      tool: toolCall.function.name,
+                      guidance: 'Arguments must be one JSON object with double-quoted keys and strings. For write_file use {"path":"relative/path.ext","content":"<file body as an escaped JSON string>"}. Escape literal quotes as \\", tabs/newlines as \\t / \\n.',
+                      raw_preview: truncate(rawArgs, 2e3)
+                    },
+                    null,
+                    2
+                  ),
+                  18e3
+                )
+              });
+              continue;
+            }
             this.emitActivity(
               window,
               requestId,
               toolCall.function.name === "run_command" ? "command" : "tool",
               formatToolActivityStart(toolCall.function.name, rawArgs, settings)
             );
-            const toolResult = await this.executeToolCall(window, requestId, settings, runtime, toolCall);
+            const toolResult = await this.executeToolCall(
+              window,
+              requestId,
+              settings,
+              runtime,
+              toolCall,
+              parsedArgs.args
+            );
             this.assertNotStopped(requestId);
             apiMessages.push({
               role: "tool",
@@ -1574,9 +1674,10 @@ class ModelService {
       this.activeRequests.delete(requestId);
     };
     try {
+      const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const stream = await client.chat.completions.create(
         { model, messages: apiMessages, stream: true, stream_options: { include_usage: true } },
-        { signal: controller.signal }
+        { signal: streamSignal }
       );
       let assembled = "";
       let assembledReasoning = "";
@@ -1632,7 +1733,10 @@ class ModelService {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
       }
-      const completion = await client.chat.completions.create({ model, messages: apiMessages }, { signal: controller.signal });
+      const completion = await client.chat.completions.create(
+        { model, messages: apiMessages },
+        { signal: mergeStreamDeadline(controller, resolveStreamChatWallMs()) }
+      );
       this.assertNotStopped(requestId);
       const fallbackUsage = mapCompletionUsage(completion.usage ?? void 0);
       const assistantMessage = completion.choices[0]?.message;
@@ -2246,14 +2350,8 @@ class ModelService {
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
   }
-  async executeToolCall(window, requestId, settings, runtime, toolCall) {
+  async executeToolCall(window, requestId, settings, runtime, toolCall, args) {
     const workspaceRoot = runtime.workspaceRoot;
-    let args;
-    try {
-      args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
-    } catch {
-      throw new Error(`Tool ${toolCall.function.name} received invalid JSON arguments.`);
-    }
     if (toolCall.function.name === "web_search") {
       if (!settings.ui.webSearch) {
         throw new Error("Web search is turned off. Enable the Web toggle in the chat header to search online.");
@@ -2944,13 +3042,92 @@ ${workspaceRoot}`
     }
   }
   effectiveFullAccess(settings, runtime) {
+    if (runtime.nexusTeamFullAccess) {
+      return true;
+    }
     if (runtime.wizardId != null) {
       return Boolean(runtime.wizardFullAccess);
     }
     return settings.agent.fullAccess;
   }
+  async resolveNexusLeaderToolApproval(settings, runtime, title, detail, textDiff, signal) {
+    const kind = runtime.nexusLeaderProvider;
+    const model = runtime.nexusLeaderModel?.trim();
+    if (!kind || !model) {
+      return false;
+    }
+    const profile = settings.providers[kind];
+    if (!profile?.baseUrl?.trim()) {
+      return false;
+    }
+    let body = truncate(detail, 12e3);
+    if (textDiff) {
+      body += `
+
+--- proposed change (truncated) ---
+Before:
+${truncate(textDiff.before, 6e3)}
+
+After:
+${truncate(textDiff.after, 6e3)}`;
+    }
+    const leaderName = runtime.nexusLeaderName?.trim() || "Nexus leader";
+    const client = createClient(settings, kind);
+    const approvalSignal = mergeLeaderApprovalDeadline(signal, resolveLeaderApprovalWallMs());
+    try {
+      const completion = await client.chat.completions.create(
+        {
+          model,
+          messages: [
+            {
+              role: "system",
+              content: `You are ${leaderName}, the Nexus leader. Teammates proposed tool actions that require approval.
+
+Reply with exactly one uppercase word: APPROVE or DENY.
+
+Approve only when the action fits the Nexus mission, respects the shared workspace, and is not reckless. Deny unclear or destructive requests.`
+            },
+            {
+              role: "user",
+              content: `Approval title: ${title}
+
+Details:
+${body}`
+            }
+          ],
+          max_tokens: 16,
+          temperature: 0
+        },
+        approvalSignal ? { signal: approvalSignal } : signal ? { signal } : void 0
+      );
+      const raw = contentToString(completion.choices[0]?.message?.content ?? "").trim().toUpperCase();
+      const token = raw.split(/\s+/)[0] ?? "";
+      return token === "APPROVE";
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return false;
+      }
+      throw err;
+    }
+  }
   async requestApprovalIfNeeded(window, requestId, settings, runtime, title, detail, textDiff) {
     if (this.effectiveFullAccess(settings, runtime)) {
+      return;
+    }
+    if (runtime.nexusLeaderApprovesTools && runtime.nexusLeaderProvider && runtime.nexusLeaderModel?.trim()) {
+      this.emitActivity(window, requestId, "approval", `${title}: Nexus leader reviewing…`);
+      const active = this.activeRequests.get(requestId);
+      const approved = await this.resolveNexusLeaderToolApproval(
+        settings,
+        runtime,
+        title,
+        detail,
+        textDiff,
+        active?.controller.signal
+      );
+      if (!approved) {
+        throw new Error("Nexus leader denied this tool action.");
+      }
       return;
     }
     this.emitActivity(window, requestId, "approval", `${title}: waiting for user approval.`);
@@ -3395,6 +3572,26 @@ class WorkspaceService {
       buttonLabel: "Use this folder",
       defaultPath,
       message: "Choose a folder for Wizard workspaces. Each new Wizard will get its own subfolder inside here (named from the Wizard title).",
+      properties: ["openDirectory", "createDirectory"]
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+  async chooseNexusWorkspace(preferredDefaultPath) {
+    let defaultPath = join$1(process.env.HOME ?? "", "Desktop");
+    const trimmed = preferredDefaultPath?.trim();
+    if (trimmed) {
+      try {
+        defaultPath = await this.assertUsableLocalWorkspace(trimmed);
+      } catch {
+      }
+    }
+    const result = await dialog.showOpenDialog({
+      buttonLabel: "Use this folder",
+      defaultPath,
+      message: "Choose a local project folder that the Nexus team will share.",
       properties: ["openDirectory", "createDirectory"]
     });
     if (result.canceled || result.filePaths.length === 0) {
@@ -4207,7 +4404,12 @@ const sanitizeRuntime = (runtime) => {
     wizardName: typeof runtime.wizardName === "string" ? runtime.wizardName : void 0,
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0,
     wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0,
-    wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0
+    wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0,
+    nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === "boolean" ? runtime.nexusTeamFullAccess : void 0,
+    nexusLeaderApprovesTools: typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
+    nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" ? runtime.nexusLeaderProvider : void 0,
+    nexusLeaderModel: typeof runtime.nexusLeaderModel === "string" ? runtime.nexusLeaderModel : void 0,
+    nexusLeaderName: typeof runtime.nexusLeaderName === "string" ? runtime.nexusLeaderName : void 0
   };
 };
 const sanitizeChatSettings = (requested) => ({
@@ -4376,6 +4578,10 @@ ipcMain.handle(
   "wizard:choose-projects-folder",
   async (_event, preferredDefaultPath) => workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
 );
+ipcMain.handle(
+  "nexus:choose-workspace",
+  async (_event, preferredDefaultPath) => workspaceService.chooseNexusWorkspace(preferredDefaultPath)
+);
 ipcMain.handle("wizard:setup", async (_event, request) => {
   const result = await workspaceService.setupWizardWorkspace(request);
   activeWorkspaceRoot = result.profile.workspaceRoot;
@@ -4422,6 +4628,32 @@ ipcMain.handle("tool:approval-response", async (_event, id, approved) => {
   resolveApproval(Boolean(approved));
 });
 ipcMain.handle("wizard:list-documents", async (_event, root) => workspaceService.listWizardWorkspaceDocuments(root));
+ipcMain.handle("wizard:read-document", async (_event, root, target) => {
+  const resolvedRoot = resolve(root.trim());
+  const chats = await chatStore.listChats();
+  const normalizedRoot = resolvedRoot.toLowerCase();
+  const isKnownWizardRoot = chats.some(
+    (chat) => {
+      if (chat.kind !== "wizard" || !chat.wizard) return false;
+      if (chat.wizard.workspaceRoot && resolve(chat.wizard.workspaceRoot) === resolvedRoot) return true;
+      const expectedFolder = sanitizeWizardFolderSegment(chat.wizard.name).toLowerCase();
+      return (chat.wizard.documents ?? []).some((doc) => {
+        let dir = dirname(resolve(doc.path));
+        for (let depth = 0; depth < 16; depth += 1) {
+          if (resolve(dir) === resolvedRoot && basename(dir).toLowerCase() === expectedFolder) return true;
+          const parent = dirname(dir);
+          if (parent === dir) break;
+          dir = parent;
+        }
+        return false;
+      });
+    }
+  );
+  if (!isKnownWizardRoot || normalizedRoot.includes("/library/cloudstorage/")) {
+    throw new Error("Wizard workspace is not registered.");
+  }
+  return workspaceService.openFile(resolvedRoot, target, false);
+});
 ipcMain.handle(
   "wizard:list-export-files",
   async (_event, root) => workspaceService.listWizardExportRelativeFiles(root)

@@ -1,8 +1,8 @@
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { basename, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { readFile, stat, writeFile } from 'node:fs/promises';
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron';
 /** Project-root asset (capital M): single source for window + dock icon. */
 import appIconPath from '../../Mythra_icon.png?asset';
 import { ChatStore } from './chat-store';
@@ -370,6 +370,11 @@ const sanitizeRuntime = (runtime: {
   wizardSystemPrompt?: string;
   wizardFullAccess?: boolean;
   wizardAllowOutsideWorkspace?: boolean;
+  nexusTeamFullAccess?: boolean;
+  nexusLeaderApprovesTools?: boolean;
+  nexusLeaderProvider?: AppSettings['selectedProvider'];
+  nexusLeaderModel?: string;
+  nexusLeaderName?: string;
 }) => {
   const workspaceRoot =
     runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot)
@@ -390,7 +395,16 @@ const sanitizeRuntime = (runtime: {
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined,
     wizardFullAccess: typeof runtime.wizardFullAccess === 'boolean' ? runtime.wizardFullAccess : undefined,
     wizardAllowOutsideWorkspace:
-      typeof runtime.wizardAllowOutsideWorkspace === 'boolean' ? runtime.wizardAllowOutsideWorkspace : undefined
+      typeof runtime.wizardAllowOutsideWorkspace === 'boolean' ? runtime.wizardAllowOutsideWorkspace : undefined,
+    nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === 'boolean' ? runtime.nexusTeamFullAccess : undefined,
+    nexusLeaderApprovesTools:
+      typeof runtime.nexusLeaderApprovesTools === 'boolean' ? runtime.nexusLeaderApprovesTools : undefined,
+    nexusLeaderProvider:
+      runtime.nexusLeaderProvider === 'lmstudio' || runtime.nexusLeaderProvider === 'openrouter'
+        ? runtime.nexusLeaderProvider
+        : undefined,
+    nexusLeaderModel: typeof runtime.nexusLeaderModel === 'string' ? runtime.nexusLeaderModel : undefined,
+    nexusLeaderName: typeof runtime.nexusLeaderName === 'string' ? runtime.nexusLeaderName : undefined
   };
 };
 
@@ -581,6 +595,10 @@ ipcMain.handle('wizard:choose-projects-folder', async (_event, preferredDefaultP
   workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
 );
 
+ipcMain.handle('nexus:choose-workspace', async (_event, preferredDefaultPath?: string) =>
+  workspaceService.chooseNexusWorkspace(preferredDefaultPath)
+);
+
 ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {
   const result = await workspaceService.setupWizardWorkspace(request);
   activeWorkspaceRoot = result.profile.workspaceRoot;
@@ -633,6 +651,33 @@ ipcMain.handle('tool:approval-response', async (_event, id: string, approved: bo
 
 ipcMain.handle('wizard:list-documents', async (_event, root: string) => workspaceService.listWizardWorkspaceDocuments(root));
 
+ipcMain.handle('wizard:read-document', async (_event, root: string, target: string) => {
+  const resolvedRoot = resolve(root.trim());
+  const chats = await chatStore.listChats();
+  const normalizedRoot = resolvedRoot.toLowerCase();
+  const isKnownWizardRoot = chats.some(
+    (chat) => {
+      if (chat.kind !== 'wizard' || !chat.wizard) return false;
+      if (chat.wizard.workspaceRoot && resolve(chat.wizard.workspaceRoot) === resolvedRoot) return true;
+      const expectedFolder = sanitizeWizardFolderSegment(chat.wizard.name).toLowerCase();
+      return (chat.wizard.documents ?? []).some((doc) => {
+        let dir = dirname(resolve(doc.path));
+        for (let depth = 0; depth < 16; depth += 1) {
+          if (resolve(dir) === resolvedRoot && basename(dir).toLowerCase() === expectedFolder) return true;
+          const parent = dirname(dir);
+          if (parent === dir) break;
+          dir = parent;
+        }
+        return false;
+      });
+    }
+  );
+  if (!isKnownWizardRoot || normalizedRoot.includes('/library/cloudstorage/')) {
+    throw new Error('Wizard workspace is not registered.');
+  }
+  return workspaceService.openFile(resolvedRoot, target, false);
+});
+
 ipcMain.handle('wizard:list-export-files', async (_event, root: string) =>
   workspaceService.listWizardExportRelativeFiles(root)
 );
@@ -640,7 +685,7 @@ ipcMain.handle('wizard:list-export-files', async (_event, root: string) =>
 ipcMain.handle('wizard:export-mythwiz', async (event, req: WizardMythwizExportRequest) => {
   const winSafe = BrowserWindow.fromWebContents(event.sender);
   const baseName = sanitizeWizardFolderSegment(req.wizardDisplayName.trim() || 'wizard');
-  const opts = {
+  const opts: SaveDialogOptions = {
     title: 'Export Wizard',
     defaultPath: `${baseName}.mythwiz`,
     filters: [{ name: 'Mythra Wizard bundle', extensions: ['mythwiz'] }]
@@ -664,9 +709,9 @@ ipcMain.handle('wizard:export-mythwiz', async (event, req: WizardMythwizExportRe
 
 ipcMain.handle('wizard:choose-import-mythwiz', async (event) => {
   const winSafe = BrowserWindow.fromWebContents(event.sender);
-  const opts = {
+  const opts: OpenDialogOptions = {
     title: 'Import Wizard bundle',
-    properties: ['openFile'] as const,
+    properties: ['openFile'],
     filters: [{ name: 'Mythra Wizard bundle', extensions: ['mythwiz'] }]
   };
   const pick =
@@ -718,6 +763,11 @@ ipcMain.handle(
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
       wizardAllowOutsideWorkspace?: boolean;
+      nexusTeamFullAccess?: boolean;
+      nexusLeaderApprovesTools?: boolean;
+      nexusLeaderProvider?: AppSettings['selectedProvider'];
+      nexusLeaderModel?: string;
+      nexusLeaderName?: string;
     }
   ) => {
     if (!mainWindow) {
