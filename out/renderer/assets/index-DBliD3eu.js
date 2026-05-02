@@ -33840,7 +33840,8 @@ function ChatPanel({
   wizardHubPlaceholder = false,
   onOpenWizardCreator,
   nexusRelayProgress = null,
-  nexusRelayQueueDuringStream = false
+  nexusRelayQueueDuringStream = false,
+  chatThreadBackgroundUrl = null
 }) {
   const scrollRef = reactExports.useRef(null);
   const innerRef = reactExports.useRef(null);
@@ -34058,6 +34059,19 @@ function ChatPanel({
   const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
+  const chatBgLayers = chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== "" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__bg", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "img",
+      {
+        alt: "",
+        className: "chat-scroll__bg-img",
+        decoding: "async",
+        draggable: false,
+        src: chatThreadBackgroundUrl
+      }
+    ) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__bg-scrim", "aria-hidden": true })
+  ] }) : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "chat-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-left", children: [
@@ -34149,116 +34163,131 @@ function ChatPanel({
         onWheelCapture: handleWheelCapture,
         ref: scrollRef,
         children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "path",
-                {
-                  d: "M22 7L36 37H8L22 7z",
-                  stroke: "currentColor",
-                  strokeWidth: "1.45",
-                  strokeLinejoin: "round"
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "22", cy: "23", r: "2.35", fill: "currentColor", opacity: 0.22 }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "path",
-                {
-                  d: "M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8",
-                  stroke: "currentColor",
-                  strokeWidth: "1.35",
-                  strokeLinecap: "round"
-                }
-              )
-            ] }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: "Select a wizard to get started" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "chat-empty__desc wizard-hub-desc", children: [
-              "Pick one from the list on the left,",
-              /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-              "or create one",
-              " ",
-              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "wizard-hub-desc__here", onClick: () => onOpenWizardCreator?.(), children: "here" }),
-              "."
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
+          chatBgLayers,
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "path",
+                  {
+                    d: "M22 7L36 37H8L22 7z",
+                    stroke: "currentColor",
+                    strokeWidth: "1.45",
+                    strokeLinejoin: "round"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "22", cy: "23", r: "2.35", fill: "currentColor", opacity: 0.22 }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "path",
+                  {
+                    d: "M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8",
+                    stroke: "currentColor",
+                    strokeWidth: "1.35",
+                    strokeLinecap: "round"
+                  }
+                )
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: "Select a wizard to get started" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "chat-empty__desc wizard-hub-desc", children: [
+                "Pick one from the list on the left,",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+                "or create one",
+                " ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "wizard-hub-desc__here", onClick: () => onOpenWizardCreator?.(), children: "here" }),
+                "."
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
+          ] })
         ] })
       }
     ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll", onScroll: handleScroll, onWheelCapture: handleWheelCapture, ref: scrollRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner", ref: innerRef, children: [
-        timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty chat-empty--thread-start", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
-          ] }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
-        ] }) : null,
-        renderChunks.map((chunk) => {
-          if (chunk.type === "activity-group") {
-            return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
-          }
-          if (chunk.type === "activity-solo") {
-            return /* @__PURE__ */ jsxRuntimeExports.jsx(
-              CollapsibleActivityBlock,
-              {
-                activity: chunk.entry.activity,
-                onDetailsToggle: afterCollapsibleLayout
-              },
-              chunk.entry.id
-            );
-          }
-          const { entry } = chunk;
-          const { message } = entry;
-          if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
-            return null;
-          }
-          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            motion.article,
-            {
-              animate: { opacity: 1, y: 0 },
-              className: `chat-bubble chat-bubble--${message.role}`,
-              initial: { opacity: 0, y: 8 },
-              transition: { duration: 0.22, ease: "easeOut" },
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
-                  getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: "chat-scroll",
+          onScroll: handleScroll,
+          onWheelCapture: handleWheelCapture,
+          ref: scrollRef,
+          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner", ref: innerRef, children: [
+            chatBgLayers,
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+              timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty chat-empty--thread-start", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+                ] }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
+              ] }) : null,
+              renderChunks.map((chunk) => {
+                if (chunk.type === "activity-group") {
+                  return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
+                }
+                if (chunk.type === "activity-solo") {
+                  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    CollapsibleActivityBlock,
                     {
-                      className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
-                      "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
-                      title: copiedMessageId === entry.id ? "Copied" : "Copy",
-                      type: "button",
-                      onClick: () => void handleCopyMessage(entry.id, message.content),
-                      children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
-                    }
-                  ) : null
-                ] }),
-                message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
-                message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("figure", { className: "chat-attachment", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("figcaption", { children: att.name })
-                ] }, att.id)) }) : null,
-                message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  AssistantMessageContent,
+                      activity: chunk.entry.activity,
+                      onDetailsToggle: afterCollapsibleLayout
+                    },
+                    chunk.entry.id
+                  );
+                }
+                const { entry } = chunk;
+                const { message } = entry;
+                if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
+                  return null;
+                }
+                return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  motion.article,
                   {
-                    onSessionModeToggle,
-                    onWebSearchChange,
-                    sessionMode,
-                    sessionModeToggleDisabled,
-                    text: message.content,
-                    webSearch,
-                    webSearchDisabled
-                  }
-                ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
-              ]
-            },
-            entry.id
-          );
-        }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
-      ] }) }),
+                    animate: { opacity: 1, y: 0 },
+                    className: `chat-bubble chat-bubble--${message.role}`,
+                    initial: { opacity: 0, y: 8 },
+                    transition: { duration: 0.22, ease: "easeOut" },
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
+                        getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                          "button",
+                          {
+                            className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
+                            "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
+                            title: copiedMessageId === entry.id ? "Copied" : "Copy",
+                            type: "button",
+                            onClick: () => void handleCopyMessage(entry.id, message.content),
+                            children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
+                          }
+                        ) : null
+                      ] }),
+                      message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
+                      message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("figure", { className: "chat-attachment", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("figcaption", { children: att.name })
+                      ] }, att.id)) }) : null,
+                      message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        AssistantMessageContent,
+                        {
+                          onSessionModeToggle,
+                          onWebSearchChange,
+                          sessionMode,
+                          sessionModeToggleDisabled,
+                          text: message.content,
+                          webSearch,
+                          webSearchDisabled
+                        }
+                      ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
+                    ]
+                  },
+                  entry.id
+                );
+              }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
+            ] })
+          ] })
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
         motion.div,
         {
@@ -35459,6 +35488,13 @@ function isLikelyLightCssBackground(value) {
   return /^#f[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}[A-Fa-f0-9]{2}/i.test(s);
 }
 const themes = themeCatalog;
+const CHAT_THREAD_BUILTIN_PRESETS = [
+  {
+    id: "mystic",
+    label: "Mystic",
+    description: "Built-in art that switches to match Neon Grid, Sunset, Ice Station, or Kiwi (and light vs dark Custom)."
+  }
+];
 function patchSystemPromptInSettings(settings, v2) {
   const selected = settings.selectedProvider;
   const provider = settings.providers[selected];
@@ -35867,6 +35903,9 @@ function SettingsPanel({
   focusSearchSettingsKey = 0
 }) {
   const [themeSectionExpanded, setThemeSectionExpanded] = reactExports.useState(false);
+  const [chatBgBusy, setChatBgBusy] = reactExports.useState(false);
+  const [chatBgError, setChatBgError] = reactExports.useState(null);
+  const [chatBgCustomFocus, setChatBgCustomFocus] = reactExports.useState(false);
   const searchSectionRef = reactExports.useRef(null);
   reactExports.useEffect(() => {
     if (focusSearchSettingsKey <= 0) return;
@@ -35889,6 +35928,8 @@ function SettingsPanel({
   const activeSearchProvider = settings.search.provider;
   const anyPremiumApiKeySaved = Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
   const activeThemeLabel = getThemeName(settings.ui.themeId);
+  const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
+  const chatBgSelectValue = settings.ui.chatThreadBackgroundPreset === "mystic" ? "mystic" : settings.ui.chatThreadBackgroundPath || chatBgCustomFocus ? "custom" : "none";
   const updateProvider = (patch2, opts) => {
     const next = {
       ...settings,
@@ -36201,37 +36242,105 @@ function SettingsPanel({
                   theme.id
                 ))
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field field--after-theme-grid", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Session mode" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "session-mode-toggle", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field field--after-theme-grid chat-thread-bg-field", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Chat background" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: "Optional image behind the message list. Built-in packs switch automatically when you change theme; or use your own file (PNG, JPEG, WebP, GIF, or SVG)." }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field chat-thread-bg-select-row", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-bg-select-row__label", children: "Source" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
+                    AppSelect,
                     {
-                      className: `session-mode-toggle__option ${settings.ui.sessionMode === "talk" ? "is-active" : ""}`,
-                      onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "talk" } }),
-                      type: "button",
-                      children: "Chat"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: `session-mode-toggle__option ${settings.ui.sessionMode === "agent" ? "is-active" : ""}`,
-                      onClick: () => onChange({ ...settings, ui: { ...settings.ui, sessionMode: "agent" } }),
-                      type: "button",
-                      children: "Agent"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "span",
-                    {
-                      className: "session-mode-toggle__slider",
-                      style: {
-                        transform: settings.ui.sessionMode === "agent" ? "translateX(100%)" : "translateX(0)"
-                      }
+                      value: chatBgSelectValue,
+                      onChange: (v2) => {
+                        setChatBgError(null);
+                        if (v2 === "none") {
+                          setChatBgCustomFocus(false);
+                          onChange({
+                            ...settings,
+                            ui: { ...settings.ui, chatThreadBackgroundPreset: null, chatThreadBackgroundPath: null }
+                          });
+                          return;
+                        }
+                        if (v2 === "mystic") {
+                          setChatBgCustomFocus(false);
+                          onChange({
+                            ...settings,
+                            ui: { ...settings.ui, chatThreadBackgroundPreset: "mystic", chatThreadBackgroundPath: null }
+                          });
+                          return;
+                        }
+                        setChatBgCustomFocus(true);
+                        onChange({
+                          ...settings,
+                          ui: {
+                            ...settings.ui,
+                            chatThreadBackgroundPreset: null,
+                            chatThreadBackgroundPath: settings.ui.chatThreadBackgroundPath
+                          }
+                        });
+                      },
+                      options: [
+                        { value: "none", label: "None" },
+                        { value: "mystic", label: mysticPreset?.label },
+                        { value: "custom", label: "Custom image…" }
+                      ]
                     }
                   )
-                ] })
+                ] }),
+                settings.ui.chatThreadBackgroundPreset === "mystic" && mysticPreset ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: mysticPreset.description }) : null,
+                chatBgSelectValue === "custom" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-bg-actions", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        className: "btn btn--secondary",
+                        disabled: chatBgBusy,
+                        onClick: async () => {
+                          setChatBgError(null);
+                          setChatBgBusy(true);
+                          try {
+                            const res = await window.electronAPI.chooseChatThreadBackground();
+                            if (res.ok) {
+                              setChatBgCustomFocus(true);
+                              onChange({
+                                ...settings,
+                                ui: {
+                                  ...settings.ui,
+                                  chatThreadBackgroundPreset: null,
+                                  chatThreadBackgroundPath: res.path
+                                }
+                              });
+                            } else if ("error" in res) {
+                              setChatBgError(res.error);
+                            }
+                          } finally {
+                            setChatBgBusy(false);
+                          }
+                        },
+                        type: "button",
+                        children: chatBgBusy ? "Opening…" : settings.ui.chatThreadBackgroundPath ? "Replace image…" : "Choose image…"
+                      }
+                    ),
+                    settings.ui.chatThreadBackgroundPath ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        className: "btn btn--ghost",
+                        disabled: chatBgBusy,
+                        onClick: () => {
+                          setChatBgError(null);
+                          onChange({
+                            ...settings,
+                            ui: { ...settings.ui, chatThreadBackgroundPreset: null, chatThreadBackgroundPath: null }
+                          });
+                        },
+                        type: "button",
+                        children: "Remove file"
+                      }
+                    ) : null
+                  ] }),
+                  settings.ui.chatThreadBackgroundPath ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint chat-thread-bg-path", title: settings.ui.chatThreadBackgroundPath, children: settings.ui.chatThreadBackgroundPath.replace(/^.*[\\/]/, "") }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: "Pick an image file to show behind the thread." })
+                ] }) : null,
+                chatBgError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint inline-hint--warning", role: "alert", children: chatBgError }) : null
               ] })
             ] })
           },
@@ -36835,9 +36944,12 @@ Use your private workspace as your long-term home base:
 - tools.md defines tool preferences, workflows, and project conventions.
 - memory.md stores durable facts the user wants you to remember.
 - corrections.md stores mistakes, corrections, and lessons learned.
+- Mythra only seeds those four core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
 - File paths default to your workspace folder only; enable **Allow paths outside workspace** in Inspector → Wizard settings if cross-folder reads/writes are needed (local disks only).
 
 Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
+
+Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in soul.md and extra markdown.
 
 At the start of every message in a Wizard chat, Mythra injects every Markdown (.md) file from your workspace into context (core docs first). Keep extra guides or notes as additional .md files if you want them always loaded.`;
 function previewWizardWorkspacePath(platform, parentFolder, wizardDisplayName) {
@@ -38419,6 +38531,8 @@ function App() {
   const [models, setModels] = reactExports.useState([]);
   const [lastTokenUsage, setLastTokenUsage] = reactExports.useState(null);
   const [modelCatalogSettled, setModelCatalogSettled] = reactExports.useState(false);
+  const [chatThreadBackgroundUrl, setChatThreadBackgroundUrl] = reactExports.useState(null);
+  const chatThreadBackgroundUrlRef = reactExports.useRef(null);
   const settingsRef = reactExports.useRef(null);
   const workspaceRootRef = reactExports.useRef(void 0);
   const activeFilePathRef = reactExports.useRef(void 0);
@@ -38964,6 +39078,82 @@ function App() {
       root2.style.removeProperty("color-scheme");
     }
   }, [settings]);
+  reactExports.useEffect(() => {
+    const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
+    const path2 = settings?.ui.chatThreadBackgroundPath?.trim();
+    if (!preset && !path2) {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+      setChatThreadBackgroundUrl(null);
+      return;
+    }
+    const customThemeLight = settings?.ui.themeId !== "custom" ? false : (() => {
+      const bgToken = settings.ui.customThemeTokens?.["--bg-0"];
+      return bgToken == null || String(bgToken).trim() === "" ? true : isLikelyLightCssBackground(String(bgToken));
+    })();
+    const request = preset === "mystic" && settings ? {
+      source: "builtin",
+      presetId: "mystic",
+      themeId: settings.ui.themeId,
+      customThemeLight
+    } : path2 ? { source: "userFile", path: path2 } : null;
+    if (!request) {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+      setChatThreadBackgroundUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const res = await window.electronAPI.readChatThreadBackground(request);
+      if (cancelled) return;
+      if (!res.ok) {
+        if (chatThreadBackgroundUrlRef.current) {
+          URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+          chatThreadBackgroundUrlRef.current = null;
+        }
+        setChatThreadBackgroundUrl(null);
+        return;
+      }
+      let blob;
+      try {
+        blob = await fetch(`data:${res.mime};base64,${res.dataBase64}`).then((r) => r.blob());
+      } catch {
+        setChatThreadBackgroundUrl(null);
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      if (cancelled) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+      }
+      chatThreadBackgroundUrlRef.current = url;
+      setChatThreadBackgroundUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    settings?.ui.chatThreadBackgroundPreset,
+    settings?.ui.chatThreadBackgroundPath,
+    settings?.ui.themeId,
+    settings?.ui.customThemeTokens?.["--bg-0"]
+  ]);
+  reactExports.useEffect(() => {
+    return () => {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+    };
+  }, []);
   const openRouterKeyForEffect = settings?.selectedProvider === "openrouter" ? settings.providers.openrouter.apiKey : null;
   const lmstudioBaseForCatalog = settings?.selectedProvider === "lmstudio" ? (settings.providers.lmstudio.baseUrl ?? "").trim() : null;
   reactExports.useEffect(() => {
@@ -41405,7 +41595,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
           transition: { delay: 0.05, duration: 0.4 },
           children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-card", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__badge", children: "OK" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__badge", children: "ML" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__title", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "img",
                 {
@@ -42294,7 +42484,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               terminalLogs: inlineTerminalLogs,
               terminalJobId: inlineTerminalJobId,
               onTerminalRun: runInlineTerminal,
-              onTerminalKill: killInlineTerminal
+              onTerminalKill: killInlineTerminal,
+              chatThreadBackgroundUrl
             }
           )
         }

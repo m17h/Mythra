@@ -1,4 +1,5 @@
 import type { ThemeId } from './themes';
+import type { ChatThreadBackgroundPresetId } from './chat-thread-backgrounds';
 
 export type ProviderKind = 'lmstudio' | 'openrouter';
 
@@ -226,7 +227,38 @@ export interface UiSettings {
   wizardProjectsParentFolder: string | null;
   /** First-run product tour. Once true, Mythra does not show onboarding automatically. */
   onboardingCompleted: boolean;
+/**
+   * Built-in chat background pack (theme-aware images). When set, `chatThreadBackgroundPath` should be null.
+   * @see CHAT_THREAD_BUILTIN_PRESETS
+   */
+  chatThreadBackgroundPreset: ChatThreadBackgroundPresetId | null;
+  /**
+   * Absolute path to a user-chosen image (stored under userData) shown behind the main chat thread.
+   * Set via Settings → Theme when using a custom image; cleared when using a built-in pack or no background.
+   */
+  chatThreadBackgroundPath: string | null;
 }
+
+export type ChooseChatThreadBackgroundResult =
+  | { ok: true; path: string }
+  | { ok: false; cancelled: true }
+  | { ok: false; error: string };
+
+/** Main decodes file to base64 so IPC is JSON-safe; renderer builds a Blob URL. */
+export type ReadChatThreadBackgroundResult =
+  | { ok: true; mime: string; dataBase64: string }
+  | { ok: false };
+
+/** Request payload for `readChatThreadBackground` (user file or built-in pack). */
+export type ReadChatThreadBackgroundRequest =
+  | { source: 'userFile'; path: string }
+  | {
+      source: 'builtin';
+      presetId: ChatThreadBackgroundPresetId;
+      themeId: ThemeId;
+      /** For `themeId === 'custom'`, whether the merged palette reads as light (same rule as Settings). */
+      customThemeLight: boolean;
+    };
 
 export interface AgentSettings {
   fullAccess: boolean;
@@ -453,7 +485,9 @@ export const defaultSettings: AppSettings = {
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] },
     wizardProjectsParentFolder: null,
-    onboardingCompleted: false
+    onboardingCompleted: false,
+    chatThreadBackgroundPreset: null,
+    chatThreadBackgroundPath: null
   },
   lastWorkspaceRoot: null
 };

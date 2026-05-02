@@ -609,6 +609,8 @@ export function App() {
   const [lastTokenUsage, setLastTokenUsage] = useState<ChatCompletionTokenUsage | null>(null);
   /** After at least one model-catalog fetch (success or fail); used so we show "Disconnected" instead of "Waiting" only once we know. */
   const [modelCatalogSettled, setModelCatalogSettled] = useState(false);
+  const [chatThreadBackgroundUrl, setChatThreadBackgroundUrl] = useState<string | null>(null);
+  const chatThreadBackgroundUrlRef = useRef<string | null>(null);
 
   /** Latest values each render so send uses up-to-date system prompt, workspace, and active file (no new chat required). */
   const settingsRef = useRef<AppSettings | null>(null);
@@ -1265,6 +1267,99 @@ export function App() {
       root.style.removeProperty('color-scheme');
     }
   }, [settings]);
+
+  useEffect(() => {
+    const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
+    const path = settings?.ui.chatThreadBackgroundPath?.trim();
+
+    if (!preset && !path) {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+      setChatThreadBackgroundUrl(null);
+      return;
+    }
+
+    const customThemeLight =
+      settings?.ui.themeId !== 'custom'
+        ? false
+        : (() => {
+            const bgToken = settings.ui.customThemeTokens?.['--bg-0'];
+            return bgToken == null || String(bgToken).trim() === '' ? true : isLikelyLightCssBackground(String(bgToken));
+          })();
+
+    const request =
+      preset === 'mystic' && settings
+        ? ({
+            source: 'builtin',
+            presetId: 'mystic',
+            themeId: settings.ui.themeId,
+            customThemeLight
+          } as const)
+        : path
+          ? ({ source: 'userFile', path } as const)
+          : null;
+
+    if (!request) {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+      setChatThreadBackgroundUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const res = await window.electronAPI.readChatThreadBackground(request);
+      if (cancelled) return;
+      if (!res.ok) {
+        if (chatThreadBackgroundUrlRef.current) {
+          URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+          chatThreadBackgroundUrlRef.current = null;
+        }
+        setChatThreadBackgroundUrl(null);
+        return;
+      }
+      let blob: Blob;
+      try {
+        blob = await fetch(`data:${res.mime};base64,${res.dataBase64}`).then((r) => r.blob());
+      } catch {
+        setChatThreadBackgroundUrl(null);
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      if (cancelled) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+      }
+      chatThreadBackgroundUrlRef.current = url;
+      setChatThreadBackgroundUrl(url);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    settings?.ui.chatThreadBackgroundPreset,
+    settings?.ui.chatThreadBackgroundPath,
+    settings?.ui.themeId,
+    settings?.ui.customThemeTokens?.['--bg-0']
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (chatThreadBackgroundUrlRef.current) {
+        URL.revokeObjectURL(chatThreadBackgroundUrlRef.current);
+        chatThreadBackgroundUrlRef.current = null;
+      }
+    };
+  }, []);
 
   const openRouterKeyForEffect = settings?.selectedProvider === 'openrouter' ? settings.providers.openrouter.apiKey : null;
   const lmstudioBaseForCatalog =
@@ -4024,7 +4119,7 @@ export function App() {
         >
           <div className="sidebar-card">
             <div className="sidebar-brand">
-              <div className="sidebar-brand__badge">OK</div>
+              <div className="sidebar-brand__badge">ML</div>
               <div className="sidebar-brand__title">
                 <img
                   alt="Mythra"
@@ -4868,6 +4963,7 @@ export function App() {
             terminalJobId={inlineTerminalJobId}
             onTerminalRun={runInlineTerminal}
             onTerminalKill={killInlineTerminal}
+            chatThreadBackgroundUrl={chatThreadBackgroundUrl}
           />
         </motion.section>
 

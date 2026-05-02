@@ -1,10 +1,15 @@
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, resolve } from 'node:path';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron';
 /** Single source for BrowserWindow + macOS dock icon (bundled via ?asset). */
 import appIconPath from '../../Images/app_icon.png?asset';
+import mythraBgMysticNeon from '../../Images/backgrounds/1/mythra_background1_neon.png?asset';
+import mythraBgMysticSunset from '../../Images/backgrounds/1/mythra_background1_sunset.png?asset';
+import mythraBgMysticIce from '../../Images/backgrounds/1/mythra_background1_ice.png?asset';
+import mythraBgMysticKiwi from '../../Images/backgrounds/1/mythra_background1_kiwi.png?asset';
 import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
@@ -37,9 +42,82 @@ import {
   type WizardMythwizExportRequest,
   type WizardProfile,
   type WizardPromptApprovalRequest,
+  type ReadChatThreadBackgroundRequest,
   type WizardSetupRequest
 } from '@shared/types';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
+import { mysticVariantForTheme } from '@shared/chat-thread-backgrounds';
+
+const CHAT_THREAD_BG_DIR = 'chat-thread-backgrounds';
+
+function chatThreadBackgroundStoreRoot(): string {
+  return join(app.getPath('userData'), CHAT_THREAD_BG_DIR);
+}
+
+function isPathInsideChatThreadBackgroundStore(absPath: string): boolean {
+  let root: string;
+  let target: string;
+  try {
+    root = realpathSync(chatThreadBackgroundStoreRoot());
+    target = realpathSync(resolve(absPath.trim()));
+  } catch {
+    root = resolve(chatThreadBackgroundStoreRoot());
+    target = resolve(absPath.trim());
+  }
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (process.platform === 'win32') {
+    const t = target.toLowerCase();
+    const p = prefix.toLowerCase();
+    return t === root.toLowerCase() || t.startsWith(p);
+  }
+  return target === root || target.startsWith(prefix);
+}
+
+const MYSTIC_BUNDLED_PATHS = {
+  neon: mythraBgMysticNeon,
+  sunset: mythraBgMysticSunset,
+  ice: mythraBgMysticIce,
+  kiwi: mythraBgMysticKiwi
+} as const;
+
+function resolveReadChatThreadBackgroundFile(raw: unknown): string | null {
+  if (typeof raw === 'string') {
+    const p = resolve(raw.trim());
+    if (!isPathInsideChatThreadBackgroundStore(p)) return null;
+    return p;
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as ReadChatThreadBackgroundRequest;
+  if (o.source === 'userFile') {
+    const p = resolve(String(o.path).trim());
+    if (!isPathInsideChatThreadBackgroundStore(p)) return null;
+    return p;
+  }
+  if (o.source === 'builtin' && o.presetId === 'mystic') {
+    if (!isThemeId(o.themeId)) return null;
+    const variant = mysticVariantForTheme(o.themeId, o.customThemeLight);
+    return MYSTIC_BUNDLED_PATHS[variant];
+  }
+  return null;
+}
+
+function imageMimeFromFilename(filename: string): string {
+  const ext = basename(filename).split('.').pop()?.toLowerCase() ?? '';
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'jpg':
+    case 'jpeg':
+    default:
+      return 'image/jpeg';
+  }
+}
 
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
@@ -728,6 +806,54 @@ ipcMain.handle('wizard:choose-import-mythwiz', async (event) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false as const, error: message };
+  }
+});
+
+ipcMain.handle('ui:choose-chat-thread-background', async (event) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const opts: OpenDialogOptions = {
+    title: 'Chat thread background',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] }]
+  };
+  const pick =
+    winSafe && !winSafe.isDestroyed()
+      ? await dialog.showOpenDialog(winSafe, opts)
+      : await dialog.showOpenDialog(opts);
+  if (pick.canceled || pick.filePaths.length === 0) {
+    return { ok: false as const, cancelled: true as const };
+  }
+  const src = pick.filePaths[0];
+  try {
+    const st = await stat(src);
+    if (!st.isFile()) {
+      return { ok: false as const, error: 'Not a file.' };
+    }
+    const safeBase = basename(src).replace(/[^a-zA-Z0-9._-]/g, '_') || 'background';
+    const destName = `${randomUUID()}-${safeBase}`;
+    const destDir = chatThreadBackgroundStoreRoot();
+    await mkdir(destDir, { recursive: true });
+    const dest = join(destDir, destName);
+    await copyFile(src, dest);
+    return { ok: true as const, path: dest };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false as const, error: message };
+  }
+});
+
+ipcMain.handle('ui:read-chat-thread-background', async (_event, raw: unknown) => {
+  const p = resolveReadChatThreadBackgroundFile(raw);
+  if (!p) return { ok: false as const };
+  try {
+    const buf = await readFile(p);
+    return {
+      ok: true as const,
+      mime: imageMimeFromFilename(p),
+      dataBase64: buf.toString('base64')
+    };
+  } catch {
+    return { ok: false as const };
   }
 });
 

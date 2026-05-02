@@ -90,6 +90,8 @@ const electronAPI = {
   listChats: () => ipcRenderer.invoke("chats:list"),
   loadChat: (id) => ipcRenderer.invoke("chats:load", id),
   saveChat: (chat) => ipcRenderer.invoke("chats:save", chat),
-  deleteChat: (id) => ipcRenderer.invoke("chats:delete", id)
+  deleteChat: (id) => ipcRenderer.invoke("chats:delete", id),
+  chooseChatThreadBackground: () => ipcRenderer.invoke("ui:choose-chat-thread-background"),
+  readChatThreadBackground: (request) => ipcRenderer.invoke("ui:read-chat-thread-background", request)
 };
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

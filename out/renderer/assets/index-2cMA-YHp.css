@@ -810,7 +810,7 @@ html[data-platform='darwin'] .app-shell {
   font-weight: 500;
   color: var(--text-0);
   min-width: 0;
-  /* Pull wordmark toward OK without transform (avoids clipping under overflow:hidden). */
+  /* Pull wordmark toward badge without transform (avoids clipping under overflow:hidden). */
   margin-left: -16px;
 }
 
@@ -1901,7 +1901,7 @@ html[data-platform='darwin'] .app-shell {
 .chat-scroll {
   flex: 1;
   min-height: 0;
-  padding: 16px 18px;
+  padding: 0;
   background: var(--chat-thread-bg, transparent);
   overflow-y: auto;
   /* Avoid browser scroll-anchoring fighting <details> open/close (could clip max scroll). */
@@ -1909,14 +1909,52 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .chat-scroll__inner {
+  position: relative;
   display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 100%;
+  box-sizing: border-box;
+}
+
+.chat-scroll__stack {
+  position: relative;
+  z-index: 2;
+  display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 100%;
   box-sizing: border-box;
-  /* Scroll range past the last bubble (composer sits below this area). */
-  padding-bottom: 40px;
+  padding: 16px 18px 40px;
+}
+
+.chat-scroll__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.chat-scroll__bg-img {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.chat-scroll__bg-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--chat-thread-bg, var(--bg-1)) 52%, transparent);
 }
 
 .chat-scroll__bottom {
@@ -1961,7 +1999,7 @@ html[data-platform='darwin'] .app-shell {
   align-items: stretch;
 }
 
-.chat-scroll.wizard-hub-scroll .wizard-hub-scroll__inner {
+.chat-scroll.wizard-hub-scroll .wizard-hub-scroll__inner .chat-scroll__stack {
   min-height: 100%;
 }
 
@@ -2023,14 +2061,14 @@ html[data-platform='darwin'] .app-shell {
   border: 1px solid var(--line);
   border-left-width: 3px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: linear-gradient(rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.02)), var(--chat-thread-bg, var(--bg-1));
 }
 
 :root[data-theme='ice-station'] .chat-activity,
 :root[data-theme='kiwi'] .chat-activity ,
 :root[data-theme='custom'][data-custom-light='true'] .chat-activity {
 
-  background: rgba(0, 0, 0, 0.02);
+  background: linear-gradient(rgba(0, 0, 0, 0.02), rgba(0, 0, 0, 0.02)), var(--chat-thread-bg, var(--bg-1));
 }
 
 .chat-activity__label {
@@ -2167,21 +2205,22 @@ details.chat-activity--collapsible {
   word-break: break-word;
 }
 
-/* Chat bubble */
+/* Chat bubble — tint is layered over thread color so bubbles stay opaque (same look as on plain thread, no wallpaper bleed-through). */
 
 .chat-bubble {
   max-width: min(85%, 700px);
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  background: var(--chat-assistant-bg, rgba(255, 255, 255, 0.025));
+  background: linear-gradient(var(--chat-assistant-bg, rgba(255, 255, 255, 0.025)), var(--chat-assistant-bg, rgba(255, 255, 255, 0.025))),
+    var(--chat-thread-bg, var(--bg-1));
 }
 
 :root[data-theme='ice-station'] .chat-bubble,
 :root[data-theme='kiwi'] .chat-bubble ,
 :root[data-theme='custom'][data-custom-light='true'] .chat-bubble {
 
-  background: var(--chat-assistant-bg, rgba(255, 255, 255, 0.5));
+  background: linear-gradient(var(--chat-assistant-bg, rgba(255, 255, 255, 0.5)), var(--chat-assistant-bg, rgba(255, 255, 255, 0.5))), var(--chat-thread-bg, var(--bg-1));
 }
 
 .chat-bubble__header {
@@ -2464,19 +2503,19 @@ details.chat-activity--collapsible {
 .chat-bubble--user {
   margin-left: auto;
   border-color: rgba(99, 102, 241, 0.16);
-  background: var(--chat-user-bg, var(--accent-subtle));
+  background: linear-gradient(var(--chat-user-bg, var(--accent-subtle)), var(--chat-user-bg, var(--accent-subtle))), var(--chat-thread-bg, var(--bg-1));
 }
 
 :root[data-theme='ice-station'] .chat-bubble--user {
-  background: var(--chat-user-bg, rgba(37, 99, 235, 0.08));
+  background: linear-gradient(var(--chat-user-bg, rgba(37, 99, 235, 0.08)), var(--chat-user-bg, rgba(37, 99, 235, 0.08))), var(--chat-thread-bg, var(--bg-1));
 }
 
 :root[data-theme='kiwi'] .chat-bubble--user {
-  background: var(--chat-user-bg, rgba(22, 163, 74, 0.1));
+  background: linear-gradient(var(--chat-user-bg, rgba(22, 163, 74, 0.1)), var(--chat-user-bg, rgba(22, 163, 74, 0.1))), var(--chat-thread-bg, var(--bg-1));
 }
 
 :root[data-theme='custom'][data-custom-light='true'] .chat-bubble--user {
-  background: var(--chat-user-bg, rgba(100, 116, 139, 0.1));
+  background: linear-gradient(var(--chat-user-bg, rgba(100, 116, 139, 0.1)), var(--chat-user-bg, rgba(100, 116, 139, 0.1))), var(--chat-thread-bg, var(--bg-1));
 }
 
 /* Chat thinking */
@@ -2485,7 +2524,7 @@ details.chat-activity--collapsible {
   margin: 0 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--thinking-bg, rgba(0, 0, 0, 0.12));
+  background: linear-gradient(var(--thinking-bg, rgba(0, 0, 0, 0.12)), var(--thinking-bg, rgba(0, 0, 0, 0.12))), var(--chat-thread-bg, var(--bg-1));
   contain: layout;
 }
 
@@ -2493,7 +2532,7 @@ details.chat-activity--collapsible {
 :root[data-theme='kiwi'] .chat-thinking ,
 :root[data-theme='custom'][data-custom-light='true'] .chat-thinking {
 
-  background: var(--thinking-bg, rgba(0, 0, 0, 0.04));
+  background: linear-gradient(var(--thinking-bg, rgba(0, 0, 0, 0.04)), var(--thinking-bg, rgba(0, 0, 0, 0.04))), var(--chat-thread-bg, var(--bg-1));
 }
 
 .chat-thinking__summary {
@@ -4840,6 +4879,38 @@ details.chat-activity--collapsible {
 
 .field--after-theme-grid {
   margin-top: 14px;
+}
+
+.chat-thread-bg-select-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chat-thread-bg-select-row .app-select {
+  width: 100%;
+}
+
+.chat-thread-bg-select-row__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chat-thread-bg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.chat-thread-bg-path {
+  word-break: break-all;
 }
 
 .session-mode-toggle {

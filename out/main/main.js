@@ -1,10 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { join as join$1, relative, resolve, sep, dirname, basename, extname } from "node:path";
+import { existsSync, watch, realpathSync } from "node:fs";
 import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
-import { existsSync, watch } from "node:fs";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
 import { promisify } from "node:util";
@@ -14,6 +14,10 @@ const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
 const appIconPath = join(__dirname, "./chunks/app_icon-DtNVDXr_.png");
+const mythraBgMysticNeon = join(__dirname, "./chunks/mythra_background1_neon-D6ehJrYa.png");
+const mythraBgMysticSunset = join(__dirname, "./chunks/mythra_background1_sunset-BHB69ZDw.png");
+const mythraBgMysticIce = join(__dirname, "./chunks/mythra_background1_ice-D2LCKdGA.png");
+const mythraBgMysticKiwi = join(__dirname, "./chunks/mythra_background1_kiwi-BGD5SfOs.png");
 const CHATS_DIR = "mythra-chats";
 const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -1275,6 +1279,7 @@ const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot rea
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
+const mythraProductFeaturesInstruction = "Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.";
 const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
@@ -2278,6 +2283,7 @@ class ModelService {
         webHeaderUiStateLine(settings.ui.webSearch),
         ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
         "For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.",
+        mythraProductFeaturesInstruction,
         mythraSessionModeEmbedInstruction,
         mythraWebSearchEmbedInstruction,
         mythraThemeInChatModeInstruction,
@@ -2299,6 +2305,7 @@ class ModelService {
         mythraWebSearchEmbedInstruction,
         mythraSetAppThemeAgentInstruction,
         mythraToolAccessReadInstruction,
+        mythraProductFeaturesInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
@@ -2335,6 +2342,7 @@ class ModelService {
       webHeaderUiStateLine(settings.ui.webSearch),
       mythraSetAppThemeAgentInstruction,
       mythraToolAccessReadInstruction,
+      mythraProductFeaturesInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
       mythraCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
@@ -3206,10 +3214,29 @@ const defaultSettings = {
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] },
     wizardProjectsParentFolder: null,
-    onboardingCompleted: false
+    onboardingCompleted: false,
+    chatThreadBackgroundPreset: null,
+    chatThreadBackgroundPath: null
   },
   lastWorkspaceRoot: null
 };
+function mysticVariantForTheme(themeId, customThemeLight) {
+  switch (themeId) {
+    case "neon-grid":
+      return "neon";
+    case "sunset-terminal":
+      return "sunset";
+    case "ice-station":
+      return "ice";
+    case "kiwi":
+      return "kiwi";
+    case "custom":
+      return customThemeLight ? "ice" : "neon";
+  }
+}
+function isChatThreadBackgroundPresetId(value) {
+  return value === "mystic";
+}
 function isSavedPromptPresetList(v) {
   return Array.isArray(v) && v.every(
     (x) => x != null && typeof x === "object" && typeof x.id === "string" && typeof x.name === "string" && typeof x.prompt === "string" && typeof x.updatedAt === "number"
@@ -3299,6 +3326,8 @@ const mergeSettings = (saved) => ({
   ui: {
     ...defaultSettings.ui,
     ...saved?.ui,
+    chatThreadBackgroundPreset: saved?.ui?.chatThreadBackgroundPreset != null && isChatThreadBackgroundPresetId(String(saved.ui.chatThreadBackgroundPreset)) ? saved.ui.chatThreadBackgroundPreset : null,
+    chatThreadBackgroundPath: typeof saved?.ui?.chatThreadBackgroundPath === "string" && saved.ui.chatThreadBackgroundPath.trim().length > 0 ? saved.ui.chatThreadBackgroundPath.trim() : null,
     favoriteModels: {
       lmstudio: [
         ...saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio
@@ -3367,6 +3396,11 @@ Describe this Wizard's identity, tone, principles, strengths, boundaries, and wo
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+- **Default core files** Mythra creates are only soul, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
+
+## Example directions (optional)
+
+Users often dedicate a Wizard to: matching a **writing voice** (samples + soul); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
 
 Describe your preferred stacks, scripts, test commands, and project conventions below.
 `,
@@ -4149,6 +4183,71 @@ class WorkspaceWatchController {
     }
   }
 }
+const CHAT_THREAD_BG_DIR = "chat-thread-backgrounds";
+function chatThreadBackgroundStoreRoot() {
+  return join$1(app.getPath("userData"), CHAT_THREAD_BG_DIR);
+}
+function isPathInsideChatThreadBackgroundStore(absPath) {
+  let root;
+  let target;
+  try {
+    root = realpathSync(chatThreadBackgroundStoreRoot());
+    target = realpathSync(resolve(absPath.trim()));
+  } catch {
+    root = resolve(chatThreadBackgroundStoreRoot());
+    target = resolve(absPath.trim());
+  }
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (process.platform === "win32") {
+    const t = target.toLowerCase();
+    const p = prefix.toLowerCase();
+    return t === root.toLowerCase() || t.startsWith(p);
+  }
+  return target === root || target.startsWith(prefix);
+}
+const MYSTIC_BUNDLED_PATHS = {
+  neon: mythraBgMysticNeon,
+  sunset: mythraBgMysticSunset,
+  ice: mythraBgMysticIce,
+  kiwi: mythraBgMysticKiwi
+};
+function resolveReadChatThreadBackgroundFile(raw) {
+  if (typeof raw === "string") {
+    const p = resolve(raw.trim());
+    if (!isPathInsideChatThreadBackgroundStore(p)) return null;
+    return p;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw;
+  if (o.source === "userFile") {
+    const p = resolve(String(o.path).trim());
+    if (!isPathInsideChatThreadBackgroundStore(p)) return null;
+    return p;
+  }
+  if (o.source === "builtin" && o.presetId === "mystic") {
+    if (!isThemeId(o.themeId)) return null;
+    const variant = mysticVariantForTheme(o.themeId, o.customThemeLight);
+    return MYSTIC_BUNDLED_PATHS[variant];
+  }
+  return null;
+}
+function imageMimeFromFilename(filename) {
+  const ext = basename(filename).split(".").pop()?.toLowerCase() ?? "";
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "svg":
+      return "image/svg+xml";
+    case "jpg":
+    case "jpeg":
+    default:
+      return "image/jpeg";
+  }
+}
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
@@ -4714,6 +4813,49 @@ ipcMain.handle("wizard:choose-import-mythwiz", async (event) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
+  }
+});
+ipcMain.handle("ui:choose-chat-thread-background", async (event) => {
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const opts = {
+    title: "Chat thread background",
+    properties: ["openFile"],
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "svg"] }]
+  };
+  const pick = winSafe && !winSafe.isDestroyed() ? await dialog.showOpenDialog(winSafe, opts) : await dialog.showOpenDialog(opts);
+  if (pick.canceled || pick.filePaths.length === 0) {
+    return { ok: false, cancelled: true };
+  }
+  const src = pick.filePaths[0];
+  try {
+    const st = await stat(src);
+    if (!st.isFile()) {
+      return { ok: false, error: "Not a file." };
+    }
+    const safeBase = basename(src).replace(/[^a-zA-Z0-9._-]/g, "_") || "background";
+    const destName = `${randomUUID()}-${safeBase}`;
+    const destDir = chatThreadBackgroundStoreRoot();
+    await mkdir(destDir, { recursive: true });
+    const dest = join$1(destDir, destName);
+    await copyFile(src, dest);
+    return { ok: true, path: dest };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+});
+ipcMain.handle("ui:read-chat-thread-background", async (_event, raw) => {
+  const p = resolveReadChatThreadBackgroundFile(raw);
+  if (!p) return { ok: false };
+  try {
+    const buf = await readFile(p);
+    return {
+      ok: true,
+      mime: imageMimeFromFilename(p),
+      dataBase64: buf.toString("base64")
+    };
+  } catch {
+    return { ok: false };
   }
 });
 ipcMain.handle("shell:open-external", async (_event, rawUrl) => {

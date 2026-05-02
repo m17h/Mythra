@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, type AppSettings } from '@shared/types';
+import { isChatThreadBackgroundPresetId } from '@shared/chat-thread-backgrounds';
 import { normalizeProviderProfile } from '@shared/provider-profile';
 
 const SETTINGS_FILE = 'mythra-settings.json';
@@ -55,6 +56,14 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
   ui: {
     ...defaultSettings.ui,
     ...saved?.ui,
+    chatThreadBackgroundPreset:
+      saved?.ui?.chatThreadBackgroundPreset != null && isChatThreadBackgroundPresetId(String(saved.ui.chatThreadBackgroundPreset))
+        ? saved.ui.chatThreadBackgroundPreset
+        : null,
+    chatThreadBackgroundPath:
+      typeof saved?.ui?.chatThreadBackgroundPath === 'string' && saved.ui.chatThreadBackgroundPath.trim().length > 0
+        ? saved.ui.chatThreadBackgroundPath.trim()
+        : null,
     favoriteModels: {
       lmstudio: [
         ...(saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio)

@@ -6,6 +6,9 @@ import type {
   ChatStreamDelta,
   ChatStreamDone,
   ChatStreamError,
+  ChooseChatThreadBackgroundResult,
+  ReadChatThreadBackgroundRequest,
+  ReadChatThreadBackgroundResult,
   CommandChunk,
   CommandResult,
   ModelInfo,
@@ -160,7 +163,11 @@ const electronAPI = {
   listChats: () => ipcRenderer.invoke('chats:list') as Promise<SavedChatMeta[]>,
   loadChat: (id: string) => ipcRenderer.invoke('chats:load', id) as Promise<SavedChat | null>,
   saveChat: (chat: SavedChat) => ipcRenderer.invoke('chats:save', chat) as Promise<void>,
-  deleteChat: (id: string) => ipcRenderer.invoke('chats:delete', id) as Promise<boolean>
+  deleteChat: (id: string) => ipcRenderer.invoke('chats:delete', id) as Promise<boolean>,
+  chooseChatThreadBackground: () =>
+    ipcRenderer.invoke('ui:choose-chat-thread-background') as Promise<ChooseChatThreadBackgroundResult>,
+  readChatThreadBackground: (request: ReadChatThreadBackgroundRequest | string) =>
+    ipcRenderer.invoke('ui:read-chat-thread-background', request) as Promise<ReadChatThreadBackgroundResult>
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

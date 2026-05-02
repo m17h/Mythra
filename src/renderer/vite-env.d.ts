@@ -7,6 +7,9 @@ import type {
   ChatStreamDelta,
   ChatStreamDone,
   ChatStreamError,
+  ChooseChatThreadBackgroundResult,
+  ReadChatThreadBackgroundRequest,
+  ReadChatThreadBackgroundResult,
   CommandChunk,
   CommandResult,
   ModelInfo,
@@ -97,6 +100,8 @@ declare global {
       loadChat: (id: string) => Promise<SavedChat | null>;
       saveChat: (chat: SavedChat) => Promise<void>;
       deleteChat: (id: string) => Promise<boolean>;
+      chooseChatThreadBackground: () => Promise<ChooseChatThreadBackgroundResult>;
+      readChatThreadBackground: (request: ReadChatThreadBackgroundRequest | string) => Promise<ReadChatThreadBackgroundResult>;
     };
   }
 }

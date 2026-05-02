@@ -44,6 +44,11 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+- **Default core files** Mythra creates are only soul, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
+
+## Example directions (optional)
+
+Users often dedicate a Wizard to: matching a **writing voice** (samples + soul); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
 
 Describe your preferred stacks, scripts, test commands, and project conventions below.
 `,

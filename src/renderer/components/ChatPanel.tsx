@@ -289,6 +289,8 @@ interface ChatPanelProps {
   /** Wizards tab with no wizard/session selected: show hub copy + create action instead of the thread. */
   wizardHubPlaceholder?: boolean;
   onOpenWizardCreator?: () => void;
+  /** `blob:` URL from App (Settings → Theme background); shown behind the thread. */
+  chatThreadBackgroundUrl?: string | null;
 }
 
 const activityLabelMap = {
@@ -535,7 +537,8 @@ export function ChatPanel({
   wizardHubPlaceholder = false,
   onOpenWizardCreator,
   nexusRelayProgress = null,
-  nexusRelayQueueDuringStream = false
+  nexusRelayQueueDuringStream = false,
+  chatThreadBackgroundUrl = null
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -807,6 +810,22 @@ export function ChatPanel({
 
   const renderChunks = useMemo(() => buildRenderChunks(timeline), [timeline]);
 
+  const chatBgLayers =
+    chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== '' ? (
+      <>
+        <div className="chat-scroll__bg" aria-hidden>
+          <img
+            alt=""
+            className="chat-scroll__bg-img"
+            decoding="async"
+            draggable={false}
+            src={chatThreadBackgroundUrl}
+          />
+        </div>
+        <div className="chat-scroll__bg-scrim" aria-hidden />
+      </>
+    ) : null;
+
   return (
     <section className="chat-panel">
       <div className="chat-panel__header">
@@ -884,7 +903,9 @@ export function ChatPanel({
           ref={scrollRef}
         >
           <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
-            <div className="chat-empty wizard-hub-empty">
+            {chatBgLayers}
+            <div className="chat-scroll__stack">
+              <div className="chat-empty wizard-hub-empty">
               <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
                 <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
                   <path
@@ -914,12 +935,20 @@ export function ChatPanel({
               </p>
             </div>
             <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
+            </div>
           </div>
         </div>
       ) : (
         <>
-      <div className="chat-scroll" onScroll={handleScroll} onWheelCapture={handleWheelCapture} ref={scrollRef}>
+      <div
+        className="chat-scroll"
+        onScroll={handleScroll}
+        onWheelCapture={handleWheelCapture}
+        ref={scrollRef}
+      >
         <div className="chat-scroll__inner" ref={innerRef}>
+          {chatBgLayers}
+          <div className="chat-scroll__stack">
         {timeline.length === 0 ? (
           <div className="chat-empty chat-empty--thread-start">
             <div className="chat-empty__icon">
@@ -1031,6 +1060,7 @@ export function ChatPanel({
           );
         })}
         <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
+          </div>
         </div>
       </div>
 

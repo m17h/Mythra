@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SearchProvider } from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getThemeName } from '@shared/themes';
+import { CHAT_THREAD_BUILTIN_PRESETS } from '@shared/chat-thread-backgrounds';
 import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
@@ -52,6 +53,10 @@ export function SettingsPanel({
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [themeSectionExpanded, setThemeSectionExpanded] = useState(false);
+  const [chatBgBusy, setChatBgBusy] = useState(false);
+  const [chatBgError, setChatBgError] = useState<string | null>(null);
+  /** Keeps "Custom image" selected in the dropdown before the user picks a file. */
+  const [chatBgCustomFocus, setChatBgCustomFocus] = useState(false);
   const searchSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,6 +83,14 @@ export function SettingsPanel({
     Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
 
   const activeThemeLabel = getThemeName(settings.ui.themeId);
+
+  const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
+  const chatBgSelectValue =
+    settings.ui.chatThreadBackgroundPreset === 'mystic'
+      ? 'mystic'
+      : settings.ui.chatThreadBackgroundPath || chatBgCustomFocus
+        ? 'custom'
+        : 'none';
 
   const updateProvider = (patch: Partial<typeof provider>, opts?: PresetPatchOptions) => {
     const next: AppSettings = {
@@ -405,30 +418,125 @@ export function SettingsPanel({
                         </button>
                       ))}
                     </div>
-                    <div className="field field--after-theme-grid">
-                      <span>Session mode</span>
-                      <div className="session-mode-toggle">
-                        <button
-                          className={`session-mode-toggle__option ${settings.ui.sessionMode === 'talk' ? 'is-active' : ''}`}
-                          onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'talk' } })}
-                          type="button"
-                        >
-                          Chat
-                        </button>
-                        <button
-                          className={`session-mode-toggle__option ${settings.ui.sessionMode === 'agent' ? 'is-active' : ''}`}
-                          onClick={() => onChange({ ...settings, ui: { ...settings.ui, sessionMode: 'agent' } })}
-                          type="button"
-                        >
-                          Agent
-                        </button>
-                        <span
-                          className="session-mode-toggle__slider"
-                          style={{
-                            transform: settings.ui.sessionMode === 'agent' ? 'translateX(100%)' : 'translateX(0)'
+                    <div className="field field--after-theme-grid chat-thread-bg-field">
+                      <span>Chat background</span>
+                      <p className="inline-hint">
+                        Optional image behind the message list. Built-in packs switch automatically when you change theme; or use
+                        your own file (PNG, JPEG, WebP, GIF, or SVG).
+                      </p>
+                      <label className="field chat-thread-bg-select-row">
+                        <span className="chat-thread-bg-select-row__label" id="chat-thread-bg-source-label">
+                          Source
+                        </span>
+                        <AppSelect
+                          ariaLabelledBy="chat-thread-bg-source-label"
+                          portalDropdown
+                          value={chatBgSelectValue}
+                          onChange={(v) => {
+                            setChatBgError(null);
+                            if (v === 'none') {
+                              setChatBgCustomFocus(false);
+                              onChange({
+                                ...settings,
+                                ui: { ...settings.ui, chatThreadBackgroundPreset: null, chatThreadBackgroundPath: null }
+                              });
+                              return;
+                            }
+                            if (v === 'mystic') {
+                              setChatBgCustomFocus(false);
+                              onChange({
+                                ...settings,
+                                ui: { ...settings.ui, chatThreadBackgroundPreset: 'mystic', chatThreadBackgroundPath: null }
+                              });
+                              return;
+                            }
+                            setChatBgCustomFocus(true);
+                            onChange({
+                              ...settings,
+                              ui: {
+                                ...settings.ui,
+                                chatThreadBackgroundPreset: null,
+                                chatThreadBackgroundPath: settings.ui.chatThreadBackgroundPath
+                              }
+                            });
                           }}
+                          options={[
+                            { value: 'none', label: 'None' },
+                            { value: 'mystic', label: mysticPreset?.label ?? 'Mystic' },
+                            { value: 'custom', label: 'Custom image…' }
+                          ]}
                         />
-                      </div>
+                      </label>
+                      {settings.ui.chatThreadBackgroundPreset === 'mystic' && mysticPreset ? (
+                        <p className="inline-hint">{mysticPreset.description}</p>
+                      ) : null}
+                      {chatBgSelectValue === 'custom' ? (
+                        <>
+                          <div className="chat-thread-bg-actions">
+                            <button
+                              className="btn btn--secondary"
+                              disabled={chatBgBusy}
+                              onClick={async () => {
+                                setChatBgError(null);
+                                setChatBgBusy(true);
+                                try {
+                                  const res = await window.electronAPI.chooseChatThreadBackground();
+                                  if (res.ok) {
+                                    setChatBgCustomFocus(true);
+                                    onChange({
+                                      ...settings,
+                                      ui: {
+                                        ...settings.ui,
+                                        chatThreadBackgroundPreset: null,
+                                        chatThreadBackgroundPath: res.path
+                                      }
+                                    });
+                                  } else if ('error' in res) {
+                                    setChatBgError(res.error);
+                                  }
+                                } finally {
+                                  setChatBgBusy(false);
+                                }
+                              }}
+                              type="button"
+                            >
+                              {chatBgBusy
+                                ? 'Opening…'
+                                : settings.ui.chatThreadBackgroundPath
+                                  ? 'Replace image…'
+                                  : 'Choose image…'}
+                            </button>
+                            {settings.ui.chatThreadBackgroundPath ? (
+                              <button
+                                className="btn btn--ghost"
+                                disabled={chatBgBusy}
+                                onClick={() => {
+                                  setChatBgError(null);
+                                  onChange({
+                                    ...settings,
+                                    ui: { ...settings.ui, chatThreadBackgroundPreset: null, chatThreadBackgroundPath: null }
+                                  });
+                                }}
+                                type="button"
+                              >
+                                Remove file
+                              </button>
+                            ) : null}
+                          </div>
+                          {settings.ui.chatThreadBackgroundPath ? (
+                            <p className="inline-hint chat-thread-bg-path" title={settings.ui.chatThreadBackgroundPath}>
+                              {settings.ui.chatThreadBackgroundPath.replace(/^.*[\\/]/, '')}
+                            </p>
+                          ) : (
+                            <p className="inline-hint">Pick an image file to show behind the thread.</p>
+                          )}
+                        </>
+                      ) : null}
+                      {chatBgError ? (
+                        <p className="inline-hint inline-hint--warning" role="alert">
+                          {chatBgError}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 </motion.div>
