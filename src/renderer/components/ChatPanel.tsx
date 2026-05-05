@@ -826,129 +826,46 @@ export function ChatPanel({
       </>
     ) : null;
 
-  return (
-    <section className="chat-panel">
-      <div className="chat-panel__header">
-        <div className="chat-panel__header-left">
-          <div className="chat-panel__header-titles">
-            {isWizard || isNexus ? (
-              <div
-                className={`chat-panel__wizard-pill ${isNexus ? 'chat-panel__wizard-pill--nexus' : ''}`}
-                title={isNexus ? 'Nexus projects coordinate multiple Wizards in a shared workspace' : 'Wizards always work with tools and their own workspace'}
-              >
-                {isNexus ? 'Nexus' : 'Wizard'}
-              </div>
-            ) : (
-              <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
-                <button
-                  className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
-                  disabled={sessionModeToggleDisabled}
-                  onClick={() => { if (!isTalk) onSessionModeToggle(); }}
-                  title="Chat mode (no tools)"
-                  type="button"
-                >
-                  Chat
-                </button>
-                <button
-                  className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
-                  disabled={sessionModeToggleDisabled}
-                  onClick={() => { if (isTalk) onSessionModeToggle(); }}
-                  title="Agent mode (tools & workspace)"
-                  type="button"
-                >
-                  Agent
-                </button>
-                <span
-                  className="chat-panel__mode-slider"
-                  style={{ transform: isTalk ? 'translateX(0)' : 'translateX(100%)' }}
-                />
-              </div>
-            )}
-            <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+  const wizardHubScrollInner = (
+    <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
+      <div className="chat-scroll__stack">
+        <div className="chat-empty wizard-hub-empty">
+          <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path
+                d="M22 7L36 37H8L22 7z"
+                stroke="currentColor"
+                strokeWidth="1.45"
+                strokeLinejoin="round"
+              />
+              <circle cx="22" cy="23" r="2.35" fill="currentColor" opacity={0.22} />
+              <path
+                d="M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8"
+                stroke="currentColor"
+                strokeWidth="1.35"
+                strokeLinecap="round"
+              />
+            </svg>
           </div>
-          <span className="chat-panel__session" title={sessionSubheading}>
-            {sessionSubheading}
-          </span>
+          <h3 className="chat-empty__title">Select a wizard to get started</h3>
+          <p className="chat-empty__desc wizard-hub-desc">
+            Pick one from the list on the left,
+            <br />
+            or create one{' '}
+            <button type="button" className="wizard-hub-desc__here" onClick={() => onOpenWizardCreator?.()}>
+              here
+            </button>
+            .
+          </p>
         </div>
-        <div className="chat-panel__header-right">
-          <label
-            className={`chat-panel__web-toggle ${webSearchDisabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
-            title="Allow the model to call web_search in Chat or Agent"
-          >
-            <input
-              checked={webSearch}
-              disabled={webSearchDisabled}
-              onChange={(e) => onWebSearchChange(e.target.checked)}
-              type="checkbox"
-            />
-            <span className="chat-panel__web-toggle-track">
-              <span className="chat-panel__web-toggle-knob" />
-            </span>
-            <span>Web</span>
-          </label>
-          <div
-            className={['chat-panel__status', statusModifierClass].filter(Boolean).join(' ')}
-          >
-            <span className="chat-panel__status-dot" />
-            {statusLabel}
-          </div>
-        </div>
+        <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
       </div>
+    </div>
+  );
 
-      {wizardHubPlaceholder ? (
-        <div
-          className="chat-scroll wizard-hub-scroll"
-          onScroll={handleScroll}
-          onWheelCapture={handleWheelCapture}
-          ref={scrollRef}
-        >
-          {chatBgLayers}
-          <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
-            <div className="chat-scroll__stack">
-              <div className="chat-empty wizard-hub-empty">
-              <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
-                <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-                  <path
-                    d="M22 7L36 37H8L22 7z"
-                    stroke="currentColor"
-                    strokeWidth="1.45"
-                    strokeLinejoin="round"
-                  />
-                  <circle cx="22" cy="23" r="2.35" fill="currentColor" opacity={0.22} />
-                  <path
-                    d="M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8"
-                    stroke="currentColor"
-                    strokeWidth="1.35"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </div>
-              <h3 className="chat-empty__title">Select a wizard to get started</h3>
-              <p className="chat-empty__desc wizard-hub-desc">
-                Pick one from the list on the left,
-                <br />
-                or create one{' '}
-                <button type="button" className="wizard-hub-desc__here" onClick={() => onOpenWizardCreator?.()}>
-                  here
-                </button>
-                .
-              </p>
-            </div>
-            <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
-            </div>
-          </div>
-        </div>
-      ) : (
-        <>
-      <div
-        className="chat-scroll"
-        onScroll={handleScroll}
-        onWheelCapture={handleWheelCapture}
-        ref={scrollRef}
-      >
-        {chatBgLayers}
-        <div className="chat-scroll__inner" ref={innerRef}>
-          <div className="chat-scroll__stack">
+  const threadScrollInner = (
+    <div className="chat-scroll__inner" ref={innerRef}>
+      <div className="chat-scroll__stack">
         {timeline.length === 0 ? (
           <div className="chat-empty chat-empty--thread-start">
             <div className="chat-empty__icon">
@@ -1060,9 +977,126 @@ export function ChatPanel({
           );
         })}
         <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="chat-panel">
+      <div className="chat-panel__header">
+        <div className="chat-panel__header-left">
+          <div className="chat-panel__header-titles">
+            {isWizard || isNexus ? (
+              <div
+                className={`chat-panel__wizard-pill ${isNexus ? 'chat-panel__wizard-pill--nexus' : ''}`}
+                title={isNexus ? 'Nexus projects coordinate multiple Wizards in a shared workspace' : 'Wizards always work with tools and their own workspace'}
+              >
+                {isNexus ? 'Nexus' : 'Wizard'}
+              </div>
+            ) : (
+              <div className={`chat-panel__mode-toggle ${sessionModeToggleDisabled ? 'is-disabled' : ''}`}>
+                <button
+                  className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
+                  disabled={sessionModeToggleDisabled}
+                  onClick={() => { if (!isTalk) onSessionModeToggle(); }}
+                  title="Chat mode (no tools)"
+                  type="button"
+                >
+                  Chat
+                </button>
+                <button
+                  className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
+                  disabled={sessionModeToggleDisabled}
+                  onClick={() => { if (isTalk) onSessionModeToggle(); }}
+                  title="Agent mode (tools & workspace)"
+                  type="button"
+                >
+                  Agent
+                </button>
+                <span
+                  className="chat-panel__mode-slider"
+                  style={{ transform: isTalk ? 'translateX(0)' : 'translateX(100%)' }}
+                />
+              </div>
+            )}
+            <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+          </div>
+          <span className="chat-panel__session" title={sessionSubheading}>
+            {sessionSubheading}
+          </span>
+        </div>
+        <div className="chat-panel__header-right">
+          <label
+            className={`chat-panel__web-toggle ${webSearchDisabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
+            title="Allow the model to call web_search in Chat or Agent"
+          >
+            <input
+              checked={webSearch}
+              disabled={webSearchDisabled}
+              onChange={(e) => onWebSearchChange(e.target.checked)}
+              type="checkbox"
+            />
+            <span className="chat-panel__web-toggle-track">
+              <span className="chat-panel__web-toggle-knob" />
+            </span>
+            <span>Web</span>
+          </label>
+          <div
+            className={['chat-panel__status', statusModifierClass].filter(Boolean).join(' ')}
+          >
+            <span className="chat-panel__status-dot" />
+            {statusLabel}
           </div>
         </div>
       </div>
+
+      {wizardHubPlaceholder ? (
+        chatBgLayers ? (
+          <div className="chat-scroll-shell">
+            {chatBgLayers}
+            <div
+              className="chat-scroll wizard-hub-scroll"
+              onScroll={handleScroll}
+              onWheelCapture={handleWheelCapture}
+              ref={scrollRef}
+            >
+              {wizardHubScrollInner}
+            </div>
+          </div>
+        ) : (
+          <div
+            className="chat-scroll wizard-hub-scroll"
+            onScroll={handleScroll}
+            onWheelCapture={handleWheelCapture}
+            ref={scrollRef}
+          >
+            {wizardHubScrollInner}
+          </div>
+        )
+      ) : (
+        <>
+          {chatBgLayers ? (
+            <div className="chat-scroll-shell">
+              {chatBgLayers}
+              <div
+                className="chat-scroll"
+                onScroll={handleScroll}
+                onWheelCapture={handleWheelCapture}
+                ref={scrollRef}
+              >
+                {threadScrollInner}
+              </div>
+            </div>
+          ) : (
+            <div
+              className="chat-scroll"
+              onScroll={handleScroll}
+              onWheelCapture={handleWheelCapture}
+              ref={scrollRef}
+            >
+              {threadScrollInner}
+            </div>
+          )}
 
       <AnimatePresence initial={false}>
         {terminalOpen && (

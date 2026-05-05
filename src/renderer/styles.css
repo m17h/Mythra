@@ -1886,6 +1886,24 @@ html[data-platform='darwin'] .app-shell {
   box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
+/* Non-scrolling host for thread art: background layers stay pinned while `.chat-scroll` moves. */
+.chat-scroll-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-thread-bg, transparent);
+}
+
+.chat-scroll-shell .chat-scroll {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
 /* Chat scroll area — block layout so the inner column sizes to content; flex+shrink:1 on a sole child
    can clamp height and prevent scrolling past the last message. */
 .chat-scroll {
