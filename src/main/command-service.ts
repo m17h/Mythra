@@ -16,12 +16,32 @@ export class CommandService {
     return { shell, args };
   }
 
+  private killProcessTree(proc: ChildProcessWithoutNullStreams) {
+    if (proc.pid == null) {
+      return;
+    }
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f']);
+      return;
+    }
+    try {
+      process.kill(-proc.pid, 'SIGTERM');
+    } catch {
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Process already exited.
+      }
+    }
+  }
+
   run(window: BrowserWindow, command: string, cwd?: string) {
     const jobId = randomUUID();
     const { shell, args } = this.getShell();
 
     const child = spawn(shell, [...args, command], {
       cwd,
+      detached: process.platform !== 'win32',
       env: process.env
     });
 
@@ -64,6 +84,7 @@ export class CommandService {
     return new Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
       const child = spawn(shell, [...args, command], {
         cwd,
+        detached: process.platform !== 'win32',
         env: process.env
       });
 
@@ -87,7 +108,7 @@ export class CommandService {
 
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
+        this.killProcessTree(child);
         finish({
           stdout,
           stderr: `${stderr}\n[command timed out after ${timeoutMs}ms]`,
@@ -97,7 +118,7 @@ export class CommandService {
       }, timeoutMs);
 
       const abortHandler = () => {
-        child.kill('SIGTERM');
+        this.killProcessTree(child);
         finish({
           stdout,
           stderr: `${stderr}\n[command stopped by user]`,
@@ -143,7 +164,7 @@ export class CommandService {
       return false;
     }
 
-    job.process.kill('SIGTERM');
+    this.killProcessTree(job.process);
     this.jobs.delete(jobId);
     return true;
   }

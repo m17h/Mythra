@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { realpathSync, statSync } from 'node:fs';
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import JSZip from 'jszip';
@@ -24,6 +25,11 @@ const MAX_TREE_ENTRIES = 2_500;
 const MAX_LIST_ENTRIES = 5_000;
 const MAX_SEARCH_FILES = 1_500;
 const MAX_SEARCH_FILE_BYTES = 500_000;
+const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_MYTHWIZ_ARCHIVE_BYTES = 50 * 1024 * 1024;
+const MAX_MYTHWIZ_FILES = 1_000;
+const MAX_MYTHWIZ_FILE_CHARS = 5 * 1024 * 1024;
+const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 const WIZARD_CORE_DOCS = [
   ['soul.md', 'Soul'],
@@ -125,8 +131,46 @@ const spawnWithInput = (cmd: string, args: string[], cwd: string, input: string)
 const OUTSIDE_WORKSPACE_HINT =
   'Target path is outside the active workspace. Use paths relative to this workspace, or enable “Allow paths outside workspace” for this Wizard in Wizard settings (Inspector).';
 
+const pathEquals = (a: string, b: string) =>
+  process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+
+const pathStartsWith = (target: string, root: string) => {
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (process.platform === 'win32') {
+    return target.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return target.startsWith(prefix);
+};
+
+const pathInsideOrEqual = (target: string, root: string) =>
+  pathEquals(target, root) || pathStartsWith(target, root);
+
+async function nearestExistingPath(absPath: string): Promise<string> {
+  let current = absPath;
+  for (;;) {
+    try {
+      await stat(current);
+      return current;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
+}
+
+async function assertRealPathInsideRoot(resolvedRoot: string, resolvedTarget: string) {
+  const realRoot = await realpath(resolvedRoot);
+  const existing = await nearestExistingPath(resolvedTarget);
+  const realExisting = await realpath(existing);
+  if (!pathInsideOrEqual(realExisting, realRoot)) {
+    throw new Error(OUTSIDE_WORKSPACE_HINT);
+  }
+}
+
 /** Resolve `target` against wizard/normal workspace root; optionally allow paths outside `root`. */
-function resolveWorkspaceTarget(root: string, target: string, allowOutsideWorkspace = false): string {
+async function resolveWorkspaceTarget(root: string, target: string, allowOutsideWorkspace = false): Promise<string> {
   const resolvedRoot = resolve(root.trim());
   const raw = target.trim();
   if (!raw) {
@@ -137,10 +181,10 @@ function resolveWorkspaceTarget(root: string, target: string, allowOutsideWorksp
   const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
 
   if (!allowOutsideWorkspace) {
-    const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
-    if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
+    if (!pathInsideOrEqual(resolvedTarget, resolvedRoot)) {
       throw new Error(OUTSIDE_WORKSPACE_HINT);
     }
+    await assertRealPathInsideRoot(resolvedRoot, resolvedTarget);
   }
 
   assertLocalWorkspace(dirname(resolvedTarget));
@@ -150,6 +194,33 @@ function resolveWorkspaceTarget(root: string, target: string, allowOutsideWorksp
 
 const ensureInsideRoot = (root: string, target: string) => resolveWorkspaceTarget(root, target, false);
 
+function isInsideRootSync(root: string, target: string): boolean {
+  try {
+    const resolvedRoot = resolve(root.trim());
+    const raw = target.trim();
+    const isAbsolute = raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw);
+    const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
+    if (!pathInsideOrEqual(resolvedTarget, resolvedRoot)) return false;
+
+    const realRoot = realpathSync(resolvedRoot);
+    let current = resolvedTarget;
+    for (;;) {
+      try {
+        statSync(current);
+        const realExisting = realpathSync(current);
+        return pathInsideOrEqual(realExisting, realRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+        const parent = dirname(current);
+        if (parent === current) return false;
+        current = parent;
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
 const normalizeWizardExportRelPath = (raw: string): string => {
   const posix = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '');
   const segments = posix.split('/').filter((s) => s.length > 0 && s !== '.');
@@ -158,6 +229,20 @@ const normalizeWizardExportRelPath = (raw: string): string => {
   }
   return segments.join('/');
 };
+
+function zipEntryUncompressedSize(entry: JSZip.JSZipObject): number | undefined {
+  const data = (entry as unknown as { _data?: { uncompressedSize?: unknown } })._data;
+  return typeof data?.uncompressedSize === 'number' ? data.uncompressedSize : undefined;
+}
+
+function assertMythwizTextBudget(path: string, content: string, totalChars: number) {
+  if (content.length > MAX_MYTHWIZ_FILE_CHARS) {
+    throw new Error(`Import file is too large: ${path}`);
+  }
+  if (totalChars + content.length > MAX_MYTHWIZ_TOTAL_CHARS) {
+    throw new Error('Import bundle is too large.');
+  }
+}
 
 const sortNodes = (nodes: WorkspaceNode[]) =>
   nodes.sort((a, b) => {
@@ -426,9 +511,15 @@ export class WorkspaceService {
     }
 
     if (request.mythwizWorkspaceFiles?.length) {
+      if (request.mythwizWorkspaceFiles.length > MAX_MYTHWIZ_FILES) {
+        throw new Error(`Import bundle has too many files (max ${MAX_MYTHWIZ_FILES}).`);
+      }
+      let importedChars = 0;
       for (const { relativePath, content } of request.mythwizWorkspaceFiles) {
         const safe = normalizeWizardExportRelPath(relativePath);
-        const abs = ensureInsideRoot(root, safe);
+        assertMythwizTextBudget(safe, content, importedChars);
+        importedChars += content.length;
+        const abs = await ensureInsideRoot(root, safe);
         await mkdir(dirname(abs), { recursive: true });
         await writeFile(abs, content, 'utf8');
       }
@@ -538,7 +629,7 @@ export class WorkspaceService {
 
     for (const rel of normalizedPaths) {
       try {
-        const abs = ensureInsideRoot(root, rel);
+        const abs = await ensureInsideRoot(root, rel);
         await stat(abs);
         const buf = await readFile(abs);
         zip.file(`workspace/${rel}`, buf);
@@ -572,10 +663,18 @@ export class WorkspaceService {
 
   /** Read a `.mythwiz` ZIP produced by Mythra export (manifest, optional system_prompt.md, and workspace/ files). */
   async parseWizardMythwizBuffer(buffer: Buffer): Promise<WizardMythwizImportedPayload> {
+    if (buffer.length > MAX_MYTHWIZ_ARCHIVE_BYTES) {
+      throw new Error(`Import bundle is too large (max ${Math.round(MAX_MYTHWIZ_ARCHIVE_BYTES / 1024 / 1024)} MB).`);
+    }
+
     const zip = await JSZip.loadAsync(buffer);
     const manifestFile = zip.file('manifest.json');
     if (!manifestFile) {
       throw new Error('This file has no manifest.json — pick a Mythra .mythwiz export.');
+    }
+    const manifestSize = zipEntryUncompressedSize(manifestFile);
+    if (manifestSize != null && manifestSize > MAX_MYTHWIZ_FILE_CHARS) {
+      throw new Error('manifest.json is too large.');
     }
     let manifest: { format?: string; version?: number; wizardDisplayName?: string };
     try {
@@ -593,15 +692,24 @@ export class WorkspaceService {
     let systemPrompt = '';
     const spFile = zip.file('system_prompt.md');
     if (spFile) {
+      const systemPromptSize = zipEntryUncompressedSize(spFile);
+      if (systemPromptSize != null && systemPromptSize > MAX_MYTHWIZ_FILE_CHARS) {
+        throw new Error('system_prompt.md is too large.');
+      }
       systemPrompt = await spFile.async('string');
+      assertMythwizTextBudget('system_prompt.md', systemPrompt, 0);
     }
 
     const workspaceFiles: WizardMythwizImportedPayload['workspaceFiles'] = [];
     const prefix = 'workspace/';
+    let totalChars = systemPrompt.length;
     for (const [fullPath, entry] of Object.entries(zip.files)) {
       if (entry.dir) continue;
       const normalizedZipPath = fullPath.replace(/\\/g, '/');
       if (!normalizedZipPath.startsWith(prefix)) continue;
+      if (workspaceFiles.length >= MAX_MYTHWIZ_FILES) {
+        throw new Error(`Import bundle has too many files (max ${MAX_MYTHWIZ_FILES}).`);
+      }
       const inner = normalizedZipPath.slice(prefix.length);
       if (!inner) continue;
       let safeInner: string;
@@ -610,7 +718,13 @@ export class WorkspaceService {
       } catch {
         continue;
       }
+      const entrySize = zipEntryUncompressedSize(entry);
+      if (entrySize != null && entrySize > MAX_MYTHWIZ_FILE_CHARS) {
+        throw new Error(`Import file is too large: ${safeInner}`);
+      }
       const text = await entry.async('string');
+      assertMythwizTextBudget(safeInner, text, totalChars);
+      totalChars += text.length;
       workspaceFiles.push({ relativePath: safeInner, content: text });
     }
 
@@ -680,19 +794,18 @@ export class WorkspaceService {
   }
 
   isInsideRoot(root: string, target: string): boolean {
-    try {
-      ensureInsideRoot(root, target);
-      return true;
-    } catch {
-      return false;
-    }
+    return isInsideRootSync(root, target);
   }
 
   async openFile(root: string, target: string, allowOutsideWorkspace = false): Promise<OpenFile> {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
 
     if (ext === '.svg') {
+      const st = await stat(safePath);
+      if (st.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image preview is too large (max ${Math.round(MAX_IMAGE_PREVIEW_BYTES / 1024 / 1024)} MB).`);
+      }
       const content = await readFile(safePath, 'utf8');
       const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
       return {
@@ -704,6 +817,10 @@ export class WorkspaceService {
 
     const rasterMime = RASTER_IMAGE_EXT[ext];
     if (rasterMime) {
+      const st = await stat(safePath);
+      if (st.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image preview is too large (max ${Math.round(MAX_IMAGE_PREVIEW_BYTES / 1024 / 1024)} MB).`);
+      }
       const buf = await readFile(safePath);
       const dataUrl = `data:${rasterMime};base64,${buf.toString('base64')}`;
       return {
@@ -718,7 +835,7 @@ export class WorkspaceService {
   }
 
   async saveFile(root: string, target: string, content: string, allowOutsideWorkspace = false): Promise<OpenFile> {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await mkdir(dirname(safePath), { recursive: true });
     await writeFile(safePath, content, 'utf8');
     return this.openFile(root, target, allowOutsideWorkspace);
@@ -735,7 +852,7 @@ export class WorkspaceService {
     if (!search) {
       throw new Error('Search text cannot be empty.');
     }
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const count = content.split(search).length - 1;
     if (count === 0) {
@@ -750,7 +867,7 @@ export class WorkspaceService {
     if (!anchor) {
       throw new Error('Anchor text cannot be empty.');
     }
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const index = content.indexOf(anchor);
     if (index < 0) {
@@ -763,15 +880,15 @@ export class WorkspaceService {
   }
 
   async renamePath(root: string, from: string, to: string, allowOutsideWorkspace = false) {
-    const safeFrom = resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
-    const safeTo = resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
+    const safeFrom = await resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
+    const safeTo = await resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
     await mkdir(dirname(safeTo), { recursive: true });
     await rename(safeFrom, safeTo);
     return { from: safeFrom, to: safeTo };
   }
 
   async deletePath(root: string, target: string, allowOutsideWorkspace = false): Promise<{ path: string }> {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await rm(safePath, { recursive: true, force: false });
     return { path: safePath };
   }
@@ -839,7 +956,7 @@ export class WorkspaceService {
     const results: Array<{ path: string; line: number; text: string }> = [];
     for (const entry of files) {
       if (results.length >= limit) break;
-      const full = ensureInsideRoot(root, entry.path);
+      const full = await ensureInsideRoot(root, entry.path);
       try {
         const s = await stat(full);
         if (s.size > MAX_SEARCH_FILE_BYTES) continue;
@@ -859,7 +976,7 @@ export class WorkspaceService {
   }
 
   async getFileOutline(root: string, target: string, allowOutsideWorkspace = false) {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, 'utf8');
     const ext = extname(safePath).toLowerCase();
     const lines = content.split(/\r?\n/);

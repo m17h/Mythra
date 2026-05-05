@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { join as join$1, relative, resolve, sep, dirname, basename, extname } from "node:path";
-import { existsSync, watch, realpathSync } from "node:fs";
-import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm } from "node:fs/promises";
+import { existsSync, realpathSync, statSync, watch } from "node:fs";
+import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm, realpath } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
@@ -119,11 +119,29 @@ class CommandService {
     const args = process.platform === "win32" ? ["-Command"] : ["-lc"];
     return { shell: shell2, args };
   }
+  killProcessTree(proc) {
+    if (proc.pid == null) {
+      return;
+    }
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(proc.pid), "/t", "/f"]);
+      return;
+    }
+    try {
+      process.kill(-proc.pid, "SIGTERM");
+    } catch {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+      }
+    }
+  }
   run(window, command, cwd) {
     const jobId = randomUUID();
     const { shell: shell2, args } = this.getShell();
     const child = spawn(shell2, [...args, command], {
       cwd,
+      detached: process.platform !== "win32",
       env: process.env
     });
     this.jobs.set(jobId, { process: child });
@@ -159,6 +177,7 @@ class CommandService {
     return new Promise((resolve2, reject) => {
       const child = spawn(shell2, [...args, command], {
         cwd,
+        detached: process.platform !== "win32",
         env: process.env
       });
       let stdout = "";
@@ -178,7 +197,7 @@ class CommandService {
       };
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill("SIGTERM");
+        this.killProcessTree(child);
         finish({
           stdout,
           stderr: `${stderr}
@@ -188,7 +207,7 @@ class CommandService {
         });
       }, timeoutMs);
       const abortHandler = () => {
-        child.kill("SIGTERM");
+        this.killProcessTree(child);
         finish({
           stdout,
           stderr: `${stderr}
@@ -228,7 +247,7 @@ class CommandService {
     if (!job) {
       return false;
     }
-    job.process.kill("SIGTERM");
+    this.killProcessTree(job.process);
     this.jobs.delete(jobId);
     return true;
   }
@@ -3386,6 +3405,11 @@ const MAX_TREE_ENTRIES = 2500;
 const MAX_LIST_ENTRIES = 5e3;
 const MAX_SEARCH_FILES = 1500;
 const MAX_SEARCH_FILE_BYTES = 5e5;
+const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_MYTHWIZ_ARCHIVE_BYTES = 50 * 1024 * 1024;
+const MAX_MYTHWIZ_FILES = 1e3;
+const MAX_MYTHWIZ_FILE_CHARS = 5 * 1024 * 1024;
+const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 const WIZARD_CORE_DOCS = [
   ["soul.md", "Soul"],
@@ -3474,7 +3498,38 @@ const spawnWithInput = (cmd, args, cwd, input) => new Promise((resolvePromise, r
   child.stdin.end(input);
 });
 const OUTSIDE_WORKSPACE_HINT = "Target path is outside the active workspace. Use paths relative to this workspace, or enable “Allow paths outside workspace” for this Wizard in Wizard settings (Inspector).";
-function resolveWorkspaceTarget(root, target, allowOutsideWorkspace = false) {
+const pathEquals = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+const pathStartsWith = (target, root) => {
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (process.platform === "win32") {
+    return target.toLowerCase().startsWith(prefix.toLowerCase());
+  }
+  return target.startsWith(prefix);
+};
+const pathInsideOrEqual = (target, root) => pathEquals(target, root) || pathStartsWith(target, root);
+async function nearestExistingPath(absPath) {
+  let current = absPath;
+  for (; ; ) {
+    try {
+      await stat(current);
+      return current;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
+}
+async function assertRealPathInsideRoot(resolvedRoot, resolvedTarget) {
+  const realRoot = await realpath(resolvedRoot);
+  const existing = await nearestExistingPath(resolvedTarget);
+  const realExisting = await realpath(existing);
+  if (!pathInsideOrEqual(realExisting, realRoot)) {
+    throw new Error(OUTSIDE_WORKSPACE_HINT);
+  }
+}
+async function resolveWorkspaceTarget(root, target, allowOutsideWorkspace = false) {
   const resolvedRoot = resolve(root.trim());
   const raw = target.trim();
   if (!raw) {
@@ -3483,15 +3538,40 @@ function resolveWorkspaceTarget(root, target, allowOutsideWorkspace = false) {
   const isAbsolute = raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw);
   const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
   if (!allowOutsideWorkspace) {
-    const prefix = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`;
-    if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(prefix)) {
+    if (!pathInsideOrEqual(resolvedTarget, resolvedRoot)) {
       throw new Error(OUTSIDE_WORKSPACE_HINT);
     }
+    await assertRealPathInsideRoot(resolvedRoot, resolvedTarget);
   }
   assertLocalWorkspace(dirname(resolvedTarget));
   return resolvedTarget;
 }
 const ensureInsideRoot = (root, target) => resolveWorkspaceTarget(root, target, false);
+function isInsideRootSync(root, target) {
+  try {
+    const resolvedRoot = resolve(root.trim());
+    const raw = target.trim();
+    const isAbsolute = raw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(raw);
+    const resolvedTarget = isAbsolute ? resolve(raw) : resolve(resolvedRoot, raw);
+    if (!pathInsideOrEqual(resolvedTarget, resolvedRoot)) return false;
+    const realRoot = realpathSync(resolvedRoot);
+    let current = resolvedTarget;
+    for (; ; ) {
+      try {
+        statSync(current);
+        const realExisting = realpathSync(current);
+        return pathInsideOrEqual(realExisting, realRoot);
+      } catch (error) {
+        if (error.code !== "ENOENT") return false;
+        const parent = dirname(current);
+        if (parent === current) return false;
+        current = parent;
+      }
+    }
+  } catch {
+    return false;
+  }
+}
 const normalizeWizardExportRelPath = (raw) => {
   const posix = raw.trim().replace(/\\/g, "/").replace(/^\/+/, "");
   const segments = posix.split("/").filter((s) => s.length > 0 && s !== ".");
@@ -3500,6 +3580,18 @@ const normalizeWizardExportRelPath = (raw) => {
   }
   return segments.join("/");
 };
+function zipEntryUncompressedSize(entry) {
+  const data = entry._data;
+  return typeof data?.uncompressedSize === "number" ? data.uncompressedSize : void 0;
+}
+function assertMythwizTextBudget(path, content, totalChars) {
+  if (content.length > MAX_MYTHWIZ_FILE_CHARS) {
+    throw new Error(`Import file is too large: ${path}`);
+  }
+  if (totalChars + content.length > MAX_MYTHWIZ_TOTAL_CHARS) {
+    throw new Error("Import bundle is too large.");
+  }
+}
 const sortNodes = (nodes) => nodes.sort((a, b) => {
   if (a.type !== b.type) {
     return a.type === "directory" ? -1 : 1;
@@ -3716,9 +3808,15 @@ class WorkspaceService {
       }
     }
     if (request.mythwizWorkspaceFiles?.length) {
+      if (request.mythwizWorkspaceFiles.length > MAX_MYTHWIZ_FILES) {
+        throw new Error(`Import bundle has too many files (max ${MAX_MYTHWIZ_FILES}).`);
+      }
+      let importedChars = 0;
       for (const { relativePath, content } of request.mythwizWorkspaceFiles) {
         const safe = normalizeWizardExportRelPath(relativePath);
-        const abs = ensureInsideRoot(root, safe);
+        assertMythwizTextBudget(safe, content, importedChars);
+        importedChars += content.length;
+        const abs = await ensureInsideRoot(root, safe);
         await mkdir(dirname(abs), { recursive: true });
         await writeFile(abs, content, "utf8");
       }
@@ -3807,7 +3905,7 @@ class WorkspaceService {
     const workspaceWritten = [];
     for (const rel of normalizedPaths) {
       try {
-        const abs = ensureInsideRoot(root, rel);
+        const abs = await ensureInsideRoot(root, rel);
         await stat(abs);
         const buf = await readFile(abs);
         zip.file(`workspace/${rel}`, buf);
@@ -3836,10 +3934,17 @@ class WorkspaceService {
   }
   /** Read a `.mythwiz` ZIP produced by Mythra export (manifest, optional system_prompt.md, and workspace/ files). */
   async parseWizardMythwizBuffer(buffer) {
+    if (buffer.length > MAX_MYTHWIZ_ARCHIVE_BYTES) {
+      throw new Error(`Import bundle is too large (max ${Math.round(MAX_MYTHWIZ_ARCHIVE_BYTES / 1024 / 1024)} MB).`);
+    }
     const zip = await JSZip.loadAsync(buffer);
     const manifestFile = zip.file("manifest.json");
     if (!manifestFile) {
       throw new Error("This file has no manifest.json — pick a Mythra .mythwiz export.");
+    }
+    const manifestSize = zipEntryUncompressedSize(manifestFile);
+    if (manifestSize != null && manifestSize > MAX_MYTHWIZ_FILE_CHARS) {
+      throw new Error("manifest.json is too large.");
     }
     let manifest;
     try {
@@ -3856,14 +3961,23 @@ class WorkspaceService {
     let systemPrompt = "";
     const spFile = zip.file("system_prompt.md");
     if (spFile) {
+      const systemPromptSize = zipEntryUncompressedSize(spFile);
+      if (systemPromptSize != null && systemPromptSize > MAX_MYTHWIZ_FILE_CHARS) {
+        throw new Error("system_prompt.md is too large.");
+      }
       systemPrompt = await spFile.async("string");
+      assertMythwizTextBudget("system_prompt.md", systemPrompt, 0);
     }
     const workspaceFiles = [];
     const prefix = "workspace/";
+    let totalChars = systemPrompt.length;
     for (const [fullPath, entry] of Object.entries(zip.files)) {
       if (entry.dir) continue;
       const normalizedZipPath = fullPath.replace(/\\/g, "/");
       if (!normalizedZipPath.startsWith(prefix)) continue;
+      if (workspaceFiles.length >= MAX_MYTHWIZ_FILES) {
+        throw new Error(`Import bundle has too many files (max ${MAX_MYTHWIZ_FILES}).`);
+      }
       const inner = normalizedZipPath.slice(prefix.length);
       if (!inner) continue;
       let safeInner;
@@ -3872,7 +3986,13 @@ class WorkspaceService {
       } catch {
         continue;
       }
+      const entrySize = zipEntryUncompressedSize(entry);
+      if (entrySize != null && entrySize > MAX_MYTHWIZ_FILE_CHARS) {
+        throw new Error(`Import file is too large: ${safeInner}`);
+      }
       const text = await entry.async("string");
+      assertMythwizTextBudget(safeInner, text, totalChars);
+      totalChars += text.length;
       workspaceFiles.push({ relativePath: safeInner, content: text });
     }
     workspaceFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
@@ -3932,17 +4052,16 @@ class WorkspaceService {
     return buildTree(root);
   }
   isInsideRoot(root, target) {
-    try {
-      ensureInsideRoot(root, target);
-      return true;
-    } catch {
-      return false;
-    }
+    return isInsideRootSync(root, target);
   }
   async openFile(root, target, allowOutsideWorkspace = false) {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
     if (ext === ".svg") {
+      const st = await stat(safePath);
+      if (st.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image preview is too large (max ${Math.round(MAX_IMAGE_PREVIEW_BYTES / 1024 / 1024)} MB).`);
+      }
       const content2 = await readFile(safePath, "utf8");
       const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content2)}`;
       return {
@@ -3953,6 +4072,10 @@ class WorkspaceService {
     }
     const rasterMime = RASTER_IMAGE_EXT[ext];
     if (rasterMime) {
+      const st = await stat(safePath);
+      if (st.size > MAX_IMAGE_PREVIEW_BYTES) {
+        throw new Error(`Image preview is too large (max ${Math.round(MAX_IMAGE_PREVIEW_BYTES / 1024 / 1024)} MB).`);
+      }
       const buf = await readFile(safePath);
       const dataUrl = `data:${rasterMime};base64,${buf.toString("base64")}`;
       return {
@@ -3965,7 +4088,7 @@ class WorkspaceService {
     return { path: safePath, content };
   }
   async saveFile(root, target, content, allowOutsideWorkspace = false) {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await mkdir(dirname(safePath), { recursive: true });
     await writeFile(safePath, content, "utf8");
     return this.openFile(root, target, allowOutsideWorkspace);
@@ -3974,7 +4097,7 @@ class WorkspaceService {
     if (!search) {
       throw new Error("Search text cannot be empty.");
     }
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const count = content.split(search).length - 1;
     if (count === 0) {
@@ -3988,7 +4111,7 @@ class WorkspaceService {
     if (!anchor) {
       throw new Error("Anchor text cannot be empty.");
     }
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const index = content.indexOf(anchor);
     if (index < 0) {
@@ -4000,14 +4123,14 @@ class WorkspaceService {
     return { path: safePath };
   }
   async renamePath(root, from, to, allowOutsideWorkspace = false) {
-    const safeFrom = resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
-    const safeTo = resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
+    const safeFrom = await resolveWorkspaceTarget(root, from, allowOutsideWorkspace);
+    const safeTo = await resolveWorkspaceTarget(root, to, allowOutsideWorkspace);
     await mkdir(dirname(safeTo), { recursive: true });
     await rename(safeFrom, safeTo);
     return { from: safeFrom, to: safeTo };
   }
   async deletePath(root, target, allowOutsideWorkspace = false) {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     await rm(safePath, { recursive: true, force: false });
     return { path: safePath };
   }
@@ -4067,7 +4190,7 @@ class WorkspaceService {
     const results = [];
     for (const entry of files) {
       if (results.length >= limit) break;
-      const full = ensureInsideRoot(root, entry.path);
+      const full = await ensureInsideRoot(root, entry.path);
       try {
         const s = await stat(full);
         if (s.size > MAX_SEARCH_FILE_BYTES) continue;
@@ -4085,7 +4208,7 @@ class WorkspaceService {
     return results;
   }
   async getFileOutline(root, target, allowOutsideWorkspace = false) {
-    const safePath = resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const content = await readFile(safePath, "utf8");
     const ext = extname(safePath).toLowerCase();
     const lines = content.split(/\r?\n/);
@@ -4194,6 +4317,8 @@ class WorkspaceWatchController {
   }
 }
 const CHAT_THREAD_BG_DIR = "chat-thread-backgrounds";
+const MAX_CHAT_THREAD_BG_BYTES = 20 * 1024 * 1024;
+const PENDING_WORKSPACE_DELETE_MS = 5 * 60 * 1e3;
 function chatThreadBackgroundStoreRoot() {
   return join$1(app.getPath("userData"), CHAT_THREAD_BG_DIR);
 }
@@ -4272,6 +4397,96 @@ let currentSettings = defaultSettings;
 let previousThemeId;
 const pendingWizardPromptApprovals = /* @__PURE__ */ new Map();
 const pendingToolApprovals = /* @__PURE__ */ new Map();
+const trustedWorkspaceRoots = /* @__PURE__ */ new Set();
+const pendingWorkspaceDeleteRoots = /* @__PURE__ */ new Map();
+const workspaceRootKey = async (root) => {
+  const resolved = resolve(root.trim());
+  const real = await realpath(resolved);
+  return process.platform === "win32" ? real.toLowerCase() : real;
+};
+const trustWorkspaceRoot = async (root) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  trustedWorkspaceRoots.add(await workspaceRootKey(usable));
+  return usable;
+};
+const registerPendingWorkspaceDeleteRoot = async (root) => {
+  if (!root?.trim()) return;
+  let key;
+  try {
+    key = await workspaceRootKey(root);
+  } catch {
+    return;
+  }
+  const existing = pendingWorkspaceDeleteRoots.get(key);
+  if (existing) clearTimeout(existing);
+  const timeout = setTimeout(() => {
+    pendingWorkspaceDeleteRoots.delete(key);
+  }, PENDING_WORKSPACE_DELETE_MS);
+  timeout.unref?.();
+  pendingWorkspaceDeleteRoots.set(key, timeout);
+};
+const registeredWorkspaceRootKeys = async () => {
+  const roots = [];
+  for (const chat of await chatStore.listChats()) {
+    if (chat.kind === "wizard" && chat.wizard?.workspaceRoot) {
+      roots.push(chat.wizard.workspaceRoot);
+    }
+    if (chat.kind === "nexus" && chat.nexus?.workspaceRoot) {
+      roots.push(chat.nexus.workspaceRoot);
+    }
+  }
+  const keys = /* @__PURE__ */ new Set();
+  for (const root of roots) {
+    try {
+      keys.add(await workspaceRootKey(root));
+    } catch {
+    }
+  }
+  return keys;
+};
+const assertTrustedWorkspaceRoot = async (root) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if (trustedWorkspaceRoots.has(key)) return usable;
+  const savedLast = currentSettings.lastWorkspaceRoot?.trim();
+  if (savedLast) {
+    try {
+      if (await workspaceRootKey(savedLast) === key) return usable;
+    } catch {
+    }
+  }
+  if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
+  throw new Error("Workspace is not trusted. Use Open workspace or a saved Wizard/Nexus workspace to attach it.");
+};
+const assertRegisteredOrPendingDeleteRoot = async (root) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if ((await registeredWorkspaceRootKeys()).has(key) || pendingWorkspaceDeleteRoots.has(key)) {
+    return { usable, key };
+  }
+  throw new Error("Workspace folder is not registered for deletion.");
+};
+const sameWorkspaceRoot = async (a, b) => {
+  if (!a?.trim() || !b?.trim()) return false;
+  try {
+    return await workspaceRootKey(a) === await workspaceRootKey(b);
+  } catch {
+    return false;
+  }
+};
+const assertSavedChatWorkspaceRootsAreTrusted = async (chat) => {
+  const previous = await chatStore.loadChat(chat.id);
+  if (chat.kind === "wizard" && chat.wizard?.workspaceRoot) {
+    if (!await sameWorkspaceRoot(previous?.wizard?.workspaceRoot, chat.wizard.workspaceRoot)) {
+      await assertTrustedWorkspaceRoot(chat.wizard.workspaceRoot);
+    }
+  }
+  if (chat.kind === "nexus" && chat.nexus?.workspaceRoot) {
+    if (!await sameWorkspaceRoot(previous?.nexus?.workspaceRoot, chat.nexus.workspaceRoot)) {
+      await assertTrustedWorkspaceRoot(chat.nexus.workspaceRoot);
+    }
+  }
+};
 const recordThemeTransition = (from, to) => {
   if (from !== to) {
     previousThemeId = from;
@@ -4598,7 +4813,7 @@ ipcMain.handle("settings:load", async () => {
   return currentSettings;
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
-  const safe = isPresetThemeId(settings.ui.themeId) ? { ...settings, ui: { ...settings.ui, customThemeTokens: void 0 } } : settings;
+  const safe = isPresetThemeId(settings.ui.themeId) ? { ...settings, lastWorkspaceRoot: currentSettings.lastWorkspaceRoot, ui: { ...settings.ui, customThemeTokens: void 0 } } : { ...settings, lastWorkspaceRoot: currentSettings.lastWorkspaceRoot };
   const from = currentSettings.ui.themeId;
   const to = safe.ui.themeId;
   if (from !== to) {
@@ -4612,6 +4827,7 @@ ipcMain.handle("workspace:choose", async () => {
   if (!root) {
     return null;
   }
+  await trustWorkspaceRoot(root);
   activeWorkspaceRoot = root;
   workspaceWatch.setRoot(root);
   currentSettings = await settingsStore.save({
@@ -4630,11 +4846,9 @@ ipcMain.handle("workspace:open-last", async () => {
   if (!candidate) {
     return null;
   }
+  let root;
   try {
-    const st = await stat(candidate);
-    if (!st.isDirectory()) {
-      throw new Error("Not a directory");
-    }
+    root = await trustWorkspaceRoot(candidate);
   } catch {
     currentSettings = await settingsStore.save({
       ...currentSettings,
@@ -4643,12 +4857,12 @@ ipcMain.handle("workspace:open-last", async () => {
     mainWindow?.webContents.send("settings:updated", currentSettings);
     return null;
   }
-  activeWorkspaceRoot = candidate;
-  workspaceWatch.setRoot(candidate);
+  activeWorkspaceRoot = root;
+  workspaceWatch.setRoot(root);
   return {
-    root: candidate,
-    label: basename(candidate),
-    tree: await workspaceService.getTree(candidate)
+    root,
+    label: basename(root),
+    tree: await workspaceService.getTree(root)
   };
 });
 ipcMain.handle("workspace:last-valid-root", async () => {
@@ -4663,7 +4877,7 @@ ipcMain.handle("workspace:last-valid-root", async () => {
   }
 });
 ipcMain.handle("workspace:activate", async (_event, root) => {
-  const resolved = await workspaceService.assertUsableLocalWorkspace(root);
+  const resolved = await assertTrustedWorkspaceRoot(root);
   activeWorkspaceRoot = resolved;
   workspaceWatch.setRoot(resolved);
   return {
@@ -4696,20 +4910,24 @@ ipcMain.handle(
   "wizard:recommended-workspace",
   async (_event, name) => workspaceService.getRecommendedWizardWorkspace(name)
 );
-ipcMain.handle(
-  "wizard:choose-workspace",
-  async (_event, name, preferredDefaultPath) => workspaceService.chooseWizardWorkspace(name, preferredDefaultPath)
-);
-ipcMain.handle(
-  "wizard:choose-projects-folder",
-  async (_event, preferredDefaultPath) => workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
-);
-ipcMain.handle(
-  "nexus:choose-workspace",
-  async (_event, preferredDefaultPath) => workspaceService.chooseNexusWorkspace(preferredDefaultPath)
-);
+ipcMain.handle("wizard:choose-workspace", async (_event, name, preferredDefaultPath) => {
+  const root = await workspaceService.chooseWizardWorkspace(name, preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
+ipcMain.handle("wizard:choose-projects-folder", async (_event, preferredDefaultPath) => {
+  const root = await workspaceService.chooseWizardProjectsFolder(preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
+ipcMain.handle("nexus:choose-workspace", async (_event, preferredDefaultPath) => {
+  const root = await workspaceService.chooseNexusWorkspace(preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
 ipcMain.handle("wizard:setup", async (_event, request) => {
   const result = await workspaceService.setupWizardWorkspace(request);
+  await trustWorkspaceRoot(result.profile.workspaceRoot);
   activeWorkspaceRoot = result.profile.workspaceRoot;
   workspaceWatch.setRoot(result.profile.workspaceRoot);
   return result;
@@ -4717,6 +4935,7 @@ ipcMain.handle("wizard:setup", async (_event, request) => {
 ipcMain.handle("wizard:sync-workspace-folder", async (_event, profile) => {
   const prevRoot = resolve(profile.workspaceRoot.trim());
   const updated = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName(profile);
+  await trustWorkspaceRoot(updated.workspaceRoot);
   if (resolve(prevRoot) !== resolve(updated.workspaceRoot)) {
     if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === prevRoot) {
       activeWorkspaceRoot = updated.workspaceRoot;
@@ -4734,7 +4953,9 @@ ipcMain.handle("wizard:sync-workspace-folder", async (_event, profile) => {
   return updated;
 });
 ipcMain.handle("wizard:delete-workspace", async (_event, root) => {
-  const deleted = await workspaceService.deleteWorkspaceFolder(root);
+  const { usable, key } = await assertRegisteredOrPendingDeleteRoot(root);
+  pendingWorkspaceDeleteRoots.delete(key);
+  const deleted = await workspaceService.deleteWorkspaceFolder(usable);
   if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(deleted.path)) {
     activeWorkspaceRoot = void 0;
     workspaceWatch.stop();
@@ -4817,6 +5038,10 @@ ipcMain.handle("wizard:choose-import-mythwiz", async (event) => {
     return { ok: false, cancelled: true };
   }
   try {
+    const st = await stat(pick.filePaths[0]);
+    if (st.size > 50 * 1024 * 1024) {
+      return { ok: false, error: "Import bundle is too large." };
+    }
     const buf = await readFile(pick.filePaths[0]);
     const data = await workspaceService.parseWizardMythwizBuffer(buf);
     return { ok: true, data };
@@ -4842,6 +5067,9 @@ ipcMain.handle("ui:choose-chat-thread-background", async (event) => {
     if (!st.isFile()) {
       return { ok: false, error: "Not a file." };
     }
+    if (st.size > MAX_CHAT_THREAD_BG_BYTES) {
+      return { ok: false, error: `Image is too large (max ${Math.round(MAX_CHAT_THREAD_BG_BYTES / 1024 / 1024)} MB).` };
+    }
     const safeBase = basename(src).replace(/[^a-zA-Z0-9._-]/g, "_") || "background";
     const destName = `${randomUUID()}-${safeBase}`;
     const destDir = chatThreadBackgroundStoreRoot();
@@ -4858,6 +5086,10 @@ ipcMain.handle("ui:read-chat-thread-background", async (_event, raw) => {
   const p = resolveReadChatThreadBackgroundFile(raw);
   if (!p) return { ok: false };
   try {
+    const st = await stat(p);
+    if (st.size > MAX_CHAT_THREAD_BG_BYTES) {
+      return { ok: false };
+    }
     const buf = await readFile(p);
     return {
       ok: true,
@@ -4911,5 +5143,17 @@ ipcMain.handle("commands:run", async (_event, command, cwd) => {
 ipcMain.handle("commands:kill", async (_event, jobId) => commandService.kill(jobId));
 ipcMain.handle("chats:list", async () => chatStore.listChats());
 ipcMain.handle("chats:load", async (_event, id) => chatStore.loadChat(id));
-ipcMain.handle("chats:save", async (_event, chat) => chatStore.saveChat(chat));
-ipcMain.handle("chats:delete", async (_event, id) => chatStore.deleteChat(id));
+ipcMain.handle("chats:save", async (_event, chat) => {
+  await assertSavedChatWorkspaceRootsAreTrusted(chat);
+  return chatStore.saveChat(chat);
+});
+ipcMain.handle("chats:delete", async (_event, id) => {
+  const chat = await chatStore.loadChat(id);
+  if (chat?.kind === "wizard") {
+    await registerPendingWorkspaceDeleteRoot(chat.wizard?.workspaceRoot);
+  }
+  if (chat?.kind === "nexus") {
+    await registerPendingWorkspaceDeleteRoot(chat.nexus?.workspaceRoot);
+  }
+  return chatStore.deleteChat(id);
+});

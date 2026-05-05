@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron';
 /** Single source for BrowserWindow + macOS dock icon (bundled via ?asset). */
 import appIconPath from '../../Images/app_icon.png?asset';
@@ -49,6 +49,8 @@ import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { mysticVariantForTheme } from '@shared/chat-thread-backgrounds';
 
 const CHAT_THREAD_BG_DIR = 'chat-thread-backgrounds';
+const MAX_CHAT_THREAD_BG_BYTES = 20 * 1024 * 1024;
+const PENDING_WORKSPACE_DELETE_MS = 5 * 60 * 1000;
 
 function chatThreadBackgroundStoreRoot(): string {
   return join(app.getPath('userData'), CHAT_THREAD_BG_DIR);
@@ -135,6 +137,109 @@ let currentSettings: AppSettings = defaultSettings;
 let previousThemeId: ThemeId | undefined;
 const pendingWizardPromptApprovals = new Map<string, (approved: boolean) => void>();
 const pendingToolApprovals = new Map<string, (approved: boolean) => void>();
+const trustedWorkspaceRoots = new Set<string>();
+const pendingWorkspaceDeleteRoots = new Map<string, ReturnType<typeof setTimeout>>();
+
+const workspaceRootKey = async (root: string) => {
+  const resolved = resolve(root.trim());
+  const real = await realpath(resolved);
+  return process.platform === 'win32' ? real.toLowerCase() : real;
+};
+
+const trustWorkspaceRoot = async (root: string) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  trustedWorkspaceRoots.add(await workspaceRootKey(usable));
+  return usable;
+};
+
+const registerPendingWorkspaceDeleteRoot = async (root: string | undefined | null) => {
+  if (!root?.trim()) return;
+  let key: string;
+  try {
+    key = await workspaceRootKey(root);
+  } catch {
+    return;
+  }
+  const existing = pendingWorkspaceDeleteRoots.get(key);
+  if (existing) clearTimeout(existing);
+  const timeout = setTimeout(() => {
+    pendingWorkspaceDeleteRoots.delete(key);
+  }, PENDING_WORKSPACE_DELETE_MS);
+  timeout.unref?.();
+  pendingWorkspaceDeleteRoots.set(key, timeout);
+};
+
+const registeredWorkspaceRootKeys = async () => {
+  const roots: string[] = [];
+  for (const chat of await chatStore.listChats()) {
+    if (chat.kind === 'wizard' && chat.wizard?.workspaceRoot) {
+      roots.push(chat.wizard.workspaceRoot);
+    }
+    if (chat.kind === 'nexus' && chat.nexus?.workspaceRoot) {
+      roots.push(chat.nexus.workspaceRoot);
+    }
+  }
+  const keys = new Set<string>();
+  for (const root of roots) {
+    try {
+      keys.add(await workspaceRootKey(root));
+    } catch {
+      // Missing saved workspaces are handled by callers that stat/open them.
+    }
+  }
+  return keys;
+};
+
+const assertTrustedWorkspaceRoot = async (root: string) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if (trustedWorkspaceRoots.has(key)) return usable;
+
+  const savedLast = currentSettings.lastWorkspaceRoot?.trim();
+  if (savedLast) {
+    try {
+      if ((await workspaceRootKey(savedLast)) === key) return usable;
+    } catch {
+      // Ignore stale last workspace path.
+    }
+  }
+
+  if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
+
+  throw new Error('Workspace is not trusted. Use Open workspace or a saved Wizard/Nexus workspace to attach it.');
+};
+
+const assertRegisteredOrPendingDeleteRoot = async (root: string) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if ((await registeredWorkspaceRootKeys()).has(key) || pendingWorkspaceDeleteRoots.has(key)) {
+    return { usable, key };
+  }
+  throw new Error('Workspace folder is not registered for deletion.');
+};
+
+const sameWorkspaceRoot = async (a: string | undefined | null, b: string | undefined | null) => {
+  if (!a?.trim() || !b?.trim()) return false;
+  try {
+    return (await workspaceRootKey(a)) === (await workspaceRootKey(b));
+  } catch {
+    return false;
+  }
+};
+
+const assertSavedChatWorkspaceRootsAreTrusted = async (chat: SavedChat) => {
+  const previous = await chatStore.loadChat(chat.id);
+  if (chat.kind === 'wizard' && chat.wizard?.workspaceRoot) {
+    if (!(await sameWorkspaceRoot(previous?.wizard?.workspaceRoot, chat.wizard.workspaceRoot))) {
+      await assertTrustedWorkspaceRoot(chat.wizard.workspaceRoot);
+    }
+  }
+  if (chat.kind === 'nexus' && chat.nexus?.workspaceRoot) {
+    if (!(await sameWorkspaceRoot(previous?.nexus?.workspaceRoot, chat.nexus.workspaceRoot))) {
+      await assertTrustedWorkspaceRoot(chat.nexus.workspaceRoot);
+    }
+  }
+};
 
 const recordThemeTransition = (from: ThemeId, to: ThemeId) => {
   if (from !== to) {
@@ -555,8 +660,8 @@ ipcMain.handle('settings:load', async () => {
 });
 ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
   const safe: AppSettings = isPresetThemeId(settings.ui.themeId)
-    ? { ...settings, ui: { ...settings.ui, customThemeTokens: undefined } }
-    : settings;
+    ? { ...settings, lastWorkspaceRoot: currentSettings.lastWorkspaceRoot, ui: { ...settings.ui, customThemeTokens: undefined } }
+    : { ...settings, lastWorkspaceRoot: currentSettings.lastWorkspaceRoot };
   const from = currentSettings.ui.themeId;
   const to = safe.ui.themeId;
   if (from !== to) {
@@ -571,6 +676,7 @@ ipcMain.handle('workspace:choose', async () => {
   if (!root) {
     return null;
   }
+  await trustWorkspaceRoot(root);
   activeWorkspaceRoot = root;
   workspaceWatch.setRoot(root);
 
@@ -592,11 +698,9 @@ ipcMain.handle('workspace:open-last', async () => {
   if (!candidate) {
     return null;
   }
+  let root: string;
   try {
-    const st = await stat(candidate);
-    if (!st.isDirectory()) {
-      throw new Error('Not a directory');
-    }
+    root = await trustWorkspaceRoot(candidate);
   } catch {
     currentSettings = await settingsStore.save({
       ...currentSettings,
@@ -606,13 +710,13 @@ ipcMain.handle('workspace:open-last', async () => {
     return null;
   }
 
-  activeWorkspaceRoot = candidate;
-  workspaceWatch.setRoot(candidate);
+  activeWorkspaceRoot = root;
+  workspaceWatch.setRoot(root);
 
   return {
-    root: candidate,
-    label: basename(candidate),
-    tree: await workspaceService.getTree(candidate)
+    root,
+    label: basename(root),
+    tree: await workspaceService.getTree(root)
   };
 });
 
@@ -630,7 +734,7 @@ ipcMain.handle('workspace:last-valid-root', async () => {
 });
 
 ipcMain.handle('workspace:activate', async (_event, root: string) => {
-  const resolved = await workspaceService.assertUsableLocalWorkspace(root);
+  const resolved = await assertTrustedWorkspaceRoot(root);
   activeWorkspaceRoot = resolved;
   workspaceWatch.setRoot(resolved);
   return {
@@ -665,20 +769,27 @@ ipcMain.handle('wizard:recommended-workspace', async (_event, name: string) =>
   workspaceService.getRecommendedWizardWorkspace(name)
 );
 
-ipcMain.handle('wizard:choose-workspace', async (_event, name: string, preferredDefaultPath?: string) =>
-  workspaceService.chooseWizardWorkspace(name, preferredDefaultPath)
-);
+ipcMain.handle('wizard:choose-workspace', async (_event, name: string, preferredDefaultPath?: string) => {
+  const root = await workspaceService.chooseWizardWorkspace(name, preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
 
-ipcMain.handle('wizard:choose-projects-folder', async (_event, preferredDefaultPath?: string) =>
-  workspaceService.chooseWizardProjectsFolder(preferredDefaultPath)
-);
+ipcMain.handle('wizard:choose-projects-folder', async (_event, preferredDefaultPath?: string) => {
+  const root = await workspaceService.chooseWizardProjectsFolder(preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
 
-ipcMain.handle('nexus:choose-workspace', async (_event, preferredDefaultPath?: string) =>
-  workspaceService.chooseNexusWorkspace(preferredDefaultPath)
-);
+ipcMain.handle('nexus:choose-workspace', async (_event, preferredDefaultPath?: string) => {
+  const root = await workspaceService.chooseNexusWorkspace(preferredDefaultPath);
+  if (root) await trustWorkspaceRoot(root);
+  return root;
+});
 
 ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {
   const result = await workspaceService.setupWizardWorkspace(request);
+  await trustWorkspaceRoot(result.profile.workspaceRoot);
   activeWorkspaceRoot = result.profile.workspaceRoot;
   workspaceWatch.setRoot(result.profile.workspaceRoot);
   return result;
@@ -687,6 +798,7 @@ ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {
 ipcMain.handle('wizard:sync-workspace-folder', async (_event, profile: WizardProfile) => {
   const prevRoot = resolve(profile.workspaceRoot.trim());
   const updated = await workspaceService.ensureWizardWorkspaceFolderMatchesDisplayName(profile);
+  await trustWorkspaceRoot(updated.workspaceRoot);
   if (resolve(prevRoot) !== resolve(updated.workspaceRoot)) {
     if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === prevRoot) {
       activeWorkspaceRoot = updated.workspaceRoot;
@@ -705,7 +817,9 @@ ipcMain.handle('wizard:sync-workspace-folder', async (_event, profile: WizardPro
 });
 
 ipcMain.handle('wizard:delete-workspace', async (_event, root: string) => {
-  const deleted = await workspaceService.deleteWorkspaceFolder(root);
+  const { usable, key } = await assertRegisteredOrPendingDeleteRoot(root);
+  pendingWorkspaceDeleteRoots.delete(key);
+  const deleted = await workspaceService.deleteWorkspaceFolder(usable);
   if (activeWorkspaceRoot && resolve(activeWorkspaceRoot) === resolve(deleted.path)) {
     activeWorkspaceRoot = undefined;
     workspaceWatch.stop();
@@ -800,6 +914,10 @@ ipcMain.handle('wizard:choose-import-mythwiz', async (event) => {
     return { ok: false as const, cancelled: true };
   }
   try {
+    const st = await stat(pick.filePaths[0]);
+    if (st.size > 50 * 1024 * 1024) {
+      return { ok: false as const, error: 'Import bundle is too large.' };
+    }
     const buf = await readFile(pick.filePaths[0]);
     const data = await workspaceService.parseWizardMythwizBuffer(buf);
     return { ok: true as const, data };
@@ -829,6 +947,9 @@ ipcMain.handle('ui:choose-chat-thread-background', async (event) => {
     if (!st.isFile()) {
       return { ok: false as const, error: 'Not a file.' };
     }
+    if (st.size > MAX_CHAT_THREAD_BG_BYTES) {
+      return { ok: false as const, error: `Image is too large (max ${Math.round(MAX_CHAT_THREAD_BG_BYTES / 1024 / 1024)} MB).` };
+    }
     const safeBase = basename(src).replace(/[^a-zA-Z0-9._-]/g, '_') || 'background';
     const destName = `${randomUUID()}-${safeBase}`;
     const destDir = chatThreadBackgroundStoreRoot();
@@ -846,6 +967,10 @@ ipcMain.handle('ui:read-chat-thread-background', async (_event, raw: unknown) =>
   const p = resolveReadChatThreadBackgroundFile(raw);
   if (!p) return { ok: false as const };
   try {
+    const st = await stat(p);
+    if (st.size > MAX_CHAT_THREAD_BG_BYTES) {
+      return { ok: false as const };
+    }
     const buf = await readFile(p);
     return {
       ok: true as const,
@@ -927,5 +1052,17 @@ ipcMain.handle('commands:kill', async (_event, jobId: string) => commandService.
 
 ipcMain.handle('chats:list', async () => chatStore.listChats());
 ipcMain.handle('chats:load', async (_event, id: string) => chatStore.loadChat(id));
-ipcMain.handle('chats:save', async (_event, chat: SavedChat) => chatStore.saveChat(chat));
-ipcMain.handle('chats:delete', async (_event, id: string) => chatStore.deleteChat(id));
+ipcMain.handle('chats:save', async (_event, chat: SavedChat) => {
+  await assertSavedChatWorkspaceRootsAreTrusted(chat);
+  return chatStore.saveChat(chat);
+});
+ipcMain.handle('chats:delete', async (_event, id: string) => {
+  const chat = await chatStore.loadChat(id);
+  if (chat?.kind === 'wizard') {
+    await registerPendingWorkspaceDeleteRoot(chat.wizard?.workspaceRoot);
+  }
+  if (chat?.kind === 'nexus') {
+    await registerPendingWorkspaceDeleteRoot(chat.nexus?.workspaceRoot);
+  }
+  return chatStore.deleteChat(id);
+});

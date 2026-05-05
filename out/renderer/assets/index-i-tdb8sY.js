@@ -35494,7 +35494,7 @@ const CHAT_THREAD_BUILTIN_PRESETS = [
   {
     id: "mystic",
     label: "Mystic",
-    description: "Built-in art that switches to match Neon Grid, Sunset, Ice Station, or Kiwi (and light vs dark Custom)."
+    description: "Built-in art that tracks the UI theme: each preset tile gets a matching image; Custom uses the **light Mystic (ice)** artwork when the custom theme is light and the **dark (neon)** artwork when it is dark. Chat tints (`--chat-thread-bg`, bubble colors) layer on top so the thread matches your accent."
   }
 ];
 function patchSystemPromptInSettings(settings, v2) {
@@ -38183,21 +38183,19 @@ function OnboardingDialog({ open, onComplete }) {
   ) : null });
 }
 const logoIce = "" + new URL("logo_ice-DL5fDf1L.png", import.meta.url).href;
-const logoKiwi = "" + new URL("logo_kiwi-C9M5Vj4w.png", import.meta.url).href;
-const logoSunset = "" + new URL("logo_sunset-DZBqj2-T.png", import.meta.url).href;
-function sidebarBrandLogoSrc(themeId) {
-  switch (themeId) {
-    case "sunset-terminal":
-      return logoSunset;
-    case "ice-station":
-      return logoIce;
-    case "kiwi":
-      return logoKiwi;
-    case "neon-grid":
-    case "custom":
-    default:
-      return logoNeonGrid;
+function isLightAppChrome(themeId, customThemeTokens) {
+  if (themeId === "ice-station" || themeId === "kiwi") return true;
+  if (themeId === "custom") {
+    const bgToken = customThemeTokens?.["--bg-0"];
+    return bgToken == null || String(bgToken).trim() === "" ? true : isLikelyLightCssBackground(String(bgToken));
   }
+  return false;
+}
+function sidebarBrandLogoSrc(themeId, customThemeTokens) {
+  if (isLightAppChrome(themeId, customThemeTokens)) {
+    return logoIce;
+  }
+  return logoNeonGrid;
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
@@ -38581,7 +38579,10 @@ function App() {
   settingsRef.current = settings;
   workspaceRootRef.current = workspaceRoot;
   activeFilePathRef.current = activeFilePath;
-  const sidebarBrandLogo = reactExports.useMemo(() => sidebarBrandLogoSrc(settings?.ui.themeId), [settings?.ui.themeId]);
+  const sidebarBrandLogo = reactExports.useMemo(
+    () => sidebarBrandLogoSrc(settings?.ui.themeId, settings?.ui.customThemeTokens),
+    [settings?.ui.themeId, settings?.ui.customThemeTokens]
+  );
   const [chatSessionId, setChatSessionId] = reactExports.useState(() => uid());
   chatSessionIdRef.current = chatSessionId;
   const [chatMessages, setChatMessages] = reactExports.useState([]);
