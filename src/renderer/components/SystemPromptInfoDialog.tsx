@@ -16,10 +16,12 @@ export function SystemPromptInfoDialog({ open, onClose }: SystemPromptInfoDialog
           className="app-dialog-backdrop"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={onClose}
           role="presentation"
         >
           <motion.div
             animate={{ opacity: 1, scale: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
             aria-describedby="system-prompt-info-desc"
             aria-labelledby="system-prompt-info-title"
             aria-modal="true"

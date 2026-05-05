@@ -11,7 +11,8 @@ export const CHAT_THREAD_BUILTIN_PRESETS: readonly {
   {
     id: 'mystic',
     label: 'Mystic',
-    description: 'Built-in art that switches to match Neon Grid, Sunset, Ice Station, or Kiwi (and light vs dark Custom).'
+    description:
+      'Built-in art that tracks the UI theme: each preset tile gets a matching image; Custom uses the **light Mystic (ice)** artwork when the custom theme is light and the **dark (neon)** artwork when it is dark. Chat tints (`--chat-thread-bg`, bubble colors) layer on top so the thread matches your accent.'
   }
 ];
 

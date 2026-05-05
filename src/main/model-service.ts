@@ -133,7 +133,11 @@ const mythraWebSearchToolRoutingHint = `web_search: Mythra follows your Web Sear
 const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 
 const mythraSetAppThemeAgentInstruction =
-  `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(', ')}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
+  'App theme (Agent only): For full custom colors call set_custom_theme with an explicit palette from ' +
+  `(${SEMANTIC_CUSTOM_THEME_PALETTE_IDS.join(', ')}) and mode light or dark when brightness matters—do not rely only on the description string for routing (e.g. user asks for **red** → palette **red**, not pink). ` +
+  'For targeted recolors ("sidebar only", exact hex), use merge_custom_theme_tokens with slots or whitelisted CSS variables. ' +
+  `set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(', ')}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result. ` +
+  '**Mystic chat background:** When Settings → chat background is **Mythic**, artwork tracks the UI theme. For **Custom** app themes, **light** custom uses the **ice** Mystic image and **dark** custom uses the **neon** Mystic image; the UI layers **--chat-thread-bg** and bubble-related tokens (**--chat-assistant-bg**, **--chat-user-bg**, **--thinking-bg**) on top so the conversation area tints to match the palette. Prefer this coordinated look—after set_custom_theme you may call merge_custom_theme_tokens on **chatThread** / **assistantMessage** / **userMessage** with rgba washes of the accent if the user wants a stronger match.';
 
 const mythraModelSystemPromptInstruction =
   'System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.';
@@ -795,7 +799,7 @@ export class ModelService {
         name: 'set_app_theme',
         description:
           `Change the Mythra preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(', ')}. ` +
-          'Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.',
+          'Use set_custom_theme for custom color families (red, pink, purple, dark blue, icy, white, orange, kiwi, etc.).',
         parameters: {
           type: 'object',
           properties: {
@@ -902,7 +906,8 @@ export class ModelService {
         description:
           'Exact Custom theme editor. Use this when the user wants a specific UI area recolored or gives exact colors. Prefer the slots object so you do not need to know CSS. ' +
           'Supported slots include appBackground, titlebar, sidebar, chatPanel, chatThread, assistantMessage, userMessage, thinking, composer, messageInput, inspector, settings, editor, text, mutedText, border, primaryAccent, secondaryAccent, danger, and warning. ' +
-          'You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests like pink/purple/dark blue/white/orange/kiwi, use set_custom_theme first.',
+          '**Mystic:** If the chat background is Mystic, tint **chatThread** / **assistantMessage** / **userMessage** with rgba accent washes so the thread matches the custom theme (layers on the theme-aware Mystic image). ' +
+          'You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests, use set_custom_theme first with an explicit palette.',
         parameters: {
           type: 'object',
           properties: {
@@ -910,7 +915,7 @@ export class ModelService {
               type: 'string',
               enum: [...MERGE_THEME_PALETTE_IDS, ...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
               description:
-                'Fallback palette if tokens/slots are missing. Semantic palettes like pink/purple/blue are accepted so they never fall back to Kiwi accidentally; for full-theme changes prefer set_custom_theme.'
+                'Fallback palette if tokens/slots are missing. Semantic ids include red, pink, purple, blue, green, orange, ice, kiwi, slate, white. For full-theme changes prefer set_custom_theme with the same palette id.'
             },
             tokens: {
               type: 'object',
@@ -938,7 +943,10 @@ export class ModelService {
       function: {
         name: 'set_custom_theme',
         description:
-          'Preferred tool for custom theme requests. Sets a complete Custom theme from simple semantic choices, replacing old custom colors so leftover green/blue tokens do not remain. Use this for "completely pink", "dark purple", "light blue", "make it orange", "icy dark", "white theme", etc. Use merge_custom_theme_tokens only for advanced exact CSS-variable tweaks.',
+          'Preferred tool for custom theme requests. Sets a complete Custom theme from semantic palette + mode, replacing old custom colors so leftover tokens do not clash. ' +
+          'Pass **palette** explicitly (red, pink, purple, blue, green, orange, slate, white, ice, kiwi)—required for correct hue: e.g. **red** is not **pink**. ' +
+          '**Mystic:** With Mystic chat background on, the app picks the light Mystic (ice) art for light custom themes and dark Mystic (neon) for dark; chat/thread tokens from this theme tint on top—optionally refine with merge_custom_theme_tokens on chatThread and bubbles. ' +
+          'Use merge_custom_theme_tokens only for advanced exact tweaks.',
         parameters: {
           type: 'object',
           properties: {
@@ -946,7 +954,7 @@ export class ModelService {
               type: 'string',
               enum: [...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
               description:
-                'Main color family. For “pink”, “rose”, “magenta”, or “hot pink”, choose pink. For neutral gray choose slate; for white/paper choose white.'
+                'Main color family. **red** = true red/crimson (not pink). **pink** = pink/rose/magenta/fuchsia. **purple**, **blue**, **green**, **orange**, **slate**, **white** (paper), **ice**, **kiwi** as usual.'
             },
             mode: {
               type: 'string',

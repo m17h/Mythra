@@ -198,6 +198,7 @@ export const MERGE_THEME_PALETTE_IDS = [
 export type MergeThemePaletteId = (typeof MERGE_THEME_PALETTE_IDS)[number];
 
 export const SEMANTIC_CUSTOM_THEME_PALETTE_IDS = [
+  'red',
   'pink',
   'purple',
   'blue',
@@ -226,6 +227,14 @@ const semanticHues: Record<
   Exclude<SemanticCustomThemePaletteId, 'white' | 'slate' | 'ice' | 'kiwi'>,
   { accent: string; accentLight: string; accentRgb: string; accent2: string; danger: string; warning: string }
 > = {
+  red: {
+    accent: '#dc2626',
+    accentLight: '#ef4444',
+    accentRgb: '220, 38, 38',
+    accent2: '#b91c1c',
+    danger: '#991b1b',
+    warning: '#f59e0b'
+  },
   pink: {
     accent: '#ec4899',
     accentLight: '#f472b6',
@@ -270,6 +279,7 @@ const semanticHues: Record<
 
 function semanticPaletteFromDescription(value: string | undefined): SemanticCustomThemePaletteId | undefined {
   const raw = value?.toLowerCase() ?? '';
+  if (/\bred\b|ruby|crimson|scarlet|\bfire\b|blood(?!\s*sugar)|cherry(?!\s*blossom)/.test(raw)) return 'red';
   if (/\bpink|rose|magenta|fuchsia|hot\s*pink\b/.test(raw)) return 'pink';
   if (/\bpurple|violet|lavender\b/.test(raw)) return 'purple';
   if (/\bblue|cyan|aqua\b/.test(raw)) return 'blue';
@@ -346,7 +356,9 @@ function semanticLightTokens(
   palette: string
 ): Record<string, string> {
   const tinted =
-    palette === 'pink'
+    palette === 'red'
+      ? { bg0: '#fff1f2', bg1: '#ffe4e6', bg2: '#fecdd3', line: '220, 38, 38' }
+      : palette === 'pink'
       ? { bg0: '#fff1f7', bg1: '#ffe4f0', bg2: '#fbcfe8', line: '236, 72, 153' }
       : palette === 'purple'
         ? { bg0: '#f6f1ff', bg1: '#ede4ff', bg2: '#ddd6fe', line: '139, 92, 246' }
@@ -390,7 +402,9 @@ function semanticDarkTokens(
   palette: string
 ): Record<string, string> {
   const tinted =
-    palette === 'pink'
+    palette === 'red'
+      ? { bg0: '#1c0a0a', bg1: '#2a1010', bg2: '#3f1515', line: '220, 38, 38' }
+      : palette === 'pink'
       ? { bg0: '#170812', bg1: '#230b1a', bg2: '#331127', line: '236, 72, 153' }
       : palette === 'purple'
         ? { bg0: '#10091f', bg1: '#18102b', bg2: '#24163f', line: '139, 92, 246' }

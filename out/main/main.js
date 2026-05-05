@@ -396,6 +396,7 @@ const MERGE_THEME_PALETTE_IDS = [
   "light_paper_gray"
 ];
 const SEMANTIC_CUSTOM_THEME_PALETTE_IDS = [
+  "red",
   "pink",
   "purple",
   "blue",
@@ -414,6 +415,14 @@ function isSemanticCustomThemeModeId(value) {
   return SEMANTIC_CUSTOM_THEME_MODE_IDS.includes(value);
 }
 const semanticHues = {
+  red: {
+    accent: "#dc2626",
+    accentLight: "#ef4444",
+    accentRgb: "220, 38, 38",
+    accent2: "#b91c1c",
+    danger: "#991b1b",
+    warning: "#f59e0b"
+  },
   pink: {
     accent: "#ec4899",
     accentLight: "#f472b6",
@@ -457,6 +466,7 @@ const semanticHues = {
 };
 function semanticPaletteFromDescription(value) {
   const raw = value?.toLowerCase() ?? "";
+  if (/\bred\b|ruby|crimson|scarlet|\bfire\b|blood(?!\s*sugar)|cherry(?!\s*blossom)/.test(raw)) return "red";
   if (/\bpink|rose|magenta|fuchsia|hot\s*pink\b/.test(raw)) return "pink";
   if (/\bpurple|violet|lavender\b/.test(raw)) return "purple";
   if (/\bblue|cyan|aqua\b/.test(raw)) return "blue";
@@ -509,7 +519,7 @@ function buildSemanticCustomThemeTokens(input) {
   };
 }
 function semanticLightTokens(hue, palette) {
-  const tinted = palette === "pink" ? { bg0: "#fff1f7", bg1: "#ffe4f0", bg2: "#fbcfe8", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#f6f1ff", bg1: "#ede4ff", bg2: "#ddd6fe", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#fff7ed", bg1: "#ffedd5", bg2: "#fed7aa", line: "249, 115, 22" } : palette === "blue" || palette === "ice" ? { bg0: "#eff6ff", bg1: "#dbeafe", bg2: "#bfdbfe", line: "37, 99, 235" } : { bg0: "#f0fdf4", bg1: "#dcfce7", bg2: "#bbf7d0", line: "22, 163, 74" };
+  const tinted = palette === "red" ? { bg0: "#fff1f2", bg1: "#ffe4e6", bg2: "#fecdd3", line: "220, 38, 38" } : palette === "pink" ? { bg0: "#fff1f7", bg1: "#ffe4f0", bg2: "#fbcfe8", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#f6f1ff", bg1: "#ede4ff", bg2: "#ddd6fe", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#fff7ed", bg1: "#ffedd5", bg2: "#fed7aa", line: "249, 115, 22" } : palette === "blue" || palette === "ice" ? { bg0: "#eff6ff", bg1: "#dbeafe", bg2: "#bfdbfe", line: "37, 99, 235" } : { bg0: "#f0fdf4", bg1: "#dcfce7", bg2: "#bbf7d0", line: "22, 163, 74" };
   return {
     "--bg-0": tinted.bg0,
     "--bg-1": tinted.bg1,
@@ -539,7 +549,7 @@ function semanticLightTokens(hue, palette) {
   };
 }
 function semanticDarkTokens(hue, palette) {
-  const tinted = palette === "pink" ? { bg0: "#170812", bg1: "#230b1a", bg2: "#331127", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#10091f", bg1: "#18102b", bg2: "#24163f", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#160c05", bg1: "#211208", bg2: "#321a0b", line: "249, 115, 22" } : palette === "blue" ? { bg0: "#07101f", bg1: "#0b1730", bg2: "#102040", line: "37, 99, 235" } : { bg0: "#07140e", bg1: "#0b1e14", bg2: "#102b1c", line: "22, 163, 74" };
+  const tinted = palette === "red" ? { bg0: "#1c0a0a", bg1: "#2a1010", bg2: "#3f1515", line: "220, 38, 38" } : palette === "pink" ? { bg0: "#170812", bg1: "#230b1a", bg2: "#331127", line: "236, 72, 153" } : palette === "purple" ? { bg0: "#10091f", bg1: "#18102b", bg2: "#24163f", line: "139, 92, 246" } : palette === "orange" ? { bg0: "#160c05", bg1: "#211208", bg2: "#321a0b", line: "249, 115, 22" } : palette === "blue" ? { bg0: "#07101f", bg1: "#0b1730", bg2: "#102040", line: "37, 99, 235" } : { bg0: "#07140e", bg1: "#0b1e14", bg2: "#102b1c", line: "22, 163, 74" };
   return {
     "--bg-0": tinted.bg0,
     "--bg-1": tinted.bg1,
@@ -1276,7 +1286,7 @@ const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; we
 const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Agent (authoritative for this request). Files, shell, workspace, and theme tools may be used when listed below. Do not tell the user to switch to Agent mode or say they must enable Agent—the UI line above the chat already reflects their choice." : "UI session mode: Chat. You cannot use workspace files, shell, or theme-change tools; invite the user to switch with the Chat/Agent control only if they need those features.";
 const mythraWebSearchToolRoutingHint = `web_search: Mythra follows your Web Search provider choice (Settings): DuckDuckGo only, or Tavily-then-Brave / Brave-then-Tavily for whichever API keys are saved—each failure (including quota) skips to the next step, ending on DuckDuckGo instant answers. Failed steps appear in the tool result. DuckDuckGo only returns short blurbs and links, not full pages. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
-const mythraSetAppThemeAgentInstruction = `App theme (Agent only): for whole-theme requests like "make it pink", "custom purple", or "dark blue", call set_custom_theme with palette/mode. For targeted requests like "make the sidebar pink", "make user messages blue", or "make the editor black", call merge_custom_theme_tokens once with a slots object and exact colors; do not inspect files or guess CSS. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result.`;
+const mythraSetAppThemeAgentInstruction = `App theme (Agent only): For full custom colors call set_custom_theme with an explicit palette from (${SEMANTIC_CUSTOM_THEME_PALETTE_IDS.join(", ")}) and mode light or dark when brightness matters—do not rely only on the description string for routing (e.g. user asks for **red** → palette **red**, not pink). For targeted recolors ("sidebar only", exact hex), use merge_custom_theme_tokens with slots or whitelisted CSS variables. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result. **Mystic chat background:** When Settings → chat background is **Mythic**, artwork tracks the UI theme. For **Custom** app themes, **light** custom uses the **ice** Mystic image and **dark** custom uses the **neon** Mystic image; the UI layers **--chat-thread-bg** and bubble-related tokens (**--chat-assistant-bg**, **--chat-user-bg**, **--thinking-bg**) on top so the conversation area tints to match the palette. Prefer this coordinated look—after set_custom_theme you may call merge_custom_theme_tokens on **chatThread** / **assistantMessage** / **userMessage** with rgba washes of the accent if the user wants a stronger match.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
 const mythraProductFeaturesInstruction = "Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.";
@@ -1776,7 +1786,7 @@ class ModelService {
       type: "function",
       function: {
         name: "set_app_theme",
-        description: `Change the Mythra preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(", ")}. Use set_custom_theme for custom color requests such as pink, dark blue, icy dark, purple, white, or orange.`,
+        description: `Change the Mythra preset theme (fixed appearances in Settings tiles). Allowed ids: ${PRESET_THEME_IDS.join(", ")}. Use set_custom_theme for custom color families (red, pink, purple, dark blue, icy, white, orange, kiwi, etc.).`,
         parameters: {
           type: "object",
           properties: {
@@ -1867,14 +1877,14 @@ class ModelService {
       type: "function",
       function: {
         name: "merge_custom_theme_tokens",
-        description: "Exact Custom theme editor. Use this when the user wants a specific UI area recolored or gives exact colors. Prefer the slots object so you do not need to know CSS. Supported slots include appBackground, titlebar, sidebar, chatPanel, chatThread, assistantMessage, userMessage, thinking, composer, messageInput, inspector, settings, editor, text, mutedText, border, primaryAccent, secondaryAccent, danger, and warning. You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests like pink/purple/dark blue/white/orange/kiwi, use set_custom_theme first.",
+        description: "Exact Custom theme editor. Use this when the user wants a specific UI area recolored or gives exact colors. Prefer the slots object so you do not need to know CSS. Supported slots include appBackground, titlebar, sidebar, chatPanel, chatThread, assistantMessage, userMessage, thinking, composer, messageInput, inspector, settings, editor, text, mutedText, border, primaryAccent, secondaryAccent, danger, and warning. **Mystic:** If the chat background is Mystic, tint **chatThread** / **assistantMessage** / **userMessage** with rgba accent washes so the thread matches the custom theme (layers on the theme-aware Mystic image). You may also merge exact whitelisted CSS variables such as --accent, --bg-0, or --text-0. For whole-theme requests, use set_custom_theme first with an explicit palette.",
         parameters: {
           type: "object",
           properties: {
             palette: {
               type: "string",
               enum: [...MERGE_THEME_PALETTE_IDS, ...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
-              description: "Fallback palette if tokens/slots are missing. Semantic palettes like pink/purple/blue are accepted so they never fall back to Kiwi accidentally; for full-theme changes prefer set_custom_theme."
+              description: "Fallback palette if tokens/slots are missing. Semantic ids include red, pink, purple, blue, green, orange, ice, kiwi, slate, white. For full-theme changes prefer set_custom_theme with the same palette id."
             },
             tokens: {
               type: "object",
@@ -1898,14 +1908,14 @@ class ModelService {
       type: "function",
       function: {
         name: "set_custom_theme",
-        description: 'Preferred tool for custom theme requests. Sets a complete Custom theme from simple semantic choices, replacing old custom colors so leftover green/blue tokens do not remain. Use this for "completely pink", "dark purple", "light blue", "make it orange", "icy dark", "white theme", etc. Use merge_custom_theme_tokens only for advanced exact CSS-variable tweaks.',
+        description: "Preferred tool for custom theme requests. Sets a complete Custom theme from semantic palette + mode, replacing old custom colors so leftover tokens do not clash. Pass **palette** explicitly (red, pink, purple, blue, green, orange, slate, white, ice, kiwi)—required for correct hue: e.g. **red** is not **pink**. **Mystic:** With Mystic chat background on, the app picks the light Mystic (ice) art for light custom themes and dark Mystic (neon) for dark; chat/thread tokens from this theme tint on top—optionally refine with merge_custom_theme_tokens on chatThread and bubbles. Use merge_custom_theme_tokens only for advanced exact tweaks.",
         parameters: {
           type: "object",
           properties: {
             palette: {
               type: "string",
               enum: [...SEMANTIC_CUSTOM_THEME_PALETTE_IDS],
-              description: "Main color family. For “pink”, “rose”, “magenta”, or “hot pink”, choose pink. For neutral gray choose slate; for white/paper choose white."
+              description: "Main color family. **red** = true red/crimson (not pink). **pink** = pink/rose/magenta/fuchsia. **purple**, **blue**, **green**, **orange**, **slate**, **white** (paper), **ice**, **kiwi** as usual."
             },
             mode: {
               type: "string",
@@ -3215,7 +3225,7 @@ const defaultSettings = {
     favoriteModels: { lmstudio: [], openrouter: [] },
     wizardProjectsParentFolder: null,
     onboardingCompleted: false,
-    chatThreadBackgroundPreset: null,
+    chatThreadBackgroundPreset: "mystic",
     chatThreadBackgroundPath: null
   },
   lastWorkspaceRoot: null
@@ -3326,7 +3336,7 @@ const mergeSettings = (saved) => ({
   ui: {
     ...defaultSettings.ui,
     ...saved?.ui,
-    chatThreadBackgroundPreset: saved?.ui?.chatThreadBackgroundPreset != null && isChatThreadBackgroundPresetId(String(saved.ui.chatThreadBackgroundPreset)) ? saved.ui.chatThreadBackgroundPreset : null,
+    chatThreadBackgroundPreset: saved?.ui?.chatThreadBackgroundPreset != null && isChatThreadBackgroundPresetId(String(saved.ui.chatThreadBackgroundPreset)) ? saved.ui.chatThreadBackgroundPreset : saved?.ui?.chatThreadBackgroundPreset === null ? null : typeof saved?.ui?.chatThreadBackgroundPath === "string" && saved.ui.chatThreadBackgroundPath.trim().length > 0 ? null : defaultSettings.ui.chatThreadBackgroundPreset,
     chatThreadBackgroundPath: typeof saved?.ui?.chatThreadBackgroundPath === "string" && saved.ui.chatThreadBackgroundPath.trim().length > 0 ? saved.ui.chatThreadBackgroundPath.trim() : null,
     favoriteModels: {
       lmstudio: [

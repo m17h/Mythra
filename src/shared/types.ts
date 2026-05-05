@@ -486,7 +486,7 @@ export const defaultSettings: AppSettings = {
     favoriteModels: { lmstudio: [], openrouter: [] },
     wizardProjectsParentFolder: null,
     onboardingCompleted: false,
-    chatThreadBackgroundPreset: null,
+    chatThreadBackgroundPreset: 'mystic',
     chatThreadBackgroundPath: null
   },
   lastWorkspaceRoot: null

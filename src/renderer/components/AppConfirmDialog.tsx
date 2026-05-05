@@ -48,10 +48,12 @@ export function AppConfirmDialog({
           className="app-dialog-backdrop app-dialog-backdrop--overlay-top"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={onCancel}
           role="presentation"
         >
           <motion.div
             animate={{ opacity: 1, scale: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
             aria-describedby={descId}
             aria-labelledby={titleId}
             aria-modal="true"

@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+
+const mythraPackageVersion = (
+  JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as { version: string }
+).version;
 
 export default defineConfig({
   main: {
@@ -28,6 +33,9 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    define: {
+      __MYTHRA_VERSION__: JSON.stringify(mythraPackageVersion)
+    }
   }
 });

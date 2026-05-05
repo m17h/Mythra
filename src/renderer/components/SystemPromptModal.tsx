@@ -18,10 +18,12 @@ export function SystemPromptModal({ open, value, onChange, onClose }: SystemProm
           className="app-dialog-backdrop"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={onClose}
           role="presentation"
         >
           <motion.div
             animate={{ opacity: 1, scale: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
             aria-describedby="system-prompt-modal-hint"
             aria-labelledby="system-prompt-modal-title"
             aria-modal="true"

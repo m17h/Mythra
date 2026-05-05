@@ -902,8 +902,8 @@ export function ChatPanel({
           onWheelCapture={handleWheelCapture}
           ref={scrollRef}
         >
+          {chatBgLayers}
           <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
-            {chatBgLayers}
             <div className="chat-scroll__stack">
               <div className="chat-empty wizard-hub-empty">
               <div className="chat-empty__icon chat-empty__icon--wizard-hat" aria-hidden>
@@ -946,8 +946,8 @@ export function ChatPanel({
         onWheelCapture={handleWheelCapture}
         ref={scrollRef}
       >
+        {chatBgLayers}
         <div className="chat-scroll__inner" ref={innerRef}>
-          {chatBgLayers}
           <div className="chat-scroll__stack">
         {timeline.length === 0 ? (
           <div className="chat-empty chat-empty--thread-start">

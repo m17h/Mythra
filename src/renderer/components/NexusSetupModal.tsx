@@ -77,12 +77,16 @@ export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetup
           className="app-dialog-backdrop"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={() => {
+            if (!creating) onClose();
+          }}
           role="presentation"
         >
           <motion.div
             aria-modal="true"
             animate={{ opacity: 1, scale: 1, y: 0 }}
             className="app-dialog app-dialog--scrollable nexus-setup"
+            onClick={(e) => e.stopPropagation()}
             exit={{ opacity: 0, scale: 0.98, y: 8 }}
             initial={{ opacity: 0, scale: 0.98, y: 8 }}
             role="dialog"

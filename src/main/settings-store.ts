@@ -59,7 +59,11 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
     chatThreadBackgroundPreset:
       saved?.ui?.chatThreadBackgroundPreset != null && isChatThreadBackgroundPresetId(String(saved.ui.chatThreadBackgroundPreset))
         ? saved.ui.chatThreadBackgroundPreset
-        : null,
+        : saved?.ui?.chatThreadBackgroundPreset === null
+          ? null
+          : typeof saved?.ui?.chatThreadBackgroundPath === 'string' && saved.ui.chatThreadBackgroundPath.trim().length > 0
+            ? null
+            : defaultSettings.ui.chatThreadBackgroundPreset,
     chatThreadBackgroundPath:
       typeof saved?.ui?.chatThreadBackgroundPath === 'string' && saved.ui.chatThreadBackgroundPath.trim().length > 0
         ? saved.ui.chatThreadBackgroundPath.trim()

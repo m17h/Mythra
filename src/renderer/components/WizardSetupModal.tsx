@@ -20,6 +20,10 @@ interface WizardSetupModalProps {
   onListModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
   /** Persist the chosen parent folder so new Wizards keep using it until changed. */
   onPersistWizardProjectsParentFolder: (absoluteFolderPath: string) => Promise<void>;
+  /** Same as Wizard / Connection model picker: update in-memory settings when favoriting. */
+  onSettingsChangeForFavorites?: (next: AppSettings) => void;
+  /** Persist favorites immediately (survive restart). */
+  onPresetPersist?: (next: AppSettings) => Promise<void>;
 }
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
@@ -64,7 +68,9 @@ export function WizardSetupModal({
   onClose,
   onCreate,
   onListModels,
-  onPersistWizardProjectsParentFolder
+  onPersistWizardProjectsParentFolder,
+  onSettingsChangeForFavorites,
+  onPresetPersist
 }: WizardSetupModalProps) {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<ProviderKind>('openrouter');
@@ -239,12 +245,16 @@ export function WizardSetupModal({
           className="app-dialog-backdrop"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={() => {
+            if (!creating) onClose();
+          }}
           role="presentation"
         >
           <motion.div
             aria-modal="true"
             animate={{ opacity: 1, scale: 1, y: 0 }}
             className="app-dialog app-dialog--scrollable wizard-setup"
+            onClick={(e) => e.stopPropagation()}
             exit={{ opacity: 0, scale: 0.98, y: 8 }}
             initial={{ opacity: 0, scale: 0.98, y: 8 }}
             role="dialog"
@@ -313,7 +323,26 @@ export function WizardSetupModal({
                         favoriteIds={settings?.ui.favoriteModels?.[provider] ?? defaultSettings.ui.favoriteModels[provider]}
                         models={modelOptions}
                         onChange={(next) => setModel(next)}
-                        onToggleFavorite={() => undefined}
+                        onToggleFavorite={(id) => {
+                          if (!settings || !onSettingsChangeForFavorites || !onPresetPersist) return;
+                          const k = provider;
+                          const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                          const nextSet = new Set(baseFav[k] ?? []);
+                          if (nextSet.has(id)) nextSet.delete(id);
+                          else nextSet.add(id);
+                          const next: AppSettings = {
+                            ...settings,
+                            ui: {
+                              ...settings.ui,
+                              favoriteModels: {
+                                ...baseFav,
+                                [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                              }
+                            }
+                          };
+                          onSettingsChangeForFavorites(next);
+                          void onPresetPersist(next);
+                        }}
                         value={model}
                         portalDropdown
                       />

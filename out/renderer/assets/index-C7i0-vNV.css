@@ -831,6 +831,18 @@ html[data-platform='darwin'] .app-shell {
   -webkit-user-drag: none;
 }
 
+.sidebar-brand__version {
+  flex-shrink: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  align-self: flex-end;
+  margin-bottom: 2px;
+  margin-left: 2px;
+}
+
 .sidebar-quick {
   display: flex;
   flex-direction: column;
@@ -1899,6 +1911,7 @@ html[data-platform='darwin'] .app-shell {
    can clamp height and prevent scrolling past the last message. */
 
 .chat-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: 0;
@@ -1941,7 +1954,6 @@ html[data-platform='darwin'] .app-shell {
 .chat-scroll__bg-img {
   width: 100%;
   height: 100%;
-  min-height: 100%;
   object-fit: cover;
   object-position: center;
   display: block;
@@ -2484,6 +2496,16 @@ details.chat-activity--collapsible {
   border: 1px solid var(--line);
   text-align: start;
   vertical-align: top;
+  /* Bubble text uses break-word; in tables prefer wrapping only at spaces so labels stay readable. */
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* First column is usually short labels: give it room so the second column yields width instead of crushing words. */
+
+.chat-markdown th:first-child,
+.chat-markdown td:first-child {
+  min-width: min(32ch, 55%);
 }
 
 .chat-markdown th {

@@ -18,9 +18,7 @@ import { NexusSetupModal } from './components/NexusSetupModal';
 import { NexusSettingsPanel } from './components/NexusSettingsPanel';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import logoIce from '../../Images/logo_ice.png';
-import logoKiwi from '../../Images/logo_kiwi.png';
 import logoNeonGrid from '../../Images/onboarding_1-1.png';
-import logoSunset from '../../Images/logo_sunset.png';
 import {
   defaultSettings,
   type AppSettings,
@@ -50,19 +48,27 @@ import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground, type ThemeId } from '@shared/themes';
 
-function sidebarBrandLogoSrc(themeId: ThemeId | undefined): string {
-  switch (themeId) {
-    case 'sunset-terminal':
-      return logoSunset;
-    case 'ice-station':
-      return logoIce;
-    case 'kiwi':
-      return logoKiwi;
-    case 'neon-grid':
-    case 'custom':
-    default:
-      return logoNeonGrid;
+function isLightAppChrome(
+  themeId: ThemeId | undefined,
+  customThemeTokens: AppSettings['ui']['customThemeTokens'] | undefined
+): boolean {
+  if (themeId === 'ice-station' || themeId === 'kiwi') return true;
+  if (themeId === 'custom') {
+    const bgToken = customThemeTokens?.['--bg-0'];
+    return bgToken == null || String(bgToken).trim() === '' ? true : isLikelyLightCssBackground(String(bgToken));
   }
+  return false;
+}
+
+/** Ice wordmark for light chrome; Neon wordmark for every dark theme (Neon Grid, Sunset, dark Custom, default). */
+function sidebarBrandLogoSrc(
+  themeId: ThemeId | undefined,
+  customThemeTokens?: AppSettings['ui']['customThemeTokens']
+): string {
+  if (isLightAppChrome(themeId, customThemeTokens)) {
+    return logoIce;
+  }
+  return logoNeonGrid;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -621,7 +627,10 @@ export function App() {
   workspaceRootRef.current = workspaceRoot;
   activeFilePathRef.current = activeFilePath;
 
-  const sidebarBrandLogo = useMemo(() => sidebarBrandLogoSrc(settings?.ui.themeId), [settings?.ui.themeId]);
+  const sidebarBrandLogo = useMemo(
+    () => sidebarBrandLogoSrc(settings?.ui.themeId, settings?.ui.customThemeTokens),
+    [settings?.ui.themeId, settings?.ui.customThemeTokens]
+  );
 
   /** New id on “New chat”; matches saved chat id when a thread is loaded — sent to the model as a fresh thread boundary. */
   const [chatSessionId, setChatSessionId] = useState(() => uid());
@@ -1165,15 +1174,17 @@ export function App() {
   const persistCurrentChat = useCallback(
     async (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
       if (msgs.length === 0) return;
-      const id = chatId ?? uid();
+      /** Prefer ref — React state can lag right after setActiveChatId in async flows (e.g. new Wizard session). */
+      const targetId = chatId ?? activeChatIdRef.current;
+      const id = targetId ?? uid();
       const fp = chatFingerprint(msgs, tl);
       if (fp === lastContentFingerprintRef.current) {
-        if (chatId) return id;
+        if (targetId) return id;
         return;
       }
       const now = Date.now();
       const existing = chatList.find((c) => c.id === id);
-      const disk = chatId ? await window.electronAPI.loadChat(chatId) : null;
+      const disk = targetId ? await window.electronAPI.loadChat(targetId) : null;
       const nameOverride =
         disk != null
           ? disk.titleOverride ?? null
@@ -1199,7 +1210,10 @@ export function App() {
         createdAt,
         updatedAt: now,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
-        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : (newChatModelOverrideRef.current ?? null)),
+        modelOverride:
+          disk?.modelOverride ??
+          existing?.modelOverride ??
+          (targetId ? null : (newChatModelOverrideRef.current ?? null)),
         wizard,
         wizardId,
         nexus,
@@ -1207,7 +1221,10 @@ export function App() {
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
-      if (!chatId) setActiveChatId(id);
+      if (!targetId) {
+        setActiveChatId(id);
+        activeChatIdRef.current = id;
+      }
       await refreshChatList();
       return id;
     },
@@ -1677,7 +1694,7 @@ export function App() {
 
   useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
-      debouncedSave(chatMessages, chatTimeline, activeChatId);
+      debouncedSave(chatMessages, chatTimeline, activeChatIdRef.current ?? activeChatId);
     }
   }, [activeChatId, chatMessages, chatStreaming, chatTimeline, debouncedSave]);
 
@@ -2999,7 +3016,8 @@ export function App() {
 
     let messagesForHistory = chatMessages;
     let timelineForHistory = chatTimeline;
-    let disk: SavedChat | null = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+    const stableChatId = activeChatIdRef.current ?? activeChatId;
+    let disk: SavedChat | null = stableChatId ? await window.electronAPI.loadChat(stableChatId) : null;
 
     if (activeWizard && activeWizardMeta?.id && (!disk || disk.kind === 'wizard')) {
       if (saveTimerRef.current) {
@@ -3031,6 +3049,7 @@ export function App() {
       setSidebarFocusedWizardId(undefined);
       setSidebarFocusedNexusId(undefined);
       setExpandedWizardIds((current) => new Set(current).add(wizardDiskId));
+      setSidebarTab('wizards');
       await refreshChatList();
       try {
         await activateWorkspace(wsRoot);
@@ -3662,6 +3681,7 @@ export function App() {
             className="app-dialog-backdrop"
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
+            onClick={() => setShowWebSearchNotice(false)}
             role="presentation"
           >
             <motion.div
@@ -3670,6 +3690,7 @@ export function App() {
               className="app-dialog"
               exit={{ opacity: 0, scale: 0.98, y: 8 }}
               initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
               role="dialog"
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
@@ -3742,6 +3763,8 @@ export function App() {
         onCreate={createWizard}
         onListModels={listModelsForWizardSetup}
         onPersistWizardProjectsParentFolder={persistWizardProjectsParentFolder}
+        onPresetPersist={persistAfterPresetAction}
+        onSettingsChangeForFavorites={handleSettingsPanelChange}
         open={showWizardSetup}
         settings={settings}
       />
@@ -4032,6 +4055,7 @@ export function App() {
             className="app-dialog-backdrop"
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
+            onClick={() => setShowConnectionHelp(false)}
             role="presentation"
           >
             <motion.div
@@ -4042,6 +4066,7 @@ export function App() {
               className="app-dialog app-dialog--scrollable"
               exit={{ opacity: 0, scale: 0.98, y: 8 }}
               initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
               role="dialog"
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
@@ -4128,6 +4153,9 @@ export function App() {
                   key={settings?.ui.themeId ?? 'default'}
                   src={sidebarBrandLogo}
                 />
+                <span className="sidebar-brand__version" title={`Mythra ${__MYTHRA_VERSION__}`}>
+                  v{__MYTHRA_VERSION__}
+                </span>
               </div>
             </div>
 

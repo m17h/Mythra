@@ -821,6 +821,18 @@ html[data-platform='darwin'] .app-shell {
   -webkit-user-drag: none;
 }
 
+.sidebar-brand__version {
+  flex-shrink: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  align-self: flex-end;
+  margin-bottom: 2px;
+  margin-left: 2px;
+}
+
 .sidebar-quick {
   display: flex;
   flex-direction: column;
@@ -1877,6 +1889,7 @@ html[data-platform='darwin'] .app-shell {
 /* Chat scroll area — block layout so the inner column sizes to content; flex+shrink:1 on a sole child
    can clamp height and prevent scrolling past the last message. */
 .chat-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: 0;
@@ -1919,7 +1932,6 @@ html[data-platform='darwin'] .app-shell {
 .chat-scroll__bg-img {
   width: 100%;
   height: 100%;
-  min-height: 100%;
   object-fit: cover;
   object-position: center;
   display: block;

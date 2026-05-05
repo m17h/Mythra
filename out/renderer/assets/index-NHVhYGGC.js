@@ -20510,11 +20510,13 @@ function AppConfirmDialog({
         className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
         exit: { opacity: 0 },
         initial: { opacity: 0 },
+        onClick: onCancel,
         role: "presentation",
         children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
           motion.div,
           {
             animate: { opacity: 1, scale: 1, y: 0 },
+            onClick: (e) => e.stopPropagation(),
             "aria-describedby": descId,
             "aria-labelledby": titleId,
             "aria-modal": "true",
@@ -34155,16 +34157,16 @@ function ChatPanel({
         )
       ] })
     ] }),
-    wizardHubPlaceholder ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    wizardHubPlaceholder ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
         className: "chat-scroll wizard-hub-scroll",
         onScroll: handleScroll,
         onWheelCapture: handleWheelCapture,
         ref: scrollRef,
-        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: [
+        children: [
           chatBgLayers,
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34198,20 +34200,20 @@ function ChatPanel({
               ] })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
-          ] })
-        ] })
+          ] }) })
+        ]
       }
     ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
           className: "chat-scroll",
           onScroll: handleScroll,
           onWheelCapture: handleWheelCapture,
           ref: scrollRef,
-          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__inner", ref: innerRef, children: [
+          children: [
             chatBgLayers,
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
               timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty chat-empty--thread-start", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
@@ -34284,8 +34286,8 @@ function ChatPanel({
                 );
               }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
-            ] })
-          ] })
+            ] }) })
+          ]
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -36246,10 +36248,12 @@ function SettingsPanel({
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Chat background" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: "Optional image behind the message list. Built-in packs switch automatically when you change theme; or use your own file (PNG, JPEG, WebP, GIF, or SVG)." }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field chat-thread-bg-select-row", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-bg-select-row__label", children: "Source" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-bg-select-row__label", id: "chat-thread-bg-source-label", children: "Source" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
                     AppSelect,
                     {
+                      ariaLabelledBy: "chat-thread-bg-source-label",
+                      portalDropdown: true,
                       value: chatBgSelectValue,
                       onChange: (v2) => {
                         setChatBgError(null);
@@ -36430,11 +36434,13 @@ function SystemPromptInfoDialog({ open, onClose }) {
       className: "app-dialog-backdrop",
       exit: { opacity: 0 },
       initial: { opacity: 0 },
+      onClick: onClose,
       role: "presentation",
       children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         motion.div,
         {
           animate: { opacity: 1, scale: 1, y: 0 },
+          onClick: (e) => e.stopPropagation(),
           "aria-describedby": "system-prompt-info-desc",
           "aria-labelledby": "system-prompt-info-title",
           "aria-modal": "true",
@@ -36503,11 +36509,13 @@ function SystemPromptModal({ open, value, onChange, onClose }) {
       className: "app-dialog-backdrop",
       exit: { opacity: 0 },
       initial: { opacity: 0 },
+      onClick: onClose,
       role: "presentation",
       children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         motion.div,
         {
           animate: { opacity: 1, scale: 1, y: 0 },
+          onClick: (e) => e.stopPropagation(),
           "aria-describedby": "system-prompt-modal-hint",
           "aria-labelledby": "system-prompt-modal-title",
           "aria-modal": "true",
@@ -36812,11 +36820,15 @@ function WizardExportDialog({ open, wizardChat, onClose, onStatusMessage }) {
       className: "app-dialog-backdrop",
       exit: { opacity: 0 },
       initial: { opacity: 0 },
+      onClick: () => {
+        if (!exporting) onClose();
+      },
       role: "presentation",
       children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         motion.div,
         {
           animate: { opacity: 1, scale: 1, y: 0 },
+          onClick: (e) => e.stopPropagation(),
           "aria-labelledby": "wizard-export-title",
           "aria-modal": "true",
           className: "app-dialog app-dialog--scrollable",
@@ -36965,7 +36977,9 @@ function WizardSetupModal({
   onClose,
   onCreate,
   onListModels,
-  onPersistWizardProjectsParentFolder
+  onPersistWizardProjectsParentFolder,
+  onSettingsChangeForFavorites,
+  onPresetPersist
 }) {
   const [name2, setName] = reactExports.useState("");
   const [provider, setProvider] = reactExports.useState("openrouter");
@@ -37112,6 +37126,9 @@ function WizardSetupModal({
       className: "app-dialog-backdrop",
       exit: { opacity: 0 },
       initial: { opacity: 0 },
+      onClick: () => {
+        if (!creating) onClose();
+      },
       role: "presentation",
       children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         motion.div,
@@ -37119,6 +37136,7 @@ function WizardSetupModal({
           "aria-modal": "true",
           animate: { opacity: 1, scale: 1, y: 0 },
           className: "app-dialog app-dialog--scrollable wizard-setup",
+          onClick: (e) => e.stopPropagation(),
           exit: { opacity: 0, scale: 0.98, y: 8 },
           initial: { opacity: 0, scale: 0.98, y: 8 },
           role: "dialog",
@@ -37172,7 +37190,26 @@ function WizardSetupModal({
                       favoriteIds: settings?.ui.favoriteModels?.[provider] ?? defaultSettings.ui.favoriteModels[provider],
                       models: modelOptions,
                       onChange: (next) => setModel(next),
-                      onToggleFavorite: () => void 0,
+                      onToggleFavorite: (id2) => {
+                        if (!settings || !onSettingsChangeForFavorites || !onPresetPersist) return;
+                        const k2 = provider;
+                        const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                        const nextSet = new Set(baseFav[k2] ?? []);
+                        if (nextSet.has(id2)) nextSet.delete(id2);
+                        else nextSet.add(id2);
+                        const next = {
+                          ...settings,
+                          ui: {
+                            ...settings.ui,
+                            favoriteModels: {
+                              ...baseFav,
+                              [k2]: [...nextSet].sort((a, b) => a.localeCompare(b))
+                            }
+                          }
+                        };
+                        onSettingsChangeForFavorites(next);
+                        void onPresetPersist(next);
+                      },
                       value: model,
                       portalDropdown: true
                     }
@@ -37358,6 +37395,9 @@ function NexusSetupModal({ open, wizards, onClose, onCreate }) {
       className: "app-dialog-backdrop",
       exit: { opacity: 0 },
       initial: { opacity: 0 },
+      onClick: () => {
+        if (!creating) onClose();
+      },
       role: "presentation",
       children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         motion.div,
@@ -37365,6 +37405,7 @@ function NexusSetupModal({ open, wizards, onClose, onCreate }) {
           "aria-modal": "true",
           animate: { opacity: 1, scale: 1, y: 0 },
           className: "app-dialog app-dialog--scrollable nexus-setup",
+          onClick: (e) => e.stopPropagation(),
           exit: { opacity: 0, scale: 0.98, y: 8 },
           initial: { opacity: 0, scale: 0.98, y: 8 },
           role: "dialog",
@@ -38991,15 +39032,16 @@ function App() {
   const persistCurrentChat = reactExports.useCallback(
     async (msgs, tl, chatId) => {
       if (msgs.length === 0) return;
-      const id2 = chatId ?? uid();
+      const targetId = chatId ?? activeChatIdRef.current;
+      const id2 = targetId ?? uid();
       const fp = chatFingerprint(msgs, tl);
       if (fp === lastContentFingerprintRef.current) {
-        if (chatId) return id2;
+        if (targetId) return id2;
         return;
       }
       const now2 = Date.now();
       const existing = chatList.find((c) => c.id === id2);
-      const disk = chatId ? await window.electronAPI.loadChat(chatId) : null;
+      const disk = targetId ? await window.electronAPI.loadChat(targetId) : null;
       const nameOverride = disk != null ? disk.titleOverride ?? null : existing?.titleOverride == null || existing.titleOverride === "" ? null : existing.titleOverride;
       const createdAt = disk?.createdAt ?? existing?.createdAt ?? now2;
       const kind = disk?.kind ?? existing?.kind ?? "normal";
@@ -39017,7 +39059,7 @@ function App() {
         createdAt,
         updatedAt: now2,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
-        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (chatId ? null : newChatModelOverrideRef.current ?? null),
+        modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (targetId ? null : newChatModelOverrideRef.current ?? null),
         wizard,
         wizardId,
         nexus,
@@ -39025,7 +39067,10 @@ function App() {
       };
       await window.electronAPI.saveChat(chat);
       lastContentFingerprintRef.current = fp;
-      if (!chatId) setActiveChatId(id2);
+      if (!targetId) {
+        setActiveChatId(id2);
+        activeChatIdRef.current = id2;
+      }
       await refreshChatList();
       return id2;
     },
@@ -39444,7 +39489,7 @@ function App() {
   }, [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]);
   reactExports.useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
-      debouncedSave(chatMessages, chatTimeline, activeChatId);
+      debouncedSave(chatMessages, chatTimeline, activeChatIdRef.current ?? activeChatId);
     }
   }, [activeChatId, chatMessages, chatStreaming, chatTimeline, debouncedSave]);
   const chooseWorkspace = async () => {
@@ -40594,7 +40639,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     }
     let messagesForHistory = chatMessages;
     let timelineForHistory = chatTimeline;
-    let disk = activeChatId ? await window.electronAPI.loadChat(activeChatId) : null;
+    const stableChatId = activeChatIdRef.current ?? activeChatId;
+    let disk = stableChatId ? await window.electronAPI.loadChat(stableChatId) : null;
     if (activeWizard && activeWizardMeta?.id && (!disk || disk.kind === "wizard")) {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -40621,6 +40667,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       setSidebarFocusedWizardId(void 0);
       setSidebarFocusedNexusId(void 0);
       setExpandedWizardIds((current) => new Set(current).add(wizardDiskId));
+      setSidebarTab("wizards");
       await refreshChatList();
       try {
         await activateWorkspace(wsRoot);
@@ -41136,6 +41183,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         className: "app-dialog-backdrop",
         exit: { opacity: 0 },
         initial: { opacity: 0 },
+        onClick: () => setShowWebSearchNotice(false),
         role: "presentation",
         children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
           motion.div,
@@ -41145,6 +41193,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
             className: "app-dialog",
             exit: { opacity: 0, scale: 0.98, y: 8 },
             initial: { opacity: 0, scale: 0.98, y: 8 },
+            onClick: (e) => e.stopPropagation(),
             role: "dialog",
             transition: { duration: 0.18, ease: "easeOut" },
             children: [
@@ -41219,6 +41268,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         onCreate: createWizard,
         onListModels: listModelsForWizardSetup,
         onPersistWizardProjectsParentFolder: persistWizardProjectsParentFolder,
+        onPresetPersist: persistAfterPresetAction,
+        onSettingsChangeForFavorites: handleSettingsPanelChange,
         open: showWizardSetup,
         settings
       }
@@ -41497,6 +41548,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         className: "app-dialog-backdrop",
         exit: { opacity: 0 },
         initial: { opacity: 0 },
+        onClick: () => setShowConnectionHelp(false),
         role: "presentation",
         children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
           motion.div,
@@ -41508,6 +41560,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
             className: "app-dialog app-dialog--scrollable",
             exit: { opacity: 0, scale: 0.98, y: 8 },
             initial: { opacity: 0, scale: 0.98, y: 8 },
+            onClick: (e) => e.stopPropagation(),
             role: "dialog",
             transition: { duration: 0.18, ease: "easeOut" },
             children: [
@@ -41596,16 +41649,22 @@ Project mission: ${full.nexus.mission.trim()}` : "";
           children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-card", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__badge", children: "ML" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-brand__title", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "img",
-                {
-                  alt: "Mythra",
-                  className: "sidebar-brand__mark-img",
-                  decoding: "async",
-                  src: sidebarBrandLogo
-                },
-                settings?.ui.themeId ?? "default"
-              ) })
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-brand__title", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "img",
+                  {
+                    alt: "Mythra",
+                    className: "sidebar-brand__mark-img",
+                    decoding: "async",
+                    src: sidebarBrandLogo
+                  },
+                  settings?.ui.themeId ?? "default"
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.1.0"}`, children: [
+                  "v",
+                  "0.1.0"
+                ] })
+              ] })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-quick", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sidebar-new ${showNewMenu ? "is-open" : ""}`, children: [

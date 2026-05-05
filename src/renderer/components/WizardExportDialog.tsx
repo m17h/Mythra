@@ -138,10 +138,14 @@ export function WizardExportDialog({ open, wizardChat, onClose, onStatusMessage 
           className="app-dialog-backdrop"
           exit={{ opacity: 0 }}
           initial={{ opacity: 0 }}
+          onClick={() => {
+            if (!exporting) onClose();
+          }}
           role="presentation"
         >
           <motion.div
             animate={{ opacity: 1, scale: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
             aria-labelledby="wizard-export-title"
             aria-modal="true"
             className="app-dialog app-dialog--scrollable"

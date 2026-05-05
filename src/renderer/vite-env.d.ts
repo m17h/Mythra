@@ -32,6 +32,8 @@ import type {
 } from '@shared/types';
 
 declare global {
+  const __MYTHRA_VERSION__: string;
+
   interface Window {
     electronAPI: {
       platform: string;
