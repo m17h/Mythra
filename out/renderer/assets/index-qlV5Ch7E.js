@@ -33252,8 +33252,54 @@ function remarkGfm(options) {
   fromMarkdownExtensions.push(gfmFromMarkdown());
   toMarkdownExtensions.push(gfmToMarkdown(settings));
 }
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#].*)?$/i;
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(?:[?#].*)?$/i;
+const AUDIO_EXT_RE = /\.(mp3|wav|m4a|aac|flac|opus|oga|ogg|webm)(?:[?#].*)?$/i;
+function mediaKindFromHref(rawHref) {
+  if (typeof rawHref !== "string") return null;
+  const href = rawHref.trim();
+  if (!href) return null;
+  if (/^data:image\//i.test(href)) return "image";
+  if (/^data:video\//i.test(href)) return "video";
+  if (/^data:audio\//i.test(href)) return "audio";
+  if (!/^(https?:|blob:|data:)/i.test(href)) return null;
+  if (IMAGE_EXT_RE.test(href)) return "image";
+  if (VIDEO_EXT_RE.test(href)) return "video";
+  if (AUDIO_EXT_RE.test(href)) return "audio";
+  return null;
+}
+function mediaDownloadName(href, fallback = "media") {
+  try {
+    const url = new URL(href);
+    const name2 = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() ?? "");
+    return name2 || fallback;
+  } catch {
+    return fallback;
+  }
+}
+function MediaMarkdownLink({ href, children }) {
+  const kind = mediaKindFromHref(href);
+  if (!kind) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href, rel: "noopener noreferrer", target: "_blank", children });
+  }
+  const label = String(children).trim() || mediaDownloadName(href);
+  const saveMedia = () => {
+    void window.electronAPI.saveGeneratedMedia(href, mediaDownloadName(href, label));
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-media-link", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-media-link__frame", children: [
+      kind === "image" ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: label, src: href }) : null,
+      kind === "video" ? /* @__PURE__ */ jsxRuntimeExports.jsx("video", { controls: true, preload: "metadata", src: href }) : null,
+      kind === "audio" ? /* @__PURE__ */ jsxRuntimeExports.jsx("audio", { controls: true, preload: "metadata", src: href }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-media-link__meta", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-media-link__name", children: label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-media-link__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: saveMedia, type: "button", children: "Save" }) })
+    ] })
+  ] });
+}
 const markdownComponents = {
-  a: ({ children, node: node2, ...rest }) => /* @__PURE__ */ jsxRuntimeExports.jsx("a", { ...rest, rel: "noopener noreferrer", target: "_blank", children }),
+  a: ({ children, node: node2, href, ...rest }) => href ? /* @__PURE__ */ jsxRuntimeExports.jsx(MediaMarkdownLink, { href, children }) : /* @__PURE__ */ jsxRuntimeExports.jsx("a", { ...rest, rel: "noopener noreferrer", target: "_blank", children }),
   table: ({ children, node: node2, ...rest }) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "table-wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("table", { ...rest, children }) })
 };
 function ChatMarkdown({ text: text2 }) {
@@ -33453,6 +33499,41 @@ function getCopyableMessageText(content2) {
     s = s.replaceAll(token, "");
   }
   return s.trim();
+}
+function attachmentKind(mimeType) {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  return "file";
+}
+function AttachmentPreview({ attachment, compact = false }) {
+  const kind = attachmentKind(attachment.mimeType);
+  const label = attachment.name || "Attachment";
+  const saveAttachment = () => {
+    void window.electronAPI.saveGeneratedMedia(attachment.dataUrl, label, attachment.filePath);
+  };
+  const openImagePreview = () => {
+    if (kind !== "image") return;
+    void window.electronAPI.openGeneratedImage(attachment.dataUrl, label, attachment.mimeType, attachment.filePath);
+  };
+  if (compact) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      kind === "image" ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: label, src: attachment.dataUrl }) : null,
+      kind === "video" ? /* @__PURE__ */ jsxRuntimeExports.jsx("video", { muted: true, preload: "metadata", src: attachment.dataUrl }) : null,
+      kind === "audio" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "composer-attachment__icon", children: "Audio" }) : null,
+      kind === "file" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "composer-attachment__icon", children: "File" }) : null
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("figure", { className: `chat-attachment chat-attachment--${kind}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-attachment__preview", children: [
+      kind === "image" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-attachment__image-button", onClick: openImagePreview, title: "Open full size", type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: label, src: attachment.dataUrl }) }) : null,
+      kind === "video" ? /* @__PURE__ */ jsxRuntimeExports.jsx("video", { controls: true, preload: "metadata", src: attachment.dataUrl }) : null,
+      kind === "audio" ? /* @__PURE__ */ jsxRuntimeExports.jsx("audio", { controls: true, preload: "metadata", src: attachment.dataUrl }) : null,
+      kind === "file" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-attachment__file-icon", children: "File" }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("figcaption", { title: label, children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachment__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: saveAttachment, type: "button", children: "Save" }) })
+  ] });
 }
 function formatTokensShort(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
@@ -34074,6 +34155,112 @@ function ChatPanel({
     ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__bg-scrim", "aria-hidden": true })
   ] }) : null;
+  const wizardHubScrollInner = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "path",
+          {
+            d: "M22 7L36 37H8L22 7z",
+            stroke: "currentColor",
+            strokeWidth: "1.45",
+            strokeLinejoin: "round"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "22", cy: "23", r: "2.35", fill: "currentColor", opacity: 0.22 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "path",
+          {
+            d: "M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8",
+            stroke: "currentColor",
+            strokeWidth: "1.35",
+            strokeLinecap: "round"
+          }
+        )
+      ] }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: "Select a wizard to get started" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "chat-empty__desc wizard-hub-desc", children: [
+        "Pick one from the list on the left,",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+        "or create one",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "wizard-hub-desc__here", onClick: () => onOpenWizardCreator?.(), children: "here" }),
+        "."
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
+  ] }) });
+  const threadScrollInner = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
+    timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty chat-empty--thread-start", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+      ] }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
+    ] }) : null,
+    renderChunks.map((chunk) => {
+      if (chunk.type === "activity-group") {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
+      }
+      if (chunk.type === "activity-solo") {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(
+          CollapsibleActivityBlock,
+          {
+            activity: chunk.entry.activity,
+            onDetailsToggle: afterCollapsibleLayout
+          },
+          chunk.entry.id
+        );
+      }
+      const { entry } = chunk;
+      const { message } = entry;
+      if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
+        return null;
+      }
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.article,
+        {
+          animate: { opacity: 1, y: 0 },
+          className: `chat-bubble chat-bubble--${message.role}`,
+          initial: { opacity: 0, y: 8 },
+          transition: { duration: 0.22, ease: "easeOut" },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
+              getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
+                  "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
+                  title: copiedMessageId === entry.id ? "Copied" : "Copy",
+                  type: "button",
+                  onClick: () => void handleCopyMessage(entry.id, message.content),
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
+                }
+              ) : null
+            ] }),
+            message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
+            message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att }, att.id)) }) : null,
+            message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              AssistantMessageContent,
+              {
+                onSessionModeToggle,
+                onWebSearchChange,
+                sessionMode,
+                sessionModeToggleDisabled,
+                text: message.content,
+                webSearch,
+                webSearchDisabled
+              }
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
+          ]
+        },
+        entry.id
+      );
+    }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
+  ] }) });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "chat-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-left", children: [
@@ -34157,137 +34344,48 @@ function ChatPanel({
         )
       ] })
     ] }),
-    wizardHubPlaceholder ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    wizardHubPlaceholder ? chatBgLayers ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll-shell", children: [
+      chatBgLayers,
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: "chat-scroll wizard-hub-scroll",
+          onScroll: handleScroll,
+          onWheelCapture: handleWheelCapture,
+          ref: scrollRef,
+          children: wizardHubScrollInner
+        }
+      )
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
       "div",
       {
         className: "chat-scroll wizard-hub-scroll",
         onScroll: handleScroll,
         onWheelCapture: handleWheelCapture,
         ref: scrollRef,
-        children: [
-          chatBgLayers,
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "path",
-                  {
-                    d: "M22 7L36 37H8L22 7z",
-                    stroke: "currentColor",
-                    strokeWidth: "1.45",
-                    strokeLinejoin: "round"
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "22", cy: "23", r: "2.35", fill: "currentColor", opacity: 0.22 }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "path",
-                  {
-                    d: "M4 37.75c5-5.2 13-8 18-8s13 2.85 18 8",
-                    stroke: "currentColor",
-                    strokeWidth: "1.35",
-                    strokeLinecap: "round"
-                  }
-                )
-              ] }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: "Select a wizard to get started" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "chat-empty__desc wizard-hub-desc", children: [
-                "Pick one from the list on the left,",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-                "or create one",
-                " ",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "wizard-hub-desc__here", onClick: () => onOpenWizardCreator?.(), children: "here" }),
-                "."
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
-          ] }) })
-        ]
+        children: wizardHubScrollInner
       }
     ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      chatBgLayers ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll-shell", children: [
+        chatBgLayers,
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            className: "chat-scroll",
+            onScroll: handleScroll,
+            onWheelCapture: handleWheelCapture,
+            ref: scrollRef,
+            children: threadScrollInner
+          }
+        )
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
         "div",
         {
           className: "chat-scroll",
           onScroll: handleScroll,
           onWheelCapture: handleWheelCapture,
           ref: scrollRef,
-          children: [
-            chatBgLayers,
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
-              timeline.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty chat-empty--thread-start", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 32 32", fill: "none", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "6", width: "24", height: "18", rx: "4", stroke: "currentColor", strokeWidth: "1.5" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 12h24M10 18h6", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
-                ] }) }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
-              ] }) : null,
-              renderChunks.map((chunk) => {
-                if (chunk.type === "activity-group") {
-                  return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
-                }
-                if (chunk.type === "activity-solo") {
-                  return /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    CollapsibleActivityBlock,
-                    {
-                      activity: chunk.entry.activity,
-                      onDetailsToggle: afterCollapsibleLayout
-                    },
-                    chunk.entry.id
-                  );
-                }
-                const { entry } = chunk;
-                const { message } = entry;
-                if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
-                  return null;
-                }
-                return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  motion.article,
-                  {
-                    animate: { opacity: 1, y: 0 },
-                    className: `chat-bubble chat-bubble--${message.role}`,
-                    initial: { opacity: 0, y: 8 },
-                    transition: { duration: 0.22, ease: "easeOut" },
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
-                        getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          "button",
-                          {
-                            className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
-                            "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
-                            title: copiedMessageId === entry.id ? "Copied" : "Copy",
-                            type: "button",
-                            onClick: () => void handleCopyMessage(entry.id, message.content),
-                            children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
-                          }
-                        ) : null
-                      ] }),
-                      message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
-                      message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("figure", { className: "chat-attachment", children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("figcaption", { children: att.name })
-                      ] }, att.id)) }) : null,
-                      message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        AssistantMessageContent,
-                        {
-                          onSessionModeToggle,
-                          onWebSearchChange,
-                          sessionMode,
-                          sessionModeToggleDisabled,
-                          text: message.content,
-                          webSearch,
-                          webSearchDisabled
-                        }
-                      ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
-                    ]
-                  },
-                  entry.id
-                );
-              }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
-            ] }) })
-          ]
+          children: threadScrollInner
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34364,7 +34462,7 @@ function ChatPanel({
           )
         ] }) : null,
         attachments.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "composer-attachments", children: attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "composer-attachment", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("img", { alt: att.name, src: att.dataUrl }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att, compact: true }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: att.name }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => onRemoveAttachment(att.id), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 1l8 8M9 1l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) }) })
         ] }, att.id)) }) : null,
@@ -38558,6 +38656,98 @@ const formatRelativeDate = (ts) => {
   if (days < 7) return `${days}d ago`;
   return new Date(ts).toLocaleDateString(void 0, { month: "short", day: "numeric" });
 };
+const MEDIA_GENERATION_LABELS = {
+  music: "Music",
+  video: "Video",
+  image: "Images"
+};
+const MEDIA_CHAT_BADGES = {
+  music: { label: "Music chat", shortLabel: "Music" },
+  video: { label: "Video chat", shortLabel: "Video" },
+  image: { label: "Image chat", shortLabel: "Image" }
+};
+const MEDIA_GENERATION_HELP = {
+  music: "Choose an audio or music generation model for this chat.",
+  video: "Choose a video generation model such as Google Veo.",
+  image: "Choose an image generation model for this chat."
+};
+const MEDIA_MODEL_PATTERNS = {
+  music: [
+    /\bmusic\b/i,
+    /\baudio\b/i,
+    /\bsong\b/i,
+    /\bsuno\b/i,
+    /\budio\b/i,
+    /stable[-_ ]?audio/i,
+    /\blyria\b/i,
+    /musicgen/i,
+    /audiocraft/i,
+    /ace[-_ ]?step/i
+  ],
+  video: [
+    /\bvideo\b/i,
+    /\bveo\b/i,
+    /veo[-_ ]?\d/i,
+    /\bsora\b/i,
+    /\brunway\b/i,
+    /\bluma\b/i,
+    /\bkling\b/i,
+    /\bhailuo\b/i,
+    /\bpika\b/i,
+    /\bseedance\b/i,
+    /\bminimax\b/i,
+    /\bvidu\b/i,
+    /\bmochi\b/i,
+    /wan[-_ ]?\d/i,
+    /gen[-_ ]?[34]\b/i
+  ],
+  image: [
+    /\bimage\b/i,
+    /\bimagen\b/i,
+    /\bdall[-_ ]?e\b/i,
+    /gpt[-_ ]?image/i,
+    /\bmidjourney\b/i,
+    /\bflux\b/i,
+    /stable[-_ ]?diffusion/i,
+    /\bsdxl\b/i,
+    /\bideogram\b/i,
+    /\brecraft\b/i,
+    /\bseedream\b/i,
+    /nano[-_ ]?banana/i,
+    /gemini.*image/i,
+    /qwen.*image/i,
+    /\bkolors\b/i
+  ]
+};
+const MEDIA_OUTPUT_MODALITIES = {
+  music: ["audio", "music"],
+  video: ["video"],
+  image: ["image"]
+};
+const MEDIA_MODEL_LIST_OUTPUT_MODALITIES = {
+  music: ["audio"],
+  video: ["video"],
+  image: ["image"]
+};
+function modelMatchesMediaKind(model, kind) {
+  const outputModalities = model.outputModalities?.map((modality) => modality.toLowerCase()) ?? [];
+  if (outputModalities.some((modality) => MEDIA_OUTPUT_MODALITIES[kind].includes(modality))) {
+    return true;
+  }
+  const haystack = `${model.id} ${model.ownedBy ?? ""} ${model.inputModalities?.join(" ") ?? ""} ${model.outputModalities?.join(" ") ?? ""}`;
+  return MEDIA_MODEL_PATTERNS[kind].some((pattern) => pattern.test(haystack));
+}
+function inferMediaGenerationKind(modelId) {
+  const model = { id: modelId };
+  for (const kind of ["music", "video", "image"]) {
+    if (modelMatchesMediaKind(model, kind)) return kind;
+  }
+  return null;
+}
+function mediaKindForOverride(override) {
+  if (!override?.model.trim()) return null;
+  return override.mediaKind ?? inferMediaGenerationKind(override.model);
+}
 function App() {
   const [settings, setSettings] = reactExports.useState(null);
   const [settingsStatus, setSettingsStatus] = reactExports.useState("Load a provider profile, then refresh models.");
@@ -38611,6 +38801,12 @@ function App() {
   const [newChatModelOverride, setNewChatModelOverride] = reactExports.useState(null);
   const newChatModelOverrideRef = reactExports.useRef(null);
   newChatModelOverrideRef.current = newChatModelOverride;
+  const [mediaPickerKind, setMediaPickerKind] = reactExports.useState(null);
+  const [mediaPickerProvider, setMediaPickerProvider] = reactExports.useState("openrouter");
+  const [mediaPickerModels, setMediaPickerModels] = reactExports.useState([]);
+  const [mediaPickerSelectedModel, setMediaPickerSelectedModel] = reactExports.useState("");
+  const [mediaPickerLoading, setMediaPickerLoading] = reactExports.useState(false);
+  const [mediaPickerError, setMediaPickerError] = reactExports.useState("");
   chatStreamingRef.current = chatStreaming;
   const [inlineTerminalLogs, setInlineTerminalLogs] = reactExports.useState("");
   const [inlineTerminalJobId, setInlineTerminalJobId] = reactExports.useState();
@@ -38977,6 +39173,7 @@ function App() {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
+  const activeMediaOverrideKind = mediaKindForOverride(effectiveModelOverride);
   const showWizardHubPlaceholder = reactExports.useMemo(
     () => sidebarTab === "wizards" && wizardsSidebarPane === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session",
     [sidebarTab, wizardsSidebarPane, sidebarFocusedWizardId, activeChatMeta?.kind]
@@ -39245,6 +39442,35 @@ function App() {
     };
   }, [settings, overrideModelProvider]);
   reactExports.useEffect(() => {
+    if (!settings || !mediaPickerKind) {
+      setMediaPickerModels([]);
+      setMediaPickerSelectedModel("");
+      setMediaPickerError("");
+      return;
+    }
+    let cancelled = false;
+    setMediaPickerLoading(true);
+    setMediaPickerError("");
+    void window.electronAPI.listModels(settings, mediaPickerProvider, { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[mediaPickerKind] }).then((list2) => {
+      if (cancelled) return;
+      const filtered = list2.filter((model) => modelMatchesMediaKind(model, mediaPickerKind));
+      setMediaPickerModels(filtered);
+      setMediaPickerSelectedModel(
+        (current) => current && filtered.some((model) => model.id === current) ? current : filtered[0]?.id ?? ""
+      );
+    }).catch((error) => {
+      if (cancelled) return;
+      setMediaPickerModels([]);
+      setMediaPickerSelectedModel("");
+      setMediaPickerError(error instanceof Error ? error.message : "Could not load models.");
+    }).finally(() => {
+      if (!cancelled) setMediaPickerLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaPickerKind, mediaPickerProvider, settings]);
+  reactExports.useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
       if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
         setInlineTerminalLogs((c) => c + payload.chunk);
@@ -39289,7 +39515,7 @@ function App() {
         });
       }
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, usage }) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, attachments, usage }) => {
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
@@ -39320,6 +39546,9 @@ function App() {
         const next = { ...m, content: content2, status: "done" };
         if (reasoning !== void 0) next.reasoning = reasoning;
         else if (m.reasoning !== void 0) next.reasoning = m.reasoning;
+        if (attachments?.length) {
+          next.attachments = [...m.attachments ?? [], ...attachments];
+        }
         return next;
       });
       if (snapshot) {
@@ -39815,6 +40044,27 @@ function App() {
     chatSessionIdRef.current = nextSid;
     setSidebarTab("chats");
     setShowNewMenu(false);
+  };
+  const openMediaModelPicker = (kind) => {
+    setMediaPickerKind(kind);
+    setMediaPickerProvider("openrouter");
+    setMediaPickerSelectedModel("");
+    setMediaPickerError("");
+  };
+  const closeMediaModelPicker = () => {
+    setMediaPickerKind(null);
+    setMediaPickerModels([]);
+    setMediaPickerSelectedModel("");
+    setMediaPickerError("");
+  };
+  const startMediaGenerationChat = async () => {
+    if (!mediaPickerKind || !mediaPickerSelectedModel) return;
+    const override = { provider: mediaPickerProvider, model: mediaPickerSelectedModel, mediaKind: mediaPickerKind };
+    await startNewChat();
+    setNewChatModelOverride(override);
+    setOverrideModelProvider(mediaPickerProvider);
+    setChatModelExpanded(true);
+    closeMediaModelPicker();
   };
   const handleChatsTabClick = () => {
     setSidebarTab("chats");
@@ -40803,6 +41053,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       overrideForStream = loaded?.modelOverride ?? null;
     }
     if (!chatIdForStream) return;
+    const mediaOverrideKind = mediaKindForOverride(overrideForStream);
     inFlightChatsRef.current.set(requestId, {
       chatId: chatIdForStream,
       requestId,
@@ -40876,7 +41127,17 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         ...sendSettings.ui,
         sessionMode: "agent"
       }
-    } : applyChatModelOverride(sendSettings, overrideForStream);
+    } : (() => {
+      const overrideSettings = applyChatModelOverride(sendSettings, overrideForStream);
+      return mediaOverrideKind ? {
+        ...overrideSettings,
+        ui: {
+          ...overrideSettings.ui,
+          sessionMode: "talk",
+          webSearch: false
+        }
+      } : overrideSettings;
+    })();
     const wizardDocsContext = nexusForStream ? await buildNexusDocsContext(nexusTeam) : wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
     if (wizardForStream) {
       const loadedDocs = wizardDocsContext.loaded;
@@ -41093,6 +41354,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       wizardSystemPrompt: nexusForStream ? void 0 : wizardForStream?.systemPrompt,
       wizardFullAccess: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.fullAccess) : void 0,
       wizardAllowOutsideWorkspace: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : void 0,
+      mediaGenerationKind: mediaOverrideKind ?? void 0,
       ...nexusForStream && nexusLeader ? {
         nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
         nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
@@ -41170,13 +41432,85 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
   const selectedProviderLabel = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? settings?.selectedProvider) === "openrouter" ? "OpenRouter" : "LM Studio";
-  const sessionMode = activeWizard || activeNexus ? "agent" : settings?.ui.sessionMode ?? "agent";
+  const sessionMode = activeWizard || activeNexus ? "agent" : activeMediaOverrideKind ? "talk" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
   const toolApprovalDiff = toolApprovalRequest && typeof toolApprovalRequest.diffBefore === "string" && typeof toolApprovalRequest.diffAfter === "string" ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter) : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingDialog, { onComplete: completeOnboarding, open: showOnboarding }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: mediaPickerKind ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        onClick: closeMediaModelPicker,
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            "aria-modal": "true",
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "app-dialog app-dialog--scrollable media-model-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            onClick: (e) => e.stopPropagation(),
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: MEDIA_GENERATION_LABELS[mediaPickerKind] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Choose a model" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: MEDIA_GENERATION_HELP[mediaPickerKind] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "media-model-dialog__fields", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "chat-thread-options__field", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__field-label", children: "Provider" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    AppSelect,
+                    {
+                      className: "app-select--compact",
+                      options: providerOptions,
+                      onChange: (provider) => {
+                        setMediaPickerProvider(provider);
+                        setMediaPickerSelectedModel("");
+                      },
+                      value: mediaPickerProvider
+                    }
+                  )
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__field", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__field-label", children: "Model" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    ModelSearch,
+                    {
+                      models: mediaPickerModels,
+                      value: mediaPickerSelectedModel,
+                      favoriteIds: settings?.ui.favoriteModels?.[mediaPickerProvider] ?? [],
+                      onChange: setMediaPickerSelectedModel
+                    }
+                  )
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "media-model-dialog__status", children: mediaPickerLoading ? "Loading models..." : mediaPickerError ? mediaPickerError : mediaPickerModels.length === 0 ? `No ${MEDIA_GENERATION_LABELS[mediaPickerKind].toLowerCase()} models found for this provider.` : `${mediaPickerModels.length} matching model${mediaPickerModels.length === 1 ? "" : "s"}.` }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: closeMediaModelPicker, type: "button", children: "Cancel" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn btn--primary",
+                    disabled: !mediaPickerSelectedModel,
+                    onClick: () => void startMediaGenerationChat(),
+                    type: "button",
+                    children: "Start chat"
+                  }
+                )
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showWebSearchNotice ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
       {
@@ -41661,9 +41995,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.1.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.2.0"}`, children: [
                   "v",
-                  "0.1.0"
+                  "0.2.0"
                 ] })
               ] })
             ] }),
@@ -42020,101 +42354,108 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                       "override-body"
                     ) })
                   ] }) : null,
-                  normalChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: normalChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                    "div",
-                    {
-                      className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
-                      onClick: () => loadChat(chat.id),
-                      children: [
-                        editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          "input",
-                          {
-                            autoFocus: true,
-                            className: "chat-list__title-input",
-                            onBlur: (e) => {
-                              void commitRenameChat(chat.id, e.target.value);
-                            },
-                            onChange: (e) => setEditingTitleDraft(e.target.value),
-                            onKeyDown: (e) => {
-                              e.stopPropagation();
-                              if (e.key === "Enter") {
-                                e.currentTarget.blur();
-                              } else if (e.key === "Escape") {
-                                e.preventDefault();
-                                skipNextRenameCommitRef.current = true;
-                                cancelRenameChat();
-                              }
-                            },
-                            value: editingTitleDraft
-                          }
-                        ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title }),
-                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
-                        ] }),
-                        editingTitleId === chat.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "button",
+                  normalChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: normalChatList.map((chat) => {
+                    const mediaKind = mediaKindForOverride(chat.modelOverride);
+                    const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
+                    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "div",
+                      {
+                        className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ""}`,
+                        onClick: () => loadChat(chat.id),
+                        children: [
+                          editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "input",
                             {
-                              className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
-                              onClick: (e) => void togglePinChat(e, chat.id),
-                              type: "button",
-                              title: chat.pinned ? "Unpin" : "Pin to top",
-                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "path",
-                                {
-                                  d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z",
-                                  fill: chat.pinned ? "currentColor" : "none",
-                                  stroke: "currentColor",
-                                  strokeLinejoin: "round",
-                                  strokeWidth: "1.1"
-                                }
-                              ) })
-                            }
-                          ),
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "button",
-                            {
-                              className: "chat-list__rename",
-                              onClick: (e) => beginRenameChat(e, chat.id, chat.title),
-                              type: "button",
-                              title: "Rename",
-                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "path",
-                                {
-                                  d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z",
-                                  fill: "currentColor"
-                                }
-                              ) })
-                            }
-                          ),
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "button",
-                            {
-                              className: "chat-list__delete",
-                              onClick: (e) => {
-                                e.stopPropagation();
-                                requestDeleteChat(chat);
+                              autoFocus: true,
+                              className: "chat-list__title-input",
+                              onBlur: (e) => {
+                                void commitRenameChat(chat.id, e.target.value);
                               },
-                              onMouseDown: (e) => e.preventDefault(),
-                              type: "button",
-                              title: "Delete chat",
-                              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "path",
-                                {
-                                  d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
-                                  stroke: "currentColor",
-                                  strokeWidth: "1.2",
-                                  strokeLinecap: "round",
-                                  strokeLinejoin: "round"
+                              onChange: (e) => setEditingTitleDraft(e.target.value),
+                              onKeyDown: (e) => {
+                                e.stopPropagation();
+                                if (e.key === "Enter") {
+                                  e.currentTarget.blur();
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  skipNextRenameCommitRef.current = true;
+                                  cancelRenameChat();
                                 }
-                              ) })
+                              },
+                              value: editingTitleDraft
                             }
-                          )
-                        ] })
-                      ]
-                    },
-                    chat.id
-                  )) })
+                          ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title-row", children: [
+                              mediaBadge ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-list__media-badge", title: mediaBadge.label, children: mediaBadge.shortLabel }) : null,
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title })
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
+                          ] }),
+                          editingTitleId === chat.id ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "button",
+                              {
+                                className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
+                                onClick: (e) => void togglePinChat(e, chat.id),
+                                type: "button",
+                                title: chat.pinned ? "Unpin" : "Pin to top",
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "path",
+                                  {
+                                    d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z",
+                                    fill: chat.pinned ? "currentColor" : "none",
+                                    stroke: "currentColor",
+                                    strokeLinejoin: "round",
+                                    strokeWidth: "1.1"
+                                  }
+                                ) })
+                              }
+                            ),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "button",
+                              {
+                                className: "chat-list__rename",
+                                onClick: (e) => beginRenameChat(e, chat.id, chat.title),
+                                type: "button",
+                                title: "Rename",
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "path",
+                                  {
+                                    d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z",
+                                    fill: "currentColor"
+                                  }
+                                ) })
+                              }
+                            ),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "button",
+                              {
+                                className: "chat-list__delete",
+                                onClick: (e) => {
+                                  e.stopPropagation();
+                                  requestDeleteChat(chat);
+                                },
+                                onMouseDown: (e) => e.preventDefault(),
+                                type: "button",
+                                title: "Delete chat",
+                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "path",
+                                  {
+                                    d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3",
+                                    stroke: "currentColor",
+                                    strokeWidth: "1.2",
+                                    strokeLinecap: "round",
+                                    strokeLinejoin: "round"
+                                  }
+                                ) })
+                              }
+                            )
+                          ] })
+                        ]
+                      },
+                      chat.id
+                    );
+                  }) })
                 ]
               },
               "chats"
@@ -42448,6 +42789,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               "files"
             ) }) }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-footer", children: [
+              sidebarTab === "chats" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "media-launcher", "aria-label": "Start media generation chat", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "media-launcher__btn", onClick: () => openMediaModelPicker("music"), type: "button", children: "Music" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "media-launcher__btn", onClick: () => openMediaModelPicker("video"), type: "button", children: "Video" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "media-launcher__btn", onClick: () => openMediaModelPicker("image"), type: "button", children: "Images" })
+              ] }) : null,
               sidebarTab === "wizards" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizards-pane-mode-toggle", role: "tablist", "aria-label": "Wizards sidebar view", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "button",
@@ -42532,11 +42878,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               onStop: stopChat,
               modelCatalogSettled: Boolean(settings) && modelCatalogSettled,
               providerConnected,
-              webSearch: settings?.ui.webSearch ?? false,
-              webSearchDisabled: !settings,
+              webSearch: activeMediaOverrideKind ? false : settings?.ui.webSearch ?? false,
+              webSearchDisabled: !settings || Boolean(activeMediaOverrideKind),
               onWebSearchChange: handleWebSearchChange,
               onSessionModeToggle: handleSessionModeToggle,
-              sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive,
+              sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind),
               sessionMode,
               selectedModel: effectiveHeaderModelId,
               selectedProviderLabel,

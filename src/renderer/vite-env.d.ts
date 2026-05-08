@@ -13,6 +13,7 @@ import type {
   CommandChunk,
   CommandResult,
   ModelInfo,
+  ModelListOptions,
   OpenFile,
   SavedChat,
   SavedChatMeta,
@@ -65,7 +66,9 @@ declare global {
       onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => () => void;
       onToolApprovalRequest: (callback: (payload: ToolApprovalRequest) => void) => () => void;
       openExternalUrl: (url: string) => Promise<void>;
-      listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') => Promise<ModelInfo[]>;
+      saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) => Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>;
+      openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) => Promise<{ ok: boolean; error?: string }>;
+      listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) => Promise<ModelInfo[]>;
       streamChat: (
         requestId: string,
         settings: AppSettings,
@@ -84,6 +87,7 @@ declare global {
           nexusLeaderProvider?: ProviderKind;
           nexusLeaderModel?: string;
           nexusLeaderName?: string;
+          mediaGenerationKind?: 'music' | 'video' | 'image';
         }
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;

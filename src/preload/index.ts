@@ -12,6 +12,7 @@ import type {
   CommandChunk,
   CommandResult,
   ModelInfo,
+  ModelListOptions,
   OpenFile,
   SavedChat,
   SavedChatMeta,
@@ -89,8 +90,12 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('tool:approval-request', listener);
   },
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
-  listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>
-    ipcRenderer.invoke('models:list', settings, providerKind) as Promise<ModelInfo[]>,
+  saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) =>
+    ipcRenderer.invoke('generated-media:save', dataUrl, fileName, filePath) as Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>,
+  openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) =>
+    ipcRenderer.invoke('generated-media:open-image', dataUrl, fileName, mimeType, filePath) as Promise<{ ok: boolean; error?: string }>,
+  listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) =>
+    ipcRenderer.invoke('models:list', settings, providerKind, options) as Promise<ModelInfo[]>,
   streamChat: (
     requestId: string,
     settings: AppSettings,
@@ -109,6 +114,7 @@ const electronAPI = {
       nexusLeaderProvider?: ProviderKind;
       nexusLeaderModel?: string;
       nexusLeaderName?: string;
+      mediaGenerationKind?: 'music' | 'video' | 'image';
     }
   ) => ipcRenderer.invoke('chat:stream', requestId, settings, messages, runtime) as Promise<{ ok: boolean }>,
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,

@@ -7,6 +7,7 @@ export type ProviderKind = 'lmstudio' | 'openrouter';
 export interface ChatModelOverride {
   provider: ProviderKind;
   model: string;
+  mediaKind?: 'music' | 'video' | 'image';
 }
 
 export type ChatKind = 'normal' | 'wizard' | 'wizard-session' | 'nexus' | 'nexus-session';
@@ -284,6 +285,12 @@ export interface ModelInfo {
   id: string;
   contextLength?: number;
   ownedBy?: string;
+  inputModalities?: string[];
+  outputModalities?: string[];
+}
+
+export interface ModelListOptions {
+  outputModalities?: string[];
 }
 
 export interface WorkspaceNode {
@@ -332,6 +339,8 @@ export interface ChatAttachment {
   name: string;
   mimeType: string;
   dataUrl: string;
+  /** Local generated-media backing file used for Save/delete lifecycle. */
+  filePath?: string;
 }
 
 export interface ChatStreamDelta {
@@ -354,6 +363,7 @@ export interface ChatStreamDone {
   content: string;
   /** Final model reasoning, if the provider sent any (e.g. non-streaming message.reasoning). */
   reasoning?: string;
+  attachments?: ChatAttachment[];
   /** Present when the upstream API reported token usage for this completion. */
   usage?: ChatCompletionTokenUsage;
 }

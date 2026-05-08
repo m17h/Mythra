@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join, resolve, sep } from 'node:path';
 import { app } from 'electron';
-import type { SavedChat, SavedChatMeta } from '@shared/types';
+import type { ChatAttachment, SavedChat, SavedChatMeta } from '@shared/types';
 
 const CHATS_DIR = 'mythra-chats';
+const GENERATED_MEDIA_DIR = 'generated-media';
 /** Older installs (OpenKiwi / Pixel Forge). */
 const LEGACY_CHAT_DIRS = ['openkiwi-chats', 'pixel-forge-chats'] as const;
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -18,6 +20,7 @@ const assertSafeChatId = (id: string) => {
 export class ChatStore {
   private readonly userData = app.getPath('userData');
   private readonly dir = join(this.userData, CHATS_DIR);
+  private readonly generatedMediaDir = join(this.userData, GENERATED_MEDIA_DIR);
   private legacyMigrated = false;
 
   private async migrateLegacyChatsIfNeeded() {
@@ -103,10 +106,63 @@ export class ChatStore {
     await writeFile(join(this.dir, `${chat.id}.json`), JSON.stringify(chat), 'utf8');
   }
 
+  private isInsideGeneratedMedia(path: string) {
+    const root = resolve(this.generatedMediaDir);
+    const target = resolve(path);
+    const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+    if (process.platform === 'win32') {
+      const rootLower = root.toLowerCase();
+      const prefixLower = prefix.toLowerCase();
+      const targetLower = target.toLowerCase();
+      return targetLower === rootLower || targetLower.startsWith(prefixLower);
+    }
+    return target === root || target.startsWith(prefix);
+  }
+
+  private generatedMediaPathFromAttachment(attachment: ChatAttachment): string | null {
+    if (attachment.filePath) {
+      const path = resolve(attachment.filePath);
+      return this.isInsideGeneratedMedia(path) ? path : null;
+    }
+    if (!attachment.dataUrl.startsWith('file:')) return null;
+    try {
+      const path = fileURLToPath(attachment.dataUrl);
+      return this.isInsideGeneratedMedia(path) ? path : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async deleteGeneratedMediaForChat(chat: SavedChat) {
+    const attachmentPaths = new Set<string>();
+    for (const message of chat.messages) {
+      for (const attachment of message.attachments ?? []) {
+        const path = this.generatedMediaPathFromAttachment(attachment);
+        if (path) attachmentPaths.add(path);
+      }
+    }
+
+    await Promise.all(
+      [...attachmentPaths].map((path) => rm(path, { force: true, recursive: false }).catch(() => undefined))
+    );
+
+    await rm(join(this.generatedMediaDir, chat.id), { force: true, recursive: true }).catch(() => undefined);
+  }
+
   async deleteChat(id: string): Promise<boolean> {
     try {
       assertSafeChatId(id);
-      await unlink(join(this.dir, `${id}.json`));
+      const chatPath = join(this.dir, `${id}.json`);
+      let chat: SavedChat | null = null;
+      try {
+        chat = JSON.parse(await readFile(chatPath, 'utf8')) as SavedChat;
+      } catch {
+        chat = null;
+      }
+      if (chat) {
+        await this.deleteGeneratedMediaForChat(chat);
+      }
+      await unlink(chatPath);
       return true;
     } catch {
       return false;

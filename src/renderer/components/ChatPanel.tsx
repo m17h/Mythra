@@ -64,6 +64,56 @@ function getCopyableMessageText(content: string): string {
   return s.trim();
 }
 
+function attachmentKind(mimeType: string): 'image' | 'video' | 'audio' | 'file' {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
+function AttachmentPreview({ attachment, compact = false }: { attachment: ChatAttachment; compact?: boolean }) {
+  const kind = attachmentKind(attachment.mimeType);
+  const label = attachment.name || 'Attachment';
+  const saveAttachment = () => {
+    void window.electronAPI.saveGeneratedMedia(attachment.dataUrl, label, attachment.filePath);
+  };
+  const openImagePreview = () => {
+    if (kind !== 'image') return;
+    void window.electronAPI.openGeneratedImage(attachment.dataUrl, label, attachment.mimeType, attachment.filePath);
+  };
+  if (compact) {
+    return (
+      <>
+        {kind === 'image' ? <img alt={label} src={attachment.dataUrl} /> : null}
+        {kind === 'video' ? <video muted preload="metadata" src={attachment.dataUrl} /> : null}
+        {kind === 'audio' ? <span className="composer-attachment__icon">Audio</span> : null}
+        {kind === 'file' ? <span className="composer-attachment__icon">File</span> : null}
+      </>
+    );
+  }
+
+  return (
+    <figure className={`chat-attachment chat-attachment--${kind}`}>
+      <div className="chat-attachment__preview">
+        {kind === 'image' ? (
+          <button className="chat-attachment__image-button" onClick={openImagePreview} title="Open full size" type="button">
+            <img alt={label} src={attachment.dataUrl} />
+          </button>
+        ) : null}
+        {kind === 'video' ? <video controls preload="metadata" src={attachment.dataUrl} /> : null}
+        {kind === 'audio' ? <audio controls preload="metadata" src={attachment.dataUrl} /> : null}
+        {kind === 'file' ? <span className="chat-attachment__file-icon">File</span> : null}
+      </div>
+      <figcaption title={label}>{label}</figcaption>
+      <div className="chat-attachment__actions">
+        <button onClick={saveAttachment} type="button">
+          Save
+        </button>
+      </div>
+    </figure>
+  );
+}
+
 function formatTokensShort(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
@@ -949,10 +999,7 @@ export function ChatPanel({
               {message.attachments?.length ? (
                 <div className="chat-attachments">
                   {message.attachments.map((att) => (
-                    <figure className="chat-attachment" key={att.id}>
-                      <img alt={att.name} src={att.dataUrl} />
-                      <figcaption>{att.name}</figcaption>
-                    </figure>
+                    <AttachmentPreview attachment={att} key={att.id} />
                   ))}
                 </div>
               ) : null}
@@ -1177,7 +1224,7 @@ export function ChatPanel({
           <div className="composer-attachments">
             {attachments.map((att) => (
               <div className="composer-attachment" key={att.id}>
-                <img alt={att.name} src={att.dataUrl} />
+                <AttachmentPreview attachment={att} compact />
                 <span>{att.name}</span>
                 <button onClick={() => onRemoveAttachment(att.id)} type="button">
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>

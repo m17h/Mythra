@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join, relative, resolve, sep } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import OpenAI from 'openai';
 import type {
   ChatCompletionAssistantMessageParam,
@@ -8,15 +10,17 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool
 } from 'openai/resources/chat/completions/completions';
-import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
+import { app, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import type {
   AppSettings,
   ChatActivity,
   ChatCompletionTokenUsage,
+  ChatAttachment,
   ChatMessage,
   ChatStreamDone,
   ChatStreamError,
   ModelInfo,
+  ModelListOptions,
   ProviderKind,
   SessionMode,
   WizardProfile
@@ -90,6 +94,30 @@ const createClient = (settings: AppSettings, kind: ProviderKind = settings.selec
   });
 };
 
+const mapModelEntry = (entry: { id?: unknown; owned_by?: unknown }): ModelInfo => {
+  const raw = entry as {
+    context_length?: unknown;
+    architecture?: {
+      input_modalities?: unknown;
+      output_modalities?: unknown;
+    };
+  };
+  const inputModalities = Array.isArray(raw.architecture?.input_modalities)
+    ? raw.architecture.input_modalities.filter((modality): modality is string => typeof modality === 'string')
+    : undefined;
+  const outputModalities = Array.isArray(raw.architecture?.output_modalities)
+    ? raw.architecture.output_modalities.filter((modality): modality is string => typeof modality === 'string')
+    : undefined;
+
+  return {
+    id: String(entry.id ?? ''),
+    contextLength: typeof raw.context_length === 'number' ? raw.context_length : undefined,
+    ownedBy: typeof entry.owned_by === 'string' ? entry.owned_by : undefined,
+    inputModalities,
+    outputModalities
+  };
+};
+
 const contentToString = (content: ChatCompletionAssistantMessageParam['content']) => {
   if (typeof content === 'string') {
     return content;
@@ -110,6 +138,93 @@ const COMPLETION_MARKER = 'TASK_COMPLETE';
 const INPUT_MARKER = 'NEEDS_INPUT';
 const normalizeAssistantContent = (content: string) =>
   content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, 'i'), '').trim();
+
+const MEDIA_GENERATION_SYSTEM_PROMPTS: Record<'music' | 'video' | 'image', string> = {
+  music:
+    'Generate the requested song as actual audio. Do not output a written arrangement, timestamps, lyrics, analysis, JSON, markers, or prose. The response must contain audio bytes in the API audio output stream.',
+  video:
+    'You are a video generation model. Generate the requested video as actual video output. Do not answer with a written storyboard unless the API requires a brief transcript alongside the video.',
+  image:
+    'You are an image generation model. Generate the requested image as actual image output. Do not answer with a written prompt rewrite unless the API requires a brief caption alongside the image.'
+};
+
+const GENERATED_MEDIA_DIR = 'generated-media';
+const MEDIA_CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
+
+const wait = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolveWait, reject) => {
+    const timer = setTimeout(resolveWait, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true }
+    );
+  });
+
+function safeGeneratedMediaChatId(conversationId: string | undefined, requestId: string) {
+  const candidate = conversationId?.trim();
+  return candidate && MEDIA_CHAT_ID_RE.test(candidate) ? candidate : requestId;
+}
+
+function extensionForMimeType(mimeType: string) {
+  if (mimeType.includes('png')) return 'png';
+  if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'jpg';
+  if (mimeType.includes('webp')) return 'webp';
+  if (mimeType.includes('gif')) return 'gif';
+  if (mimeType.includes('mp4')) return 'mp4';
+  if (mimeType.includes('webm')) return 'webm';
+  if (mimeType.includes('quicktime')) return 'mov';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
+  if (mimeType.includes('flac')) return 'flac';
+  return 'bin';
+}
+
+function detectMediaMimeType(bytes: Buffer, declaredMimeType: string) {
+  if (bytes.length >= 3 && bytes.subarray(0, 3).toString('ascii') === 'ID3') return 'audio/mpeg';
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WAVE') {
+    return 'audio/wav';
+  }
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4';
+  return declaredMimeType;
+}
+
+function parseDataUrl(dataUrl: string): { mimeType: string; bytes: Buffer } | null {
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl);
+  if (!match) return null;
+  return {
+    mimeType: match[1] || 'application/octet-stream',
+    bytes: Buffer.from(match[2] || '', 'base64')
+  };
+}
+
+function lastUserPrompt(messages: ChatMessage[]) {
+  return [...messages].reverse().find((message) => message.role === 'user')?.content.trim() || '';
+}
+
+function resolveProviderUrl(pathOrUrl: string, baseUrl: string) {
+  return new URL(pathOrUrl, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).href;
+}
+
+function parseOpenRouterSseEvent(raw: string): unknown | null {
+  const data = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+    .trim();
+  if (!data || data === '[DONE]') return null;
+  return JSON.parse(data);
+}
 
 /** Shown in the second system block so models can emit a placeholder replaced by a real UI control in the client. */
 const mythraSessionModeEmbedInstruction = `Mythra inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${MYTHRA_SESSION_MODE_TOGGLE}`;
@@ -332,6 +447,7 @@ interface ChatRuntimeContext {
   nexusLeaderProvider?: ProviderKind;
   nexusLeaderModel?: string;
   nexusLeaderName?: string;
+  mediaGenerationKind?: 'music' | 'video' | 'image';
 }
 
 /** Hidden Agent routing tokens that must never be pasted into `set_wizard_system_prompt`. */
@@ -408,19 +524,31 @@ export class ModelService {
     ) => Promise<void>
   ) {}
 
-  async listModels(settings: AppSettings, providerKind?: ProviderKind): Promise<ModelInfo[]> {
+  async listModels(settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions): Promise<ModelInfo[]> {
     const kind = providerKind ?? settings.selectedProvider;
+    const outputModalities = options?.outputModalities?.filter((modality) => modality.trim()).map((modality) => modality.trim());
+    if (kind === 'openrouter' && outputModalities?.length) {
+      const provider = settings.providers.openrouter;
+      const url = new URL(`${normalizeBaseUrl(kind, provider.baseUrl)}/models`);
+      url.searchParams.set('output_modalities', outputModalities.join(','));
+      const response = await fetch(url, {
+        headers: {
+          ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+          'HTTP-Referer': provider.appUrl || 'https://example.local',
+          'X-OpenRouter-Title': provider.appName || 'Mythra'
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`OpenRouter model list failed (${response.status}).`);
+      }
+      const body = (await response.json()) as { data?: Array<{ id?: unknown; owned_by?: unknown }> };
+      return (body.data ?? []).map(mapModelEntry);
+    }
+
     const client = createClient(settings, kind);
     const response = await client.models.list();
 
-    return (response.data ?? []).map((entry) => ({
-      id: String(entry.id ?? ''),
-      contextLength:
-        typeof (entry as { context_length?: unknown }).context_length === 'number'
-          ? ((entry as { context_length?: number }).context_length ?? undefined)
-          : undefined,
-      ownedBy: typeof entry.owned_by === 'string' ? entry.owned_by : undefined
-    }));
+    return (response.data ?? []).map(mapModelEntry);
   }
 
   stopRequest(requestId: string) {
@@ -459,15 +587,23 @@ export class ModelService {
       const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
 
       const apiMessages: ChatCompletionMessageParam[] = [
-        { role: 'system', content: provider.systemPrompt },
-        { role: 'system', content: sessionContext },
+        { role: 'system', content: runtime.mediaGenerationKind ? MEDIA_GENERATION_SYSTEM_PROMPTS[runtime.mediaGenerationKind] : provider.systemPrompt },
+        ...(runtime.mediaGenerationKind ? [] : [{ role: 'system' as const, content: sessionContext }]),
         ...messages.map((message) => toApiMessage(message))
       ];
 
       const toolDefinitions = this.buildToolDefinitions(settings, runtime);
 
       if (isTalk && toolDefinitions.length === 0) {
-        await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
+        if (runtime.mediaGenerationKind === 'music') {
+          await this.runAudioGenerationStream(settings, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
+        } else if (runtime.mediaGenerationKind === 'image') {
+          await this.runImageGeneration(client, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
+        } else if (runtime.mediaGenerationKind === 'video') {
+          await this.runVideoGeneration(window, requestId, settings, provider.model, lastUserPrompt(messages), controller, runtime.conversationId);
+        } else {
+          await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
+        }
         return;
       }
 
@@ -779,6 +915,335 @@ export class ModelService {
       const reasoning = extractModelReasoning(assistantMessage);
       finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
     }
+  }
+
+  private async saveGeneratedMediaFile(
+    conversationId: string | undefined,
+    requestId: string,
+    baseName: string,
+    mimeType: string,
+    bytes: Buffer
+  ): Promise<ChatAttachment> {
+    const chatId = safeGeneratedMediaChatId(conversationId, requestId);
+    const mediaDir = join(app.getPath('userData'), GENERATED_MEDIA_DIR, chatId);
+    await mkdir(mediaDir, { recursive: true });
+    const safeBase = baseName.replace(/[^a-z0-9_.-]+/gi, '-').replace(/^-+|-+$/g, '') || 'generated-media';
+    const actualMimeType = detectMediaMimeType(bytes, mimeType);
+    const fileName = `${Date.now()}-${requestId}-${safeBase}.${extensionForMimeType(actualMimeType)}`;
+    const filePath = join(mediaDir, fileName);
+    await writeFile(filePath, bytes);
+    return {
+      id: randomUUID(),
+      name: fileName,
+      mimeType: actualMimeType,
+      dataUrl: `data:${actualMimeType};base64,${bytes.toString('base64')}`,
+      filePath
+    };
+  }
+
+  private async saveGeneratedDataUrl(
+    conversationId: string | undefined,
+    requestId: string,
+    baseName: string,
+    dataUrl: string
+  ): Promise<ChatAttachment | null> {
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed) return null;
+    return this.saveGeneratedMediaFile(conversationId, requestId, baseName, parsed.mimeType, parsed.bytes);
+  }
+
+  private async collectAudioGenerationChunks(
+    settings: AppSettings,
+    requestId: string,
+    model: string,
+    messages: ChatCompletionMessageParam[],
+    controller: AbortController,
+    modalities: string[]
+  ): Promise<{ audioChunks: string[]; transcript: string; text: string; usage?: ChatCompletionTokenUsage }> {
+    const provider = settings.providers[settings.selectedProvider];
+    const baseUrl = normalizeBaseUrl(settings.selectedProvider, provider.baseUrl);
+    const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json',
+        ...(settings.selectedProvider === 'openrouter'
+          ? {
+              'HTTP-Referer': provider.appUrl || 'https://example.local',
+              'X-OpenRouter-Title': provider.appName || 'Mythra'
+            }
+          : {})
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        stream_options: { include_usage: true },
+        modalities,
+        audio: { format: 'mp3' }
+      }),
+      signal: streamSignal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Audio generation request failed (${response.status}).`);
+    }
+    if (!response.body) {
+      throw new Error('Audio generation returned no response stream.');
+    }
+
+    let text = '';
+    let transcript = '';
+    const audioChunks: string[] = [];
+    let usage: ChatCompletionTokenUsage | undefined;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    for (;;) {
+      this.assertNotStopped(requestId);
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? '';
+      for (const event of events) {
+        if (!event.trim()) continue;
+        const parsed = parseOpenRouterSseEvent(event) as
+          | {
+              usage?: { prompt_tokens?: number | null; completion_tokens?: number | null; total_tokens?: number | null } | null;
+              choices?: Array<{
+                delta?: {
+                  content?: unknown;
+                  audio?: { data?: unknown; transcript?: unknown };
+                };
+              }>;
+            }
+          | null;
+        if (!parsed) continue;
+        const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : undefined;
+        if (mappedUsage) usage = mappedUsage;
+        const delta = parsed.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string') text += delta.content;
+        if (typeof delta.audio?.data === 'string' && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
+        if (typeof delta.audio?.transcript === 'string' && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+      }
+    }
+
+    return { audioChunks, transcript, text, usage };
+  }
+
+  private async runAudioGenerationStream(
+    settings: AppSettings,
+    window: BrowserWindow,
+    requestId: string,
+    model: string,
+    apiMessages: ChatCompletionMessageParam[],
+    controller: AbortController,
+    conversationId: string | undefined
+  ) {
+    let result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ['text', 'audio']);
+
+    this.assertNotStopped(requestId);
+
+    if (result.audioChunks.length === 0) {
+      this.emitActivity(window, requestId, 'warning', 'The first audio attempt returned text only. Retrying as audio-only.');
+      result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ['audio']);
+    }
+
+    this.assertNotStopped(requestId);
+
+    if (result.audioChunks.length === 0) {
+      const textPreview = normalizeAssistantContent(result.transcript || result.text).slice(0, 320);
+      window.webContents.send('chat:done', {
+        requestId,
+        content: textPreview
+          ? `The model returned text instead of an audio file. Preview: ${textPreview}${textPreview.length === 320 ? '...' : ''}`
+          : 'The model did not return an audio file. Try again or choose another music model.',
+        usage: result.usage
+      } satisfies ChatStreamDone);
+      this.activeRequests.delete(requestId);
+      return;
+    }
+
+    const attachment = await this.saveGeneratedMediaFile(
+      conversationId,
+      requestId,
+      model,
+      'audio/mpeg',
+      Buffer.from(result.audioChunks.join(''), 'base64')
+    );
+
+    window.webContents.send('chat:done', {
+      requestId,
+      content: 'Generated audio.',
+      attachments: [attachment],
+      usage: result.usage
+    } satisfies ChatStreamDone);
+    this.activeRequests.delete(requestId);
+  }
+
+  private async runImageGeneration(
+    client: OpenAI,
+    window: BrowserWindow,
+    requestId: string,
+    model: string,
+    apiMessages: ChatCompletionMessageParam[],
+    controller: AbortController,
+    conversationId: string | undefined
+  ) {
+    const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+    const create = async (modalities: string[]) =>
+      client.chat.completions.create(
+        {
+          model,
+          messages: apiMessages,
+          stream: false,
+          modalities
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+        { signal: streamSignal }
+      );
+
+    let completion: Awaited<ReturnType<typeof create>>;
+    try {
+      completion = await create(['image', 'text']);
+    } catch (error) {
+      this.assertNotStopped(requestId);
+      completion = await create(['image']);
+    }
+
+    this.assertNotStopped(requestId);
+    const message = completion.choices[0]?.message as
+      | (ChatCompletionAssistantMessageParam & {
+          images?: Array<{ image_url?: { url?: unknown }; imageUrl?: { url?: unknown } }>;
+        })
+      | undefined;
+    const imageUrls =
+      message?.images
+        ?.map((image) => image.image_url?.url ?? image.imageUrl?.url)
+        .filter((url): url is string => typeof url === 'string' && url.startsWith('data:image/')) ?? [];
+
+    const attachments = (
+      await Promise.all(
+        imageUrls.map((url, index) => this.saveGeneratedDataUrl(conversationId, requestId, `${model}-image-${index + 1}`, url))
+      )
+    ).filter((attachment): attachment is ChatAttachment => attachment != null);
+
+    if (attachments.length === 0) {
+      const text = normalizeAssistantContent(contentToString(message?.content));
+      window.webContents.send('chat:done', {
+        requestId,
+        content: text
+          ? `The model returned text instead of an image file:\n\n${text}`
+          : 'The model did not return an image file. Try again or choose another image model.',
+        usage: mapCompletionUsage(completion.usage ?? undefined)
+      } satisfies ChatStreamDone);
+      this.activeRequests.delete(requestId);
+      return;
+    }
+
+    window.webContents.send('chat:done', {
+      requestId,
+      content: attachments.length === 1 ? 'Generated image.' : `Generated ${attachments.length} images.`,
+      attachments,
+      usage: mapCompletionUsage(completion.usage ?? undefined)
+    } satisfies ChatStreamDone);
+    this.activeRequests.delete(requestId);
+  }
+
+  private async runVideoGeneration(
+    window: BrowserWindow,
+    requestId: string,
+    settings: AppSettings,
+    model: string,
+    prompt: string,
+    controller: AbortController,
+    conversationId: string | undefined
+  ) {
+    if (settings.selectedProvider !== 'openrouter') {
+      throw new Error('Video generation is currently supported for OpenRouter models only.');
+    }
+    if (!prompt) {
+      throw new Error('Enter a video prompt before generating.');
+    }
+
+    const provider = settings.providers.openrouter;
+    const baseUrl = normalizeBaseUrl('openrouter', provider.baseUrl);
+    const headers = {
+      Authorization: `Bearer ${provider.apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': provider.appUrl || 'https://example.local',
+      'X-OpenRouter-Title': provider.appName || 'Mythra'
+    };
+    const signal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+
+    this.emitActivity(window, requestId, 'tool', 'Submitting video generation job.');
+    const submitResponse = await fetch(`${baseUrl}/videos`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, prompt }),
+      signal
+    });
+    if (!submitResponse.ok) {
+      throw new Error(`Video generation request failed (${submitResponse.status}).`);
+    }
+    const submitted = (await submitResponse.json()) as {
+      id?: string;
+      polling_url?: string;
+      status?: string;
+    };
+    const jobId = submitted.id;
+    if (!jobId) {
+      throw new Error('Video generation did not return a job id.');
+    }
+
+    const pollUrl = submitted.polling_url ? resolveProviderUrl(submitted.polling_url, baseUrl) : `${baseUrl}/videos/${jobId}`;
+    let status = submitted.status ?? 'pending';
+    let unsignedUrls: string[] = [];
+    let lastError = '';
+    for (;;) {
+      this.assertNotStopped(requestId);
+      if (['completed', 'succeeded', 'success', 'finished'].includes(status)) break;
+      if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
+        throw new Error(lastError || `Video generation ${status}.`);
+      }
+      this.emitActivity(window, requestId, 'tool', `Video generation status: ${status}.`);
+      await wait(5000, signal);
+      const pollResponse = await fetch(pollUrl, { headers, signal });
+      if (!pollResponse.ok) {
+        throw new Error(`Video generation polling failed (${pollResponse.status}).`);
+      }
+      const polled = (await pollResponse.json()) as {
+        status?: string;
+        error?: string;
+        unsigned_urls?: string[];
+      };
+      status = polled.status ?? status;
+      unsignedUrls = Array.isArray(polled.unsigned_urls) ? polled.unsigned_urls.filter((url): url is string => typeof url === 'string') : [];
+      lastError = typeof polled.error === 'string' ? polled.error : '';
+    }
+
+    this.emitActivity(window, requestId, 'tool', 'Downloading generated video.');
+    const contentUrl = unsignedUrls[0] ?? `${baseUrl}/videos/${jobId}/content`;
+    const videoResponse = await fetch(contentUrl, {
+      headers: unsignedUrls[0] ? undefined : headers,
+      signal
+    });
+    if (!videoResponse.ok) {
+      throw new Error(`Generated video download failed (${videoResponse.status}).`);
+    }
+    const mimeType = videoResponse.headers.get('content-type')?.split(';')[0]?.trim() || 'video/mp4';
+    const bytes = Buffer.from(await videoResponse.arrayBuffer());
+    const attachment = await this.saveGeneratedMediaFile(conversationId, requestId, model, mimeType, bytes);
+
+    window.webContents.send('chat:done', {
+      requestId,
+      content: 'Generated video.',
+      attachments: [attachment]
+    } satisfies ChatStreamDone);
+    this.activeRequests.delete(requestId);
   }
 
   sendError(window: BrowserWindow, requestId: string, error: unknown) {

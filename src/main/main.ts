@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
@@ -37,6 +37,7 @@ import {
   defaultSettings,
   type AppSettings,
   type ChatMessage,
+  type ModelListOptions,
   type SavedChat,
   type ToolApprovalRequest,
   type WizardMythwizExportRequest,
@@ -49,6 +50,7 @@ import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { mysticVariantForTheme } from '@shared/chat-thread-backgrounds';
 
 const CHAT_THREAD_BG_DIR = 'chat-thread-backgrounds';
+const GENERATED_MEDIA_DIR = 'generated-media';
 const MAX_CHAT_THREAD_BG_BYTES = 20 * 1024 * 1024;
 const PENDING_WORKSPACE_DELETE_MS = 5 * 60 * 1000;
 
@@ -66,6 +68,18 @@ function isPathInsideChatThreadBackgroundStore(absPath: string): boolean {
     root = resolve(chatThreadBackgroundStoreRoot());
     target = resolve(absPath.trim());
   }
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (process.platform === 'win32') {
+    const t = target.toLowerCase();
+    const p = prefix.toLowerCase();
+    return t === root.toLowerCase() || t.startsWith(p);
+  }
+  return target === root || target.startsWith(prefix);
+}
+
+function isPathInsideGeneratedMediaStore(absPath: string): boolean {
+  const root = resolve(join(app.getPath('userData'), GENERATED_MEDIA_DIR));
+  const target = resolve(absPath.trim());
   const prefix = root.endsWith(sep) ? root : root + sep;
   if (process.platform === 'win32') {
     const t = target.toLowerCase();
@@ -558,6 +572,7 @@ const sanitizeRuntime = (runtime: {
   nexusLeaderProvider?: AppSettings['selectedProvider'];
   nexusLeaderModel?: string;
   nexusLeaderName?: string;
+  mediaGenerationKind?: 'music' | 'video' | 'image';
 }) => {
   const workspaceRoot =
     runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot)
@@ -587,7 +602,13 @@ const sanitizeRuntime = (runtime: {
         ? runtime.nexusLeaderProvider
         : undefined,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === 'string' ? runtime.nexusLeaderModel : undefined,
-    nexusLeaderName: typeof runtime.nexusLeaderName === 'string' ? runtime.nexusLeaderName : undefined
+    nexusLeaderName: typeof runtime.nexusLeaderName === 'string' ? runtime.nexusLeaderName : undefined,
+    mediaGenerationKind:
+      runtime.mediaGenerationKind === 'music' ||
+      runtime.mediaGenerationKind === 'video' ||
+      runtime.mediaGenerationKind === 'image'
+        ? runtime.mediaGenerationKind
+        : undefined
   };
 };
 
@@ -982,6 +1003,122 @@ ipcMain.handle('ui:read-chat-thread-background', async (_event, raw: unknown) =>
   }
 });
 
+ipcMain.handle('generated-media:save', async (event, dataUrl: unknown, fileName: unknown, backingFilePath: unknown) => {
+  if (typeof dataUrl !== 'string' || typeof fileName !== 'string') {
+    return { ok: false as const, error: 'Invalid media save request.' };
+  }
+  let sourcePath: string | null = null;
+  let dataBytes: Buffer | null = null;
+  if (typeof backingFilePath === 'string' && backingFilePath.trim()) {
+    const p = resolve(backingFilePath.trim());
+    if (!isPathInsideGeneratedMediaStore(p)) {
+      return { ok: false as const, error: 'Media file is outside Mythra generated media storage.' };
+    }
+    sourcePath = p;
+  } else if (dataUrl.startsWith('file:')) {
+    try {
+      const p = fileURLToPath(dataUrl);
+      if (!isPathInsideGeneratedMediaStore(p)) {
+        return { ok: false as const, error: 'Media file is outside Mythra generated media storage.' };
+      }
+      sourcePath = p;
+    } catch {
+      return { ok: false as const, error: 'Invalid media file URL.' };
+    }
+  } else {
+    const match = /^data:[^;,]+;base64,(.+)$/i.exec(dataUrl);
+    if (!match) {
+      return { ok: false as const, error: 'Unsupported media URL.' };
+    }
+    dataBytes = Buffer.from(match[1] ?? '', 'base64');
+  }
+
+  const safeName = basename(fileName).replace(/[^a-zA-Z0-9._ -]/g, '_') || 'generated-media';
+  const opts: SaveDialogOptions = { title: 'Save generated media', defaultPath: safeName };
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const { canceled, filePath } =
+    winSafe && !winSafe.isDestroyed()
+      ? await dialog.showSaveDialog(winSafe, opts)
+      : await dialog.showSaveDialog(opts);
+  if (canceled || !filePath) {
+    return { ok: false as const, cancelled: true as const };
+  }
+  try {
+    if (sourcePath) await copyFile(sourcePath, filePath);
+    else if (dataBytes) await writeFile(filePath, dataBytes);
+    return { ok: true as const, path: filePath };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false as const, error: message };
+  }
+});
+
+ipcMain.handle('generated-media:open-image', async (_event, dataUrl: unknown, fileName: unknown, mimeType: unknown, backingFilePath: unknown) => {
+  if (typeof dataUrl !== 'string' || typeof fileName !== 'string' || typeof mimeType !== 'string') {
+    return { ok: false as const, error: 'Invalid image preview request.' };
+  }
+  if (!mimeType.startsWith('image/')) {
+    return { ok: false as const, error: 'Generated media is not an image.' };
+  }
+
+  let imageUrl = '';
+  let imageSize: { width: number; height: number } | null = null;
+  if (typeof backingFilePath === 'string' && backingFilePath.trim()) {
+    const p = resolve(backingFilePath.trim());
+    if (!isPathInsideGeneratedMediaStore(p)) {
+      return { ok: false as const, error: 'Image file is outside Mythra generated media storage.' };
+    }
+    const bytes = await readFile(p);
+    imageUrl = `data:${imageMimeFromFilename(p)};base64,${bytes.toString('base64')}`;
+    const img = nativeImage.createFromPath(p);
+    if (!img.isEmpty()) {
+      imageSize = img.getSize();
+    }
+  } else if (dataUrl.startsWith('data:image/')) {
+    imageUrl = dataUrl;
+  } else {
+    return { ok: false as const, error: 'Unsupported image URL.' };
+  }
+
+  const display = imageSize
+    ? {
+        width: Math.min(1400, Math.max(640, imageSize.width)),
+        height: Math.min(1000, Math.max(480, imageSize.height))
+      }
+    : { width: 1000, height: 760 };
+  const safeTitle = basename(fileName).replace(/[<>]/g, '') || 'Generated image';
+  const previewWindow = new BrowserWindow({
+    width: display.width,
+    height: display.height,
+    minWidth: 420,
+    minHeight: 320,
+    title: safeTitle,
+    backgroundColor: '#0b1020',
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${safeTitle.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #080d19; }
+    body { display: grid; place-items: center; overflow: auto; }
+    img { max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain; }
+  </style>
+</head>
+<body>
+  <img src="${imageUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" alt="${safeTitle.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" />
+</body>
+</html>`;
+  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  return { ok: true as const };
+});
+
 ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
   if (typeof rawUrl !== 'string') return;
   let parsed: URL;
@@ -994,8 +1131,8 @@ ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
   await shell.openExternal(parsed.href);
 });
 
-ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter') =>
-  modelService.listModels(settings, providerKind)
+ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) =>
+  modelService.listModels(settings, providerKind, options)
 );
 
 ipcMain.handle(
@@ -1019,6 +1156,7 @@ ipcMain.handle(
       nexusLeaderProvider?: AppSettings['selectedProvider'];
       nexusLeaderModel?: string;
       nexusLeaderName?: string;
+      mediaGenerationKind?: 'music' | 'video' | 'image';
     }
   ) => {
     if (!mainWindow) {

@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { join as join$1, relative, resolve, sep, dirname, basename, extname } from "node:path";
+import { join as join$1, resolve, sep, relative, dirname, basename, extname } from "node:path";
 import { existsSync, realpathSync, statSync, watch } from "node:fs";
-import { readdir, mkdir, copyFile, readFile, writeFile, unlink, stat, rename, rm, realpath } from "node:fs/promises";
-import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
+import { readdir, mkdir, copyFile, readFile, writeFile, rm, unlink, stat, rename, realpath } from "node:fs/promises";
+import { app, dialog, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
@@ -19,6 +19,7 @@ const mythraBgMysticSunset = join(__dirname, "./chunks/mythra_background1_sunset
 const mythraBgMysticIce = join(__dirname, "./chunks/mythra_background1_ice-D2LCKdGA.png");
 const mythraBgMysticKiwi = join(__dirname, "./chunks/mythra_background1_kiwi-BGD5SfOs.png");
 const CHATS_DIR = "mythra-chats";
+const GENERATED_MEDIA_DIR$2 = "generated-media";
 const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 const assertSafeChatId = (id) => {
@@ -29,6 +30,7 @@ const assertSafeChatId = (id) => {
 class ChatStore {
   userData = app.getPath("userData");
   dir = join$1(this.userData, CHATS_DIR);
+  generatedMediaDir = join$1(this.userData, GENERATED_MEDIA_DIR$2);
   legacyMigrated = false;
   async migrateLegacyChatsIfNeeded() {
     if (this.legacyMigrated) return;
@@ -102,10 +104,58 @@ class ChatStore {
     await this.ensureDir();
     await writeFile(join$1(this.dir, `${chat.id}.json`), JSON.stringify(chat), "utf8");
   }
+  isInsideGeneratedMedia(path) {
+    const root = resolve(this.generatedMediaDir);
+    const target = resolve(path);
+    const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+    if (process.platform === "win32") {
+      const rootLower = root.toLowerCase();
+      const prefixLower = prefix.toLowerCase();
+      const targetLower = target.toLowerCase();
+      return targetLower === rootLower || targetLower.startsWith(prefixLower);
+    }
+    return target === root || target.startsWith(prefix);
+  }
+  generatedMediaPathFromAttachment(attachment) {
+    if (attachment.filePath) {
+      const path = resolve(attachment.filePath);
+      return this.isInsideGeneratedMedia(path) ? path : null;
+    }
+    if (!attachment.dataUrl.startsWith("file:")) return null;
+    try {
+      const path = fileURLToPath(attachment.dataUrl);
+      return this.isInsideGeneratedMedia(path) ? path : null;
+    } catch {
+      return null;
+    }
+  }
+  async deleteGeneratedMediaForChat(chat) {
+    const attachmentPaths = /* @__PURE__ */ new Set();
+    for (const message of chat.messages) {
+      for (const attachment of message.attachments ?? []) {
+        const path = this.generatedMediaPathFromAttachment(attachment);
+        if (path) attachmentPaths.add(path);
+      }
+    }
+    await Promise.all(
+      [...attachmentPaths].map((path) => rm(path, { force: true, recursive: false }).catch(() => void 0))
+    );
+    await rm(join$1(this.generatedMediaDir, chat.id), { force: true, recursive: true }).catch(() => void 0);
+  }
   async deleteChat(id) {
     try {
       assertSafeChatId(id);
-      await unlink(join$1(this.dir, `${id}.json`));
+      const chatPath = join$1(this.dir, `${id}.json`);
+      let chat = null;
+      try {
+        chat = JSON.parse(await readFile(chatPath, "utf8"));
+      } catch {
+        chat = null;
+      }
+      if (chat) {
+        await this.deleteGeneratedMediaForChat(chat);
+      }
+      await unlink(chatPath);
       return true;
     } catch {
       return false;
@@ -1285,6 +1335,18 @@ const createClient = (settings, kind = settings.selectedProvider) => {
     dangerouslyAllowBrowser: false
   });
 };
+const mapModelEntry = (entry) => {
+  const raw = entry;
+  const inputModalities = Array.isArray(raw.architecture?.input_modalities) ? raw.architecture.input_modalities.filter((modality) => typeof modality === "string") : void 0;
+  const outputModalities = Array.isArray(raw.architecture?.output_modalities) ? raw.architecture.output_modalities.filter((modality) => typeof modality === "string") : void 0;
+  return {
+    id: String(entry.id ?? ""),
+    contextLength: typeof raw.context_length === "number" ? raw.context_length : void 0,
+    ownedBy: typeof entry.owned_by === "string" ? entry.owned_by : void 0,
+    inputModalities,
+    outputModalities
+  };
+};
 const contentToString = (content) => {
   if (typeof content === "string") {
     return content;
@@ -1299,6 +1361,74 @@ const truncate = (value, maxLength = 24e3) => value.length > maxLength ? `${valu
 const COMPLETION_MARKER = "TASK_COMPLETE";
 const INPUT_MARKER = "NEEDS_INPUT";
 const normalizeAssistantContent = (content) => content.replace(new RegExp(`^\\s*(?:${COMPLETION_MARKER}|${INPUT_MARKER})\\s*:?\\s*`, "i"), "").trim();
+const MEDIA_GENERATION_SYSTEM_PROMPTS = {
+  music: "Generate the requested song as actual audio. Do not output a written arrangement, timestamps, lyrics, analysis, JSON, markers, or prose. The response must contain audio bytes in the API audio output stream.",
+  video: "You are a video generation model. Generate the requested video as actual video output. Do not answer with a written storyboard unless the API requires a brief transcript alongside the video.",
+  image: "You are an image generation model. Generate the requested image as actual image output. Do not answer with a written prompt rewrite unless the API requires a brief caption alongside the image."
+};
+const GENERATED_MEDIA_DIR$1 = "generated-media";
+const MEDIA_CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
+const wait = (ms, signal) => new Promise((resolveWait, reject) => {
+  const timer = setTimeout(resolveWait, ms);
+  signal.addEventListener(
+    "abort",
+    () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    },
+    { once: true }
+  );
+});
+function safeGeneratedMediaChatId(conversationId, requestId) {
+  const candidate = conversationId?.trim();
+  return candidate && MEDIA_CHAT_ID_RE.test(candidate) ? candidate : requestId;
+}
+function extensionForMimeType(mimeType) {
+  if (mimeType.includes("png")) return "png";
+  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
+  if (mimeType.includes("webp")) return "webp";
+  if (mimeType.includes("gif")) return "gif";
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("quicktime")) return "mov";
+  if (mimeType.includes("wav")) return "wav";
+  if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";
+  if (mimeType.includes("flac")) return "flac";
+  return "bin";
+}
+function detectMediaMimeType(bytes, declaredMimeType) {
+  if (bytes.length >= 3 && bytes.subarray(0, 3).toString("ascii") === "ID3") return "audio/mpeg";
+  if (bytes.length >= 2 && bytes[0] === 255 && (bytes[1] & 224) === 224) return "audio/mpeg";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WAVE") {
+    return "audio/wav";
+  }
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "image/webp";
+  }
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") return "video/mp4";
+  return declaredMimeType;
+}
+function parseDataUrl(dataUrl) {
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl);
+  if (!match) return null;
+  return {
+    mimeType: match[1] || "application/octet-stream",
+    bytes: Buffer.from(match[2] || "", "base64")
+  };
+}
+function lastUserPrompt(messages) {
+  return [...messages].reverse().find((message) => message.role === "user")?.content.trim() || "";
+}
+function resolveProviderUrl(pathOrUrl, baseUrl) {
+  return new URL(pathOrUrl, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
+}
+function parseOpenRouterSseEvent(raw) {
+  const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n").trim();
+  if (!data || data === "[DONE]") return null;
+  return JSON.parse(data);
+}
 const mythraSessionModeEmbedInstruction = `Mythra inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 const mythraWebSearchEmbedInstruction = `Mythra inline Web toggle token ${MYTHRA_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
 const webHeaderUiStateLine = (webOn) => webOn ? `UI: Chat header "Web" is ON; web_search is available. Do not put ${MYTHRA_WEB_SEARCH_TOGGLE} in your message.` : `UI: Chat header "Web" is OFF; web_search is disabled until the user enables "Web". You may use ${MYTHRA_WEB_SEARCH_TOGGLE} on its own line to show an inline switch, or tell them to use the header toggle.`;
@@ -1491,15 +1621,29 @@ class ModelService {
   requestWizardPromptApproval;
   requestToolApprovalUi;
   activeRequests = /* @__PURE__ */ new Map();
-  async listModels(settings, providerKind) {
+  async listModels(settings, providerKind, options) {
     const kind = providerKind ?? settings.selectedProvider;
+    const outputModalities = options?.outputModalities?.filter((modality) => modality.trim()).map((modality) => modality.trim());
+    if (kind === "openrouter" && outputModalities?.length) {
+      const provider = settings.providers.openrouter;
+      const url = new URL(`${normalizeBaseUrl(kind, provider.baseUrl)}/models`);
+      url.searchParams.set("output_modalities", outputModalities.join(","));
+      const response2 = await fetch(url, {
+        headers: {
+          ...provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+          "HTTP-Referer": provider.appUrl || "https://example.local",
+          "X-OpenRouter-Title": provider.appName || "Mythra"
+        }
+      });
+      if (!response2.ok) {
+        throw new Error(`OpenRouter model list failed (${response2.status}).`);
+      }
+      const body = await response2.json();
+      return (body.data ?? []).map(mapModelEntry);
+    }
     const client = createClient(settings, kind);
     const response = await client.models.list();
-    return (response.data ?? []).map((entry) => ({
-      id: String(entry.id ?? ""),
-      contextLength: typeof entry.context_length === "number" ? entry.context_length ?? void 0 : void 0,
-      ownedBy: typeof entry.owned_by === "string" ? entry.owned_by : void 0
-    }));
+    return (response.data ?? []).map(mapModelEntry);
   }
   stopRequest(requestId) {
     const active = this.activeRequests.get(requestId);
@@ -1525,13 +1669,21 @@ class ModelService {
       let lastVisibleAssistantContent = "";
       const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const apiMessages = [
-        { role: "system", content: provider.systemPrompt },
-        { role: "system", content: sessionContext },
+        { role: "system", content: runtime.mediaGenerationKind ? MEDIA_GENERATION_SYSTEM_PROMPTS[runtime.mediaGenerationKind] : provider.systemPrompt },
+        ...runtime.mediaGenerationKind ? [] : [{ role: "system", content: sessionContext }],
         ...messages.map((message) => toApiMessage(message))
       ];
       const toolDefinitions = this.buildToolDefinitions(settings, runtime);
       if (isTalk && toolDefinitions.length === 0) {
-        await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
+        if (runtime.mediaGenerationKind === "music") {
+          await this.runAudioGenerationStream(settings, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
+        } else if (runtime.mediaGenerationKind === "image") {
+          await this.runImageGeneration(client, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
+        } else if (runtime.mediaGenerationKind === "video") {
+          await this.runVideoGeneration(window, requestId, settings, provider.model, lastUserPrompt(messages), controller, runtime.conversationId);
+        } else {
+          await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
+        }
         return;
       }
       const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
@@ -1794,6 +1946,235 @@ class ModelService {
       const reasoning = extractModelReasoning(assistantMessage);
       finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
     }
+  }
+  async saveGeneratedMediaFile(conversationId, requestId, baseName, mimeType, bytes) {
+    const chatId = safeGeneratedMediaChatId(conversationId, requestId);
+    const mediaDir = join$1(app.getPath("userData"), GENERATED_MEDIA_DIR$1, chatId);
+    await mkdir(mediaDir, { recursive: true });
+    const safeBase = baseName.replace(/[^a-z0-9_.-]+/gi, "-").replace(/^-+|-+$/g, "") || "generated-media";
+    const actualMimeType = detectMediaMimeType(bytes, mimeType);
+    const fileName = `${Date.now()}-${requestId}-${safeBase}.${extensionForMimeType(actualMimeType)}`;
+    const filePath = join$1(mediaDir, fileName);
+    await writeFile(filePath, bytes);
+    return {
+      id: randomUUID(),
+      name: fileName,
+      mimeType: actualMimeType,
+      dataUrl: `data:${actualMimeType};base64,${bytes.toString("base64")}`,
+      filePath
+    };
+  }
+  async saveGeneratedDataUrl(conversationId, requestId, baseName, dataUrl) {
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed) return null;
+    return this.saveGeneratedMediaFile(conversationId, requestId, baseName, parsed.mimeType, parsed.bytes);
+  }
+  async collectAudioGenerationChunks(settings, requestId, model, messages, controller, modalities) {
+    const provider = settings.providers[settings.selectedProvider];
+    const baseUrl = normalizeBaseUrl(settings.selectedProvider, provider.baseUrl);
+    const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+        "Content-Type": "application/json",
+        ...settings.selectedProvider === "openrouter" ? {
+          "HTTP-Referer": provider.appUrl || "https://example.local",
+          "X-OpenRouter-Title": provider.appName || "Mythra"
+        } : {}
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        stream_options: { include_usage: true },
+        modalities,
+        audio: { format: "mp3" }
+      }),
+      signal: streamSignal
+    });
+    if (!response.ok) {
+      throw new Error(`Audio generation request failed (${response.status}).`);
+    }
+    if (!response.body) {
+      throw new Error("Audio generation returned no response stream.");
+    }
+    let text = "";
+    let transcript = "";
+    const audioChunks = [];
+    let usage;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (; ; ) {
+      this.assertNotStopped(requestId);
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? "";
+      for (const event of events) {
+        if (!event.trim()) continue;
+        const parsed = parseOpenRouterSseEvent(event);
+        if (!parsed) continue;
+        const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : void 0;
+        if (mappedUsage) usage = mappedUsage;
+        const delta = parsed.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === "string") text += delta.content;
+        if (typeof delta.audio?.data === "string" && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
+        if (typeof delta.audio?.transcript === "string" && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+      }
+    }
+    return { audioChunks, transcript, text, usage };
+  }
+  async runAudioGenerationStream(settings, window, requestId, model, apiMessages, controller, conversationId) {
+    let result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ["text", "audio"]);
+    this.assertNotStopped(requestId);
+    if (result.audioChunks.length === 0) {
+      this.emitActivity(window, requestId, "warning", "The first audio attempt returned text only. Retrying as audio-only.");
+      result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ["audio"]);
+    }
+    this.assertNotStopped(requestId);
+    if (result.audioChunks.length === 0) {
+      const textPreview = normalizeAssistantContent(result.transcript || result.text).slice(0, 320);
+      window.webContents.send("chat:done", {
+        requestId,
+        content: textPreview ? `The model returned text instead of an audio file. Preview: ${textPreview}${textPreview.length === 320 ? "..." : ""}` : "The model did not return an audio file. Try again or choose another music model.",
+        usage: result.usage
+      });
+      this.activeRequests.delete(requestId);
+      return;
+    }
+    const attachment = await this.saveGeneratedMediaFile(
+      conversationId,
+      requestId,
+      model,
+      "audio/mpeg",
+      Buffer.from(result.audioChunks.join(""), "base64")
+    );
+    window.webContents.send("chat:done", {
+      requestId,
+      content: "Generated audio.",
+      attachments: [attachment],
+      usage: result.usage
+    });
+    this.activeRequests.delete(requestId);
+  }
+  async runImageGeneration(client, window, requestId, model, apiMessages, controller, conversationId) {
+    const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+    const create = async (modalities) => client.chat.completions.create(
+      {
+        model,
+        messages: apiMessages,
+        stream: false,
+        modalities
+      },
+      { signal: streamSignal }
+    );
+    let completion;
+    try {
+      completion = await create(["image", "text"]);
+    } catch (error) {
+      this.assertNotStopped(requestId);
+      completion = await create(["image"]);
+    }
+    this.assertNotStopped(requestId);
+    const message = completion.choices[0]?.message;
+    const imageUrls = message?.images?.map((image) => image.image_url?.url ?? image.imageUrl?.url).filter((url) => typeof url === "string" && url.startsWith("data:image/")) ?? [];
+    const attachments = (await Promise.all(
+      imageUrls.map((url, index) => this.saveGeneratedDataUrl(conversationId, requestId, `${model}-image-${index + 1}`, url))
+    )).filter((attachment) => attachment != null);
+    if (attachments.length === 0) {
+      const text = normalizeAssistantContent(contentToString(message?.content));
+      window.webContents.send("chat:done", {
+        requestId,
+        content: text ? `The model returned text instead of an image file:
+
+${text}` : "The model did not return an image file. Try again or choose another image model.",
+        usage: mapCompletionUsage(completion.usage ?? void 0)
+      });
+      this.activeRequests.delete(requestId);
+      return;
+    }
+    window.webContents.send("chat:done", {
+      requestId,
+      content: attachments.length === 1 ? "Generated image." : `Generated ${attachments.length} images.`,
+      attachments,
+      usage: mapCompletionUsage(completion.usage ?? void 0)
+    });
+    this.activeRequests.delete(requestId);
+  }
+  async runVideoGeneration(window, requestId, settings, model, prompt, controller, conversationId) {
+    if (settings.selectedProvider !== "openrouter") {
+      throw new Error("Video generation is currently supported for OpenRouter models only.");
+    }
+    if (!prompt) {
+      throw new Error("Enter a video prompt before generating.");
+    }
+    const provider = settings.providers.openrouter;
+    const baseUrl = normalizeBaseUrl("openrouter", provider.baseUrl);
+    const headers = {
+      Authorization: `Bearer ${provider.apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": provider.appUrl || "https://example.local",
+      "X-OpenRouter-Title": provider.appName || "Mythra"
+    };
+    const signal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
+    this.emitActivity(window, requestId, "tool", "Submitting video generation job.");
+    const submitResponse = await fetch(`${baseUrl}/videos`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model, prompt }),
+      signal
+    });
+    if (!submitResponse.ok) {
+      throw new Error(`Video generation request failed (${submitResponse.status}).`);
+    }
+    const submitted = await submitResponse.json();
+    const jobId = submitted.id;
+    if (!jobId) {
+      throw new Error("Video generation did not return a job id.");
+    }
+    const pollUrl = submitted.polling_url ? resolveProviderUrl(submitted.polling_url, baseUrl) : `${baseUrl}/videos/${jobId}`;
+    let status = submitted.status ?? "pending";
+    let unsignedUrls = [];
+    let lastError = "";
+    for (; ; ) {
+      this.assertNotStopped(requestId);
+      if (["completed", "succeeded", "success", "finished"].includes(status)) break;
+      if (["failed", "error", "cancelled", "canceled"].includes(status)) {
+        throw new Error(lastError || `Video generation ${status}.`);
+      }
+      this.emitActivity(window, requestId, "tool", `Video generation status: ${status}.`);
+      await wait(5e3, signal);
+      const pollResponse = await fetch(pollUrl, { headers, signal });
+      if (!pollResponse.ok) {
+        throw new Error(`Video generation polling failed (${pollResponse.status}).`);
+      }
+      const polled = await pollResponse.json();
+      status = polled.status ?? status;
+      unsignedUrls = Array.isArray(polled.unsigned_urls) ? polled.unsigned_urls.filter((url) => typeof url === "string") : [];
+      lastError = typeof polled.error === "string" ? polled.error : "";
+    }
+    this.emitActivity(window, requestId, "tool", "Downloading generated video.");
+    const contentUrl = unsignedUrls[0] ?? `${baseUrl}/videos/${jobId}/content`;
+    const videoResponse = await fetch(contentUrl, {
+      headers: unsignedUrls[0] ? void 0 : headers,
+      signal
+    });
+    if (!videoResponse.ok) {
+      throw new Error(`Generated video download failed (${videoResponse.status}).`);
+    }
+    const mimeType = videoResponse.headers.get("content-type")?.split(";")[0]?.trim() || "video/mp4";
+    const bytes = Buffer.from(await videoResponse.arrayBuffer());
+    const attachment = await this.saveGeneratedMediaFile(conversationId, requestId, model, mimeType, bytes);
+    window.webContents.send("chat:done", {
+      requestId,
+      content: "Generated video.",
+      attachments: [attachment]
+    });
+    this.activeRequests.delete(requestId);
   }
   sendError(window, requestId, error) {
     const message = error instanceof Error && error.name === "AbortError" ? "Request stopped." : error instanceof Error ? error.message : "Unknown model error.";
@@ -4317,6 +4698,7 @@ class WorkspaceWatchController {
   }
 }
 const CHAT_THREAD_BG_DIR = "chat-thread-backgrounds";
+const GENERATED_MEDIA_DIR = "generated-media";
 const MAX_CHAT_THREAD_BG_BYTES = 20 * 1024 * 1024;
 const PENDING_WORKSPACE_DELETE_MS = 5 * 60 * 1e3;
 function chatThreadBackgroundStoreRoot() {
@@ -4332,6 +4714,17 @@ function isPathInsideChatThreadBackgroundStore(absPath) {
     root = resolve(chatThreadBackgroundStoreRoot());
     target = resolve(absPath.trim());
   }
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (process.platform === "win32") {
+    const t = target.toLowerCase();
+    const p = prefix.toLowerCase();
+    return t === root.toLowerCase() || t.startsWith(p);
+  }
+  return target === root || target.startsWith(prefix);
+}
+function isPathInsideGeneratedMediaStore(absPath) {
+  const root = resolve(join$1(app.getPath("userData"), GENERATED_MEDIA_DIR));
+  const target = resolve(absPath.trim());
   const prefix = root.endsWith(sep) ? root : root + sep;
   if (process.platform === "win32") {
     const t = target.toLowerCase();
@@ -4750,7 +5143,8 @@ const sanitizeRuntime = (runtime) => {
     nexusLeaderApprovesTools: typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
     nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" ? runtime.nexusLeaderProvider : void 0,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === "string" ? runtime.nexusLeaderModel : void 0,
-    nexusLeaderName: typeof runtime.nexusLeaderName === "string" ? runtime.nexusLeaderName : void 0
+    nexusLeaderName: typeof runtime.nexusLeaderName === "string" ? runtime.nexusLeaderName : void 0,
+    mediaGenerationKind: runtime.mediaGenerationKind === "music" || runtime.mediaGenerationKind === "video" || runtime.mediaGenerationKind === "image" ? runtime.mediaGenerationKind : void 0
   };
 };
 const sanitizeChatSettings = (requested) => ({
@@ -5100,6 +5494,112 @@ ipcMain.handle("ui:read-chat-thread-background", async (_event, raw) => {
     return { ok: false };
   }
 });
+ipcMain.handle("generated-media:save", async (event, dataUrl, fileName, backingFilePath) => {
+  if (typeof dataUrl !== "string" || typeof fileName !== "string") {
+    return { ok: false, error: "Invalid media save request." };
+  }
+  let sourcePath = null;
+  let dataBytes = null;
+  if (typeof backingFilePath === "string" && backingFilePath.trim()) {
+    const p = resolve(backingFilePath.trim());
+    if (!isPathInsideGeneratedMediaStore(p)) {
+      return { ok: false, error: "Media file is outside Mythra generated media storage." };
+    }
+    sourcePath = p;
+  } else if (dataUrl.startsWith("file:")) {
+    try {
+      const p = fileURLToPath(dataUrl);
+      if (!isPathInsideGeneratedMediaStore(p)) {
+        return { ok: false, error: "Media file is outside Mythra generated media storage." };
+      }
+      sourcePath = p;
+    } catch {
+      return { ok: false, error: "Invalid media file URL." };
+    }
+  } else {
+    const match = /^data:[^;,]+;base64,(.+)$/i.exec(dataUrl);
+    if (!match) {
+      return { ok: false, error: "Unsupported media URL." };
+    }
+    dataBytes = Buffer.from(match[1] ?? "", "base64");
+  }
+  const safeName = basename(fileName).replace(/[^a-zA-Z0-9._ -]/g, "_") || "generated-media";
+  const opts = { title: "Save generated media", defaultPath: safeName };
+  const winSafe = BrowserWindow.fromWebContents(event.sender);
+  const { canceled, filePath } = winSafe && !winSafe.isDestroyed() ? await dialog.showSaveDialog(winSafe, opts) : await dialog.showSaveDialog(opts);
+  if (canceled || !filePath) {
+    return { ok: false, cancelled: true };
+  }
+  try {
+    if (sourcePath) await copyFile(sourcePath, filePath);
+    else if (dataBytes) await writeFile(filePath, dataBytes);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+});
+ipcMain.handle("generated-media:open-image", async (_event, dataUrl, fileName, mimeType, backingFilePath) => {
+  if (typeof dataUrl !== "string" || typeof fileName !== "string" || typeof mimeType !== "string") {
+    return { ok: false, error: "Invalid image preview request." };
+  }
+  if (!mimeType.startsWith("image/")) {
+    return { ok: false, error: "Generated media is not an image." };
+  }
+  let imageUrl = "";
+  let imageSize = null;
+  if (typeof backingFilePath === "string" && backingFilePath.trim()) {
+    const p = resolve(backingFilePath.trim());
+    if (!isPathInsideGeneratedMediaStore(p)) {
+      return { ok: false, error: "Image file is outside Mythra generated media storage." };
+    }
+    const bytes = await readFile(p);
+    imageUrl = `data:${imageMimeFromFilename(p)};base64,${bytes.toString("base64")}`;
+    const img = nativeImage.createFromPath(p);
+    if (!img.isEmpty()) {
+      imageSize = img.getSize();
+    }
+  } else if (dataUrl.startsWith("data:image/")) {
+    imageUrl = dataUrl;
+  } else {
+    return { ok: false, error: "Unsupported image URL." };
+  }
+  const display = imageSize ? {
+    width: Math.min(1400, Math.max(640, imageSize.width)),
+    height: Math.min(1e3, Math.max(480, imageSize.height))
+  } : { width: 1e3, height: 760 };
+  const safeTitle = basename(fileName).replace(/[<>]/g, "") || "Generated image";
+  const previewWindow = new BrowserWindow({
+    width: display.width,
+    height: display.height,
+    minWidth: 420,
+    minHeight: 320,
+    title: safeTitle,
+    backgroundColor: "#0b1020",
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${safeTitle.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #080d19; }
+    body { display: grid; place-items: center; overflow: auto; }
+    img { max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain; }
+  </style>
+</head>
+<body>
+  <img src="${imageUrl.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}" alt="${safeTitle.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}" />
+</body>
+</html>`;
+  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  return { ok: true };
+});
 ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") return;
   let parsed;
@@ -5113,7 +5613,7 @@ ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
 });
 ipcMain.handle(
   "models:list",
-  async (_event, settings, providerKind) => modelService.listModels(settings, providerKind)
+  async (_event, settings, providerKind, options) => modelService.listModels(settings, providerKind, options)
 );
 ipcMain.handle(
   "chat:stream",

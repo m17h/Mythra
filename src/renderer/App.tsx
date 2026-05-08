@@ -579,6 +579,108 @@ type InspectorTab = 'editor' | 'changes' | 'settings';
 type SettingsInspectorScope = 'general' | 'wizard' | 'nexus';
 type SidebarTab = 'chats' | 'wizards' | 'files';
 type WizardsSidebarPane = 'wizards' | 'nexus';
+type MediaGenerationKind = 'music' | 'video' | 'image';
+
+const MEDIA_GENERATION_LABELS: Record<MediaGenerationKind, string> = {
+  music: 'Music',
+  video: 'Video',
+  image: 'Images'
+};
+
+const MEDIA_CHAT_BADGES: Record<MediaGenerationKind, { label: string; shortLabel: string }> = {
+  music: { label: 'Music chat', shortLabel: 'Music' },
+  video: { label: 'Video chat', shortLabel: 'Video' },
+  image: { label: 'Image chat', shortLabel: 'Image' }
+};
+
+const MEDIA_GENERATION_HELP: Record<MediaGenerationKind, string> = {
+  music: 'Choose an audio or music generation model for this chat.',
+  video: 'Choose a video generation model such as Google Veo.',
+  image: 'Choose an image generation model for this chat.'
+};
+
+const MEDIA_MODEL_PATTERNS: Record<MediaGenerationKind, RegExp[]> = {
+  music: [
+    /\bmusic\b/i,
+    /\baudio\b/i,
+    /\bsong\b/i,
+    /\bsuno\b/i,
+    /\budio\b/i,
+    /stable[-_ ]?audio/i,
+    /\blyria\b/i,
+    /musicgen/i,
+    /audiocraft/i,
+    /ace[-_ ]?step/i
+  ],
+  video: [
+    /\bvideo\b/i,
+    /\bveo\b/i,
+    /veo[-_ ]?\d/i,
+    /\bsora\b/i,
+    /\brunway\b/i,
+    /\bluma\b/i,
+    /\bkling\b/i,
+    /\bhailuo\b/i,
+    /\bpika\b/i,
+    /\bseedance\b/i,
+    /\bminimax\b/i,
+    /\bvidu\b/i,
+    /\bmochi\b/i,
+    /wan[-_ ]?\d/i,
+    /gen[-_ ]?[34]\b/i
+  ],
+  image: [
+    /\bimage\b/i,
+    /\bimagen\b/i,
+    /\bdall[-_ ]?e\b/i,
+    /gpt[-_ ]?image/i,
+    /\bmidjourney\b/i,
+    /\bflux\b/i,
+    /stable[-_ ]?diffusion/i,
+    /\bsdxl\b/i,
+    /\bideogram\b/i,
+    /\brecraft\b/i,
+    /\bseedream\b/i,
+    /nano[-_ ]?banana/i,
+    /gemini.*image/i,
+    /qwen.*image/i,
+    /\bkolors\b/i
+  ]
+};
+
+const MEDIA_OUTPUT_MODALITIES: Record<MediaGenerationKind, string[]> = {
+  music: ['audio', 'music'],
+  video: ['video'],
+  image: ['image']
+};
+
+const MEDIA_MODEL_LIST_OUTPUT_MODALITIES: Record<MediaGenerationKind, string[]> = {
+  music: ['audio'],
+  video: ['video'],
+  image: ['image']
+};
+
+function modelMatchesMediaKind(model: ModelInfo, kind: MediaGenerationKind): boolean {
+  const outputModalities = model.outputModalities?.map((modality) => modality.toLowerCase()) ?? [];
+  if (outputModalities.some((modality) => MEDIA_OUTPUT_MODALITIES[kind].includes(modality))) {
+    return true;
+  }
+  const haystack = `${model.id} ${model.ownedBy ?? ''} ${model.inputModalities?.join(' ') ?? ''} ${model.outputModalities?.join(' ') ?? ''}`;
+  return MEDIA_MODEL_PATTERNS[kind].some((pattern) => pattern.test(haystack));
+}
+
+function inferMediaGenerationKind(modelId: string): MediaGenerationKind | null {
+  const model = { id: modelId } satisfies ModelInfo;
+  for (const kind of ['music', 'video', 'image'] as const) {
+    if (modelMatchesMediaKind(model, kind)) return kind;
+  }
+  return null;
+}
+
+function mediaKindForOverride(override: ChatModelOverride | null | undefined): MediaGenerationKind | null {
+  if (!override?.model.trim()) return null;
+  return override.mediaKind ?? inferMediaGenerationKind(override.model);
+}
 
 interface InFlightChat {
   chatId: string;
@@ -667,6 +769,12 @@ export function App() {
   const [newChatModelOverride, setNewChatModelOverride] = useState<ChatModelOverride | null>(null);
   const newChatModelOverrideRef = useRef<ChatModelOverride | null>(null);
   newChatModelOverrideRef.current = newChatModelOverride;
+  const [mediaPickerKind, setMediaPickerKind] = useState<MediaGenerationKind | null>(null);
+  const [mediaPickerProvider, setMediaPickerProvider] = useState<ProviderKind>('openrouter');
+  const [mediaPickerModels, setMediaPickerModels] = useState<ModelInfo[]>([]);
+  const [mediaPickerSelectedModel, setMediaPickerSelectedModel] = useState('');
+  const [mediaPickerLoading, setMediaPickerLoading] = useState(false);
+  const [mediaPickerError, setMediaPickerError] = useState('');
   chatStreamingRef.current = chatStreaming;
 
   const [inlineTerminalLogs, setInlineTerminalLogs] = useState('');
@@ -1086,6 +1194,7 @@ export function App() {
     if (activeChatId) return activeChatMeta?.modelOverride ?? null;
     return newChatModelOverride;
   }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
+  const activeMediaOverrideKind = mediaKindForOverride(effectiveModelOverride);
 
   const showWizardHubPlaceholder = useMemo(
     () =>
@@ -1438,6 +1547,41 @@ export function App() {
   }, [settings, overrideModelProvider]);
 
   useEffect(() => {
+    if (!settings || !mediaPickerKind) {
+      setMediaPickerModels([]);
+      setMediaPickerSelectedModel('');
+      setMediaPickerError('');
+      return;
+    }
+
+    let cancelled = false;
+    setMediaPickerLoading(true);
+    setMediaPickerError('');
+    void window.electronAPI
+      .listModels(settings, mediaPickerProvider, { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[mediaPickerKind] })
+      .then((list) => {
+        if (cancelled) return;
+        const filtered = list.filter((model) => modelMatchesMediaKind(model, mediaPickerKind));
+        setMediaPickerModels(filtered);
+        setMediaPickerSelectedModel((current) =>
+          current && filtered.some((model) => model.id === current) ? current : (filtered[0]?.id ?? '')
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setMediaPickerModels([]);
+        setMediaPickerSelectedModel('');
+        setMediaPickerError(error instanceof Error ? error.message : 'Could not load models.');
+      })
+      .finally(() => {
+        if (!cancelled) setMediaPickerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaPickerKind, mediaPickerProvider, settings]);
+
+  useEffect(() => {
     const offChunk = window.electronAPI.onCommandChunk((payload) => {
       if (payload.jobId && payload.jobId === inlineTerminalJobIdRef.current) {
         setInlineTerminalLogs((c) => c + payload.chunk);
@@ -1480,7 +1624,7 @@ export function App() {
         });
       }
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, usage }) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, attachments, usage }) => {
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
@@ -1513,6 +1657,9 @@ export function App() {
         const next: ChatMessage = { ...m, content, status: 'done' as const };
         if (reasoning !== undefined) next.reasoning = reasoning;
         else if (m.reasoning !== undefined) next.reasoning = m.reasoning;
+        if (attachments?.length) {
+          next.attachments = [...(m.attachments ?? []), ...attachments];
+        }
         return next;
       });
       if (snapshot) {
@@ -2054,6 +2201,30 @@ export function App() {
     chatSessionIdRef.current = nextSid;
     setSidebarTab('chats');
     setShowNewMenu(false);
+  };
+
+  const openMediaModelPicker = (kind: MediaGenerationKind) => {
+    setMediaPickerKind(kind);
+    setMediaPickerProvider('openrouter');
+    setMediaPickerSelectedModel('');
+    setMediaPickerError('');
+  };
+
+  const closeMediaModelPicker = () => {
+    setMediaPickerKind(null);
+    setMediaPickerModels([]);
+    setMediaPickerSelectedModel('');
+    setMediaPickerError('');
+  };
+
+  const startMediaGenerationChat = async () => {
+    if (!mediaPickerKind || !mediaPickerSelectedModel) return;
+    const override: ChatModelOverride = { provider: mediaPickerProvider, model: mediaPickerSelectedModel, mediaKind: mediaPickerKind };
+    await startNewChat();
+    setNewChatModelOverride(override);
+    setOverrideModelProvider(mediaPickerProvider);
+    setChatModelExpanded(true);
+    closeMediaModelPicker();
   };
 
   const handleChatsTabClick = () => {
@@ -3219,6 +3390,7 @@ export function App() {
       overrideForStream = loaded?.modelOverride ?? null;
     }
     if (!chatIdForStream) return;
+    const mediaOverrideKind = mediaKindForOverride(overrideForStream);
     inFlightChatsRef.current.set(requestId, {
       chatId: chatIdForStream,
       requestId,
@@ -3298,7 +3470,19 @@ export function App() {
             sessionMode: 'agent' as const
           }
         }
-      : applyChatModelOverride(sendSettings, overrideForStream);
+      : (() => {
+          const overrideSettings = applyChatModelOverride(sendSettings, overrideForStream);
+          return mediaOverrideKind
+            ? {
+                ...overrideSettings,
+                ui: {
+                  ...overrideSettings.ui,
+                  sessionMode: 'talk' as const,
+                  webSearch: false
+                }
+              }
+            : overrideSettings;
+        })();
 
     const wizardDocsContext = nexusForStream
       ? await buildNexusDocsContext(nexusTeam)
@@ -3551,6 +3735,7 @@ export function App() {
       wizardSystemPrompt: nexusForStream ? undefined : wizardForStream?.systemPrompt,
       wizardFullAccess: nexusForStream ? undefined : wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined,
       wizardAllowOutsideWorkspace: nexusForStream ? undefined : wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : undefined,
+      mediaGenerationKind: mediaOverrideKind ?? undefined,
       ...(nexusForStream && nexusLeader
         ? {
             nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
@@ -3658,7 +3843,7 @@ export function App() {
       : activeWizard?.provider ?? settings?.selectedProvider) === 'openrouter'
       ? 'OpenRouter'
       : 'LM Studio';
-  const sessionMode = activeWizard || activeNexus ? 'agent' : (settings?.ui.sessionMode ?? 'agent');
+  const sessionMode = activeWizard || activeNexus ? 'agent' : activeMediaOverrideKind ? 'talk' : (settings?.ui.sessionMode ?? 'agent');
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
   const wizardPromptDiff = wizardPromptApproval
     ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after)
@@ -3674,6 +3859,81 @@ export function App() {
     <div className="app-shell">
       <div className="background-grid" />
       <OnboardingDialog onComplete={completeOnboarding} open={showOnboarding} />
+      <AnimatePresence>
+        {mediaPickerKind ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop app-dialog-backdrop--overlay-top"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            onClick={closeMediaModelPicker}
+            role="presentation"
+          >
+            <motion.div
+              aria-modal="true"
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="app-dialog app-dialog--scrollable media-model-dialog"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">{MEDIA_GENERATION_LABELS[mediaPickerKind]}</div>
+              <h3>Choose a model</h3>
+              <p>{MEDIA_GENERATION_HELP[mediaPickerKind]}</p>
+
+              <div className="media-model-dialog__fields">
+                <label className="chat-thread-options__field">
+                  <span className="chat-thread-options__field-label">Provider</span>
+                  <AppSelect
+                    className="app-select--compact"
+                    options={providerOptions}
+                    onChange={(provider) => {
+                      setMediaPickerProvider(provider);
+                      setMediaPickerSelectedModel('');
+                    }}
+                    value={mediaPickerProvider}
+                  />
+                </label>
+                <div className="chat-thread-options__field">
+                  <span className="chat-thread-options__field-label">Model</span>
+                  <ModelSearch
+                    models={mediaPickerModels}
+                    value={mediaPickerSelectedModel}
+                    favoriteIds={settings?.ui.favoriteModels?.[mediaPickerProvider] ?? []}
+                    onChange={setMediaPickerSelectedModel}
+                  />
+                </div>
+              </div>
+
+              <div className="media-model-dialog__status">
+                {mediaPickerLoading
+                  ? 'Loading models...'
+                  : mediaPickerError
+                    ? mediaPickerError
+                    : mediaPickerModels.length === 0
+                      ? `No ${MEDIA_GENERATION_LABELS[mediaPickerKind].toLowerCase()} models found for this provider.`
+                      : `${mediaPickerModels.length} matching model${mediaPickerModels.length === 1 ? '' : 's'}.`}
+              </div>
+
+              <div className="app-dialog__actions">
+                <button className="btn btn--secondary" onClick={closeMediaModelPicker} type="button">
+                  Cancel
+                </button>
+                <button
+                  className="btn btn--primary"
+                  disabled={!mediaPickerSelectedModel}
+                  onClick={() => void startMediaGenerationChat()}
+                  type="button"
+                >
+                  Start chat
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       <AnimatePresence>
         {showWebSearchNotice ? (
           <motion.div
@@ -4482,42 +4742,52 @@ export function App() {
                       </div>
                     ) : (
                       <div className="chat-list">
-                        {normalChatList.map((chat) => (
-                          <div
-                            key={chat.id}
-                            className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
-                            onClick={() => loadChat(chat.id)}
-                          >
-                            {editingTitleId === chat.id ? (
-                              <div className="chat-list__content chat-list__content--editing" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  autoFocus
-                                  className="chat-list__title-input"
-                                  onBlur={(e) => {
-                                    void commitRenameChat(chat.id, e.target.value);
-                                  }}
-                                  onChange={(e) => setEditingTitleDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    e.stopPropagation();
-                                    if (e.key === 'Enter') {
-                                      e.currentTarget.blur();
-                                    } else if (e.key === 'Escape') {
-                                      e.preventDefault();
-                                      skipNextRenameCommitRef.current = true;
-                                      cancelRenameChat();
-                                    }
-                                  }}
-                                  value={editingTitleDraft}
-                                />
-                              </div>
-                            ) : (
-                              <div className="chat-list__content">
-                                <div className="chat-list__title">{chat.title}</div>
-                                <div className="chat-list__date">{formatRelativeDate(chat.updatedAt)}</div>
-                              </div>
-                            )}
-                            {editingTitleId === chat.id ? null : (
-                              <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
+                        {normalChatList.map((chat) => {
+                          const mediaKind = mediaKindForOverride(chat.modelOverride);
+                          const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
+                          return (
+                            <div
+                              key={chat.id}
+                              className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ''}`}
+                              onClick={() => loadChat(chat.id)}
+                            >
+                              {editingTitleId === chat.id ? (
+                                <div className="chat-list__content chat-list__content--editing" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    autoFocus
+                                    className="chat-list__title-input"
+                                    onBlur={(e) => {
+                                      void commitRenameChat(chat.id, e.target.value);
+                                    }}
+                                    onChange={(e) => setEditingTitleDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      e.stopPropagation();
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        skipNextRenameCommitRef.current = true;
+                                        cancelRenameChat();
+                                      }
+                                    }}
+                                    value={editingTitleDraft}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="chat-list__content">
+                                  <div className="chat-list__title-row">
+                                    {mediaBadge ? (
+                                      <span className="chat-list__media-badge" title={mediaBadge.label}>
+                                        {mediaBadge.shortLabel}
+                                      </span>
+                                    ) : null}
+                                    <div className="chat-list__title">{chat.title}</div>
+                                  </div>
+                                  <div className="chat-list__date">{formatRelativeDate(chat.updatedAt)}</div>
+                                </div>
+                              )}
+                              {editingTitleId === chat.id ? null : (
+                                <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   className={`chat-list__pin ${chat.pinned ? 'is-active' : ''}`}
                                   onClick={(e) => void togglePinChat(e, chat.id)}
@@ -4567,10 +4837,11 @@ export function App() {
                                     />
                                   </svg>
                                 </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </motion.div>
@@ -4901,6 +5172,19 @@ export function App() {
             </div>
 
             <div className="sidebar-footer">
+              {sidebarTab === 'chats' ? (
+                <div className="media-launcher" aria-label="Start media generation chat">
+                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('music')} type="button">
+                    Music
+                  </button>
+                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('video')} type="button">
+                    Video
+                  </button>
+                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('image')} type="button">
+                    Images
+                  </button>
+                </div>
+              ) : null}
               {sidebarTab === 'wizards' ? (
                 <div className="wizards-pane-mode-toggle" role="tablist" aria-label="Wizards sidebar view">
                   <button
@@ -4978,11 +5262,11 @@ export function App() {
             onStop={stopChat}
             modelCatalogSettled={Boolean(settings) && modelCatalogSettled}
             providerConnected={providerConnected}
-            webSearch={settings?.ui.webSearch ?? false}
-            webSearchDisabled={!settings}
+            webSearch={activeMediaOverrideKind ? false : (settings?.ui.webSearch ?? false)}
+            webSearchDisabled={!settings || Boolean(activeMediaOverrideKind)}
             onWebSearchChange={handleWebSearchChange}
             onSessionModeToggle={handleSessionModeToggle}
-            sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive}
+            sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind)}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
             selectedProviderLabel={selectedProviderLabel}

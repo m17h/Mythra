@@ -37,7 +37,9 @@ const electronAPI = {
     return () => ipcRenderer.removeListener("tool:approval-request", listener);
   },
   openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
-  listModels: (settings, providerKind) => ipcRenderer.invoke("models:list", settings, providerKind),
+  saveGeneratedMedia: (dataUrl, fileName, filePath) => ipcRenderer.invoke("generated-media:save", dataUrl, fileName, filePath),
+  openGeneratedImage: (dataUrl, fileName, mimeType, filePath) => ipcRenderer.invoke("generated-media:open-image", dataUrl, fileName, mimeType, filePath),
+  listModels: (settings, providerKind, options) => ipcRenderer.invoke("models:list", settings, providerKind, options),
   streamChat: (requestId, settings, messages, runtime) => ipcRenderer.invoke("chat:stream", requestId, settings, messages, runtime),
   stopChat: (requestId) => ipcRenderer.invoke("chat:stop", requestId),
   runCommand: (command, cwd) => ipcRenderer.invoke("commands:run", command, cwd),
