@@ -20479,7 +20479,7 @@ function formatOverrideLabel(override, pathLabel2) {
   return `${prov}: ${pathLabel2(override.model)}`;
 }
 var reactDomExports = requireReactDom();
-const dialogTransition$3 = { duration: 0.18, ease: "easeOut" };
+const dialogTransition$4 = { duration: 0.18, ease: "easeOut" };
 function AppConfirmDialog({
   open,
   kicker,
@@ -20524,7 +20524,7 @@ function AppConfirmDialog({
             exit: { opacity: 0, scale: 0.98, y: 8 },
             initial: { opacity: 0, scale: 0.98, y: 8 },
             role: "dialog",
-            transition: dialogTransition$3,
+            transition: dialogTransition$4,
             children: [
               kicker ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: kicker }) : null,
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: titleId, children: title }),
@@ -36000,6 +36000,13 @@ function SettingsPanel({
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
   onOpenSystemPromptModal,
+  appVersion,
+  updateCheck,
+  isCheckingForUpdates = false,
+  isLoadingReleaseNotes = false,
+  onCheckForUpdates,
+  onViewReleaseNotes,
+  onDownloadUpdate,
   focusSearchSettingsKey = 0
 }) {
   const [themeSectionExpanded, setThemeSectionExpanded] = reactExports.useState(false);
@@ -36028,6 +36035,8 @@ function SettingsPanel({
   const activeSearchProvider = settings.search.provider;
   const anyPremiumApiKeySaved = Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
   const activeThemeLabel = getThemeName(settings.ui.themeId);
+  const updateAvailable = updateCheck?.ok === true && updateCheck.updateAvailable;
+  const updateDownloadName = updateCheck?.ok === true ? updateCheck.downloadAsset?.name : void 0;
   const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
   const chatBgSelectValue = settings.ui.chatThreadBackgroundPreset === "mystic" ? "mystic" : settings.ui.chatThreadBackgroundPath || chatBgCustomFocus ? "custom" : "none";
   const updateProvider = (patch2, opts) => {
@@ -36140,6 +36149,38 @@ function SettingsPanel({
           isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
         ] }),
         isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "App Updates" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateAvailable ? `Mythra ${updateCheck.latestVersion} is available` : `Current build: ${appVersion || "Loading version..."}` }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateCheck?.ok === false ? updateCheck.error : updateAvailable ? updateDownloadName ? `Ready to download: ${updateDownloadName}` : "A newer release is available, but no matching download asset was found for this platform." : "Check the public releases feed for a newer version." })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__actions", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "btn btn--secondary",
+                disabled: !onCheckForUpdates || isCheckingForUpdates,
+                onClick: onCheckForUpdates,
+                type: "button",
+                children: isCheckingForUpdates ? "Checking..." : "Check for updates"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "btn btn--secondary",
+                disabled: !onViewReleaseNotes || isLoadingReleaseNotes,
+                onClick: onViewReleaseNotes,
+                type: "button",
+                children: isLoadingReleaseNotes ? "Loading notes..." : "Release notes"
+              }
+            ),
+            updateAvailable && updateDownloadName ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !onDownloadUpdate, onClick: onDownloadUpdate, type: "button", children: "Download update" }) : null
+          ] })
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -36523,7 +36564,7 @@ function SettingsPanel({
     ] })
   ] });
 }
-const dialogTransition$2 = { duration: 0.18, ease: "easeOut" };
+const dialogTransition$3 = { duration: 0.18, ease: "easeOut" };
 function SystemPromptInfoDialog({ open, onClose }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
     motion.div,
@@ -36546,7 +36587,7 @@ function SystemPromptInfoDialog({ open, onClose }) {
           exit: { opacity: 0, scale: 0.98, y: 8 },
           initial: { opacity: 0, scale: 0.98, y: 8 },
           role: "dialog",
-          transition: dialogTransition$2,
+          transition: dialogTransition$3,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "System prompt" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "system-prompt-info-title", children: "What it is (and ideas to try)" }),
@@ -36598,7 +36639,7 @@ function SystemPromptInfoDialog({ open, onClose }) {
     }
   ) : null });
 }
-const dialogTransition$1 = { duration: 0.18, ease: "easeOut" };
+const dialogTransition$2 = { duration: 0.18, ease: "easeOut" };
 function SystemPromptModal({ open, value, onChange, onClose }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
     motion.div,
@@ -36621,7 +36662,7 @@ function SystemPromptModal({ open, value, onChange, onClose }) {
           exit: { opacity: 0, scale: 0.98, y: 8 },
           initial: { opacity: 0, scale: 0.98, y: 8 },
           role: "dialog",
-          transition: dialogTransition$1,
+          transition: dialogTransition$2,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Settings" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "system-prompt-modal-title", children: "System prompt" }),
@@ -36638,6 +36679,72 @@ function SystemPromptModal({ open, value, onChange, onClose }) {
               }
             ),
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: onClose, type: "button", children: "Done" }) })
+          ]
+        }
+      )
+    }
+  ) : null });
+}
+const dialogTransition$1 = { duration: 0.18, ease: "easeOut" };
+function formatReleaseDate(value) {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(void 0, { dateStyle: "medium" }).format(date);
+}
+function ReleaseNotesDialog({ open, cache, loading, onClose, onRefresh }) {
+  const releases = cache?.releases ?? [];
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      onClick: onClose,
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          animate: { opacity: 1, scale: 1, y: 0 },
+          "aria-labelledby": "release-notes-title",
+          "aria-modal": "true",
+          className: "app-dialog app-dialog--release-notes",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          onClick: (e) => e.stopPropagation(),
+          role: "dialog",
+          transition: dialogTransition$1,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Release notes" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "release-notes-title", children: "What changed in Mythra" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: cache?.fetchedAt ? `Last synced ${formatReleaseDate(cache.fetchedAt)}. Saved notes stay available offline.` : "Saved notes stay available offline after Mythra syncs them once." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "release-notes-list", children: [
+              loading && releases.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "release-notes-empty", children: "Loading release notes..." }) : null,
+              !loading && releases.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "release-notes-empty", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "No saved release notes yet" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Connect to the internet and check again after the releases repo has published releases." })
+              ] }) : null,
+              releases.map((release) => /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: "release-note-card", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "release-note-card__header", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("strong", { children: [
+                    "Mythra ",
+                    release.version
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                    release.title !== release.version ? release.title : "Release notes",
+                    " ·",
+                    " ",
+                    formatReleaseDate(release.publishedAt)
+                  ] })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: release.body || "No release notes were added for this version." })
+              ] }, `${release.version}-${release.publishedAt ?? ""}`))
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", disabled: loading, onClick: onRefresh, type: "button", children: loading ? "Refreshing..." : "Refresh" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: onClose, type: "button", children: "Done" })
+            ] })
           ]
         }
       )
@@ -38828,6 +38935,13 @@ function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
+  const [updateCheck, setUpdateCheck] = reactExports.useState(null);
+  const [updateNotice, setUpdateNotice] = reactExports.useState(null);
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = reactExports.useState(false);
+  const [hasAutoCheckedForUpdates, setHasAutoCheckedForUpdates] = reactExports.useState(false);
+  const [showReleaseNotes, setShowReleaseNotes] = reactExports.useState(false);
+  const [releaseNotesCache, setReleaseNotesCache] = reactExports.useState(null);
+  const [isLoadingReleaseNotes, setIsLoadingReleaseNotes] = reactExports.useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
@@ -39992,6 +40106,75 @@ function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+  const downloadUpdateAsset = reactExports.useCallback((result) => {
+    const asset = result?.ok === true ? result.downloadAsset : void 0;
+    if (!asset) {
+      setSettingsStatus("No download is available for this platform yet.");
+      return;
+    }
+    void window.electronAPI.openExternalUrl(asset.downloadUrl);
+  }, []);
+  const runUpdateCheck = reactExports.useCallback(async (source) => {
+    if (isCheckingForUpdates) return;
+    setIsCheckingForUpdates(true);
+    if (source === "manual") {
+      setSettingsStatus("Checking for updates...");
+    }
+    try {
+      const result = await window.electronAPI.checkForUpdates();
+      setUpdateCheck(result);
+      if (!result.ok) {
+        if (source === "manual") setSettingsStatus(`Could not check for updates: ${result.error}`);
+        return;
+      }
+      if (result.updateAvailable) {
+        setUpdateNotice(result);
+        setSettingsStatus(`Mythra ${result.latestVersion} is available.`);
+        return;
+      }
+      if (source === "manual") {
+        setSettingsStatus("Mythra is up to date.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (source === "manual") setSettingsStatus(`Could not check for updates: ${message}`);
+    } finally {
+      setIsCheckingForUpdates(false);
+    }
+  }, [isCheckingForUpdates]);
+  const loadReleaseNotes = reactExports.useCallback(async () => {
+    if (isLoadingReleaseNotes) return;
+    setIsLoadingReleaseNotes(true);
+    try {
+      const cached = await window.electronAPI.getReleaseNotes();
+      if (cached.releases.length > 0) {
+        setReleaseNotesCache(cached);
+      }
+      const refreshed = await window.electronAPI.refreshReleaseNotes();
+      setReleaseNotesCache(refreshed);
+      if (refreshed.releases.length === 0) {
+        setSettingsStatus("No release notes are available yet.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!releaseNotesCache?.releases.length) {
+        setSettingsStatus(`Could not load release notes: ${message}`);
+      } else {
+        setSettingsStatus("Showing saved release notes because Mythra could not refresh them online.");
+      }
+    } finally {
+      setIsLoadingReleaseNotes(false);
+    }
+  }, [isLoadingReleaseNotes, releaseNotesCache?.releases.length]);
+  const handleViewReleaseNotes = reactExports.useCallback(() => {
+    setShowReleaseNotes(true);
+    void loadReleaseNotes();
+  }, [loadReleaseNotes]);
+  reactExports.useEffect(() => {
+    if (!settings || hasAutoCheckedForUpdates) return;
+    setHasAutoCheckedForUpdates(true);
+    void runUpdateCheck("auto");
+  }, [hasAutoCheckedForUpdates, runUpdateCheck, settings]);
   const completeOnboarding = reactExports.useCallback(async () => {
     setShowOnboarding(false);
     const current = settingsRef.current;
@@ -41575,6 +41758,16 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     ) : null }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(SystemPromptInfoDialog, { onClose: () => setShowSystemPromptHelp(false), open: showSystemPromptHelp }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ReleaseNotesDialog,
+      {
+        cache: releaseNotesCache,
+        loading: isLoadingReleaseNotes,
+        onClose: () => setShowReleaseNotes(false),
+        onRefresh: () => void loadReleaseNotes(),
+        open: showReleaseNotes
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
       WizardExportDialog,
       {
         onClose: () => setWizardExportChat(null),
@@ -41616,6 +41809,29 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         onCreate: createNexus,
         open: showNexusSetup,
         wizards: wizardChatList
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Later",
+        confirmLabel: updateNotice?.ok === true && updateNotice.downloadAsset ? "Download update" : "OK",
+        description: updateNotice?.ok === true ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Mythra ",
+          updateNotice.latestVersion,
+          " is available.",
+          " ",
+          updateNotice.downloadAsset ? `Download ${updateNotice.downloadAsset.name} to install it.` : "No matching download asset was found for this platform yet."
+        ] }) : "A newer Mythra release is available.",
+        kicker: "App update",
+        onCancel: () => setUpdateNotice(null),
+        onConfirm: () => {
+          const result = updateNotice;
+          setUpdateNotice(null);
+          downloadUpdateAsset(result);
+        },
+        open: Boolean(updateNotice),
+        title: updateNotice?.ok === true ? `Update to ${updateNotice.latestVersion}` : "Update available"
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -41995,9 +42211,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.2.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.0"}`, children: [
                   "v",
-                  "0.2.0"
+                  "0.3.0"
                 ] })
               ] })
             ] }),
@@ -43061,17 +43277,24 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
+                        appVersion: "0.3.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
+                        isCheckingForUpdates,
+                        isLoadingReleaseNotes,
                         modelOptions: models,
                         onChange: handleSettingsPanelChange,
+                        onCheckForUpdates: () => void runUpdateCheck("manual"),
+                        onDownloadUpdate: () => downloadUpdateAsset(updateCheck),
                         onOpenConnectionHelp: () => setShowConnectionHelp(true),
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onOpenSystemPromptModal: () => setShowSystemPromptModal(true),
                         onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
                         onPresetPersist: persistAfterPresetAction,
                         onRefreshModels: refreshModels,
+                        onViewReleaseNotes: handleViewReleaseNotes,
                         settings,
-                        statusMessage: settingsStatus
+                        statusMessage: settingsStatus,
+                        updateCheck
                       }
                     )
                   ] }) : null

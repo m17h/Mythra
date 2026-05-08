@@ -408,6 +408,43 @@ export interface WorkspaceChanges {
   error?: string;
 }
 
+export interface ReleaseAssetInfo {
+  name: string;
+  size: number;
+  downloadUrl: string;
+  contentType?: string;
+  platform: 'mac' | 'win' | 'other';
+}
+
+export interface AppReleaseNote {
+  version: string;
+  title: string;
+  body: string;
+  publishedAt: string | null;
+  prerelease: boolean;
+}
+
+export interface ReleaseNotesCache {
+  fetchedAt: string | null;
+  releases: AppReleaseNote[];
+}
+
+export type AppUpdateCheckResult =
+  | {
+      ok: true;
+      currentVersion: string;
+      latestVersion: string;
+      updateAvailable: boolean;
+      release?: AppReleaseNote;
+      assets: ReleaseAssetInfo[];
+      downloadAsset?: ReleaseAssetInfo;
+    }
+  | {
+      ok: false;
+      currentVersion?: string;
+      error: string;
+    };
+
 export interface SavedChat {
   id: string;
   kind?: ChatKind;

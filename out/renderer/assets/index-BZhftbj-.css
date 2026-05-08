@@ -307,6 +307,61 @@ html[data-platform='darwin'] .app-shell {
   overflow-y: auto;
 }
 
+.app-dialog--release-notes {
+  width: min(720px, calc(100vw - 40px));
+  max-height: min(calc(100vh - 40px), 760px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.release-notes-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.release-note-card,
+.release-notes-empty {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+}
+
+.release-note-card__header {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 9px;
+}
+
+.release-note-card__header strong,
+.release-notes-empty strong {
+  color: var(--text-0);
+  font-size: 0.9rem;
+}
+
+.release-note-card__header span,
+.release-notes-empty span {
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+
+.release-note-card p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.release-notes-empty {
+  display: grid;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 0.84rem;
+  text-align: center;
+}
+
 .app-dialog--system-prompt {
   width: min(920px, calc(100vw - 40px));
   max-height: min(calc(100vh - 40px), 840px);
@@ -3754,6 +3809,38 @@ details.chat-activity--collapsible {
 
 .settings-section__title.settings-section__title--cluster {
   margin: 0;
+}
+
+.app-update-box {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.app-update-box__copy {
+  display: grid;
+  gap: 4px;
+}
+
+.app-update-box__copy strong {
+  color: var(--text-0);
+  font-size: 0.88rem;
+}
+
+.app-update-box__copy span {
+  color: var(--text-2);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.app-update-box__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .nexus-settings-team-hint {

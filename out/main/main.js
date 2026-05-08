@@ -3776,6 +3776,153 @@ class SettingsStore {
     return next;
   }
 }
+const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100";
+const RELEASE_NOTES_CACHE_FILE = "release-notes.json";
+function releaseNotesCachePath() {
+  return join$1(app.getPath("userData"), RELEASE_NOTES_CACHE_FILE);
+}
+function normalizeReleaseTag(tag) {
+  return tag.trim().replace(/^app-/i, "").replace(/^v/i, "");
+}
+function compareVersions(a, b) {
+  const parse = (value) => normalizeReleaseTag(value).split(/[.-]/).map((part) => {
+    const n = Number.parseInt(part, 10);
+    return Number.isFinite(n) ? n : 0;
+  });
+  const aa = parse(a);
+  const bb = parse(b);
+  const len = Math.max(aa.length, bb.length, 3);
+  for (let i = 0; i < len; i += 1) {
+    const av = aa[i] ?? 0;
+    const bv = bb[i] ?? 0;
+    if (av > bv) return 1;
+    if (av < bv) return -1;
+  }
+  return 0;
+}
+function sanitizeReleaseBody(body) {
+  return body.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/(?:www\.)?github\.com\/\S+/gi, "").replace(/[ \t]+\n/g, "\n").trim();
+}
+function assetPlatform(name) {
+  const n = name.toLowerCase();
+  if (n.endsWith(".exe") || n.includes("win")) return "win";
+  if (n.endsWith(".dmg") || n.includes("mac") || n.includes("darwin") || n.includes("arm64-notarized")) return "mac";
+  return "other";
+}
+function normalizeAsset(raw) {
+  if (typeof raw.name !== "string" || typeof raw.browser_download_url !== "string") return null;
+  return {
+    name: raw.name,
+    size: typeof raw.size === "number" ? raw.size : 0,
+    downloadUrl: raw.browser_download_url,
+    contentType: typeof raw.content_type === "string" ? raw.content_type : void 0,
+    platform: assetPlatform(raw.name)
+  };
+}
+function normalizeRelease(raw) {
+  if (typeof raw.tag_name !== "string") return null;
+  const version = normalizeReleaseTag(raw.tag_name);
+  const title = typeof raw.name === "string" && raw.name.trim().length > 0 ? raw.name.trim() : raw.tag_name.trim();
+  const assets = Array.isArray(raw.assets) ? raw.assets.map((asset) => normalizeAsset(asset)).filter((asset) => Boolean(asset)) : [];
+  return {
+    version,
+    title,
+    body: sanitizeReleaseBody(typeof raw.body === "string" ? raw.body : ""),
+    publishedAt: typeof raw.published_at === "string" ? raw.published_at : null,
+    prerelease: raw.prerelease === true,
+    draft: raw.draft === true,
+    assets
+  };
+}
+function chooseDownloadAsset(assets) {
+  const platform = process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "other";
+  const platformAssets = assets.filter((asset) => asset.platform === platform);
+  if (platform === "win") {
+    return platformAssets.find((asset) => /setup.*\.exe$/i.test(asset.name)) ?? platformAssets.find((asset) => /\.exe$/i.test(asset.name)) ?? platformAssets[0];
+  }
+  if (platform === "mac") {
+    return platformAssets.find((asset) => process.arch === "arm64" && /arm64/i.test(asset.name)) ?? platformAssets.find((asset) => /\.dmg$/i.test(asset.name)) ?? platformAssets.find((asset) => /\.zip$/i.test(asset.name)) ?? platformAssets[0];
+  }
+  return platformAssets[0] ?? assets[0];
+}
+async function fetchGithubReleases() {
+  const response = await fetch(RELEASES_API_URL, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Mythra"
+    }
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    let message = body.trim();
+    try {
+      const parsed2 = JSON.parse(body);
+      if (parsed2.message) message = parsed2.message;
+    } catch {
+    }
+    throw new Error(`Release lookup failed (HTTP ${response.status}): ${message || response.statusText}`);
+  }
+  const parsed = JSON.parse(body);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((release) => normalizeRelease(release)).filter((release) => Boolean(release)).filter((release) => !release.draft);
+}
+class UpdateService {
+  async getReleaseNotes() {
+    try {
+      const raw = await readFile(releaseNotesCachePath(), "utf8");
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed.releases)) return { fetchedAt: null, releases: [] };
+      return parsed;
+    } catch {
+      return { fetchedAt: null, releases: [] };
+    }
+  }
+  async refreshReleaseNotes() {
+    const releases = await fetchGithubReleases();
+    const cache = {
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      releases: releases.map(({ assets: _assets, draft: _draft, ...release }) => release)
+    };
+    await writeFile(releaseNotesCachePath(), JSON.stringify(cache, null, 2), "utf8");
+    return cache;
+  }
+  refreshReleaseNotesInBackground() {
+    void this.refreshReleaseNotes().catch((error) => {
+      console.warn(`Could not refresh release notes cache: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  async checkForUpdates(currentVersion) {
+    try {
+      const releases = await fetchGithubReleases();
+      const latest = releases.find((release) => !release.prerelease) ?? releases[0];
+      if (!latest) {
+        return {
+          ok: true,
+          currentVersion,
+          latestVersion: currentVersion,
+          updateAvailable: false,
+          assets: []
+        };
+      }
+      const updateAvailable = compareVersions(latest.version, currentVersion) > 0;
+      return {
+        ok: true,
+        currentVersion,
+        latestVersion: latest.version,
+        updateAvailable,
+        release: latest,
+        assets: latest.assets,
+        downloadAsset: chooseDownloadAsset(latest.assets)
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        currentVersion,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+}
 function sanitizeWizardFolderSegment(name) {
   return name.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").slice(0, 80).trim() || "Mythra Wizard";
 }
@@ -4780,6 +4927,7 @@ const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
+const updateService = new UpdateService();
 let mainWindow = null;
 let activeWorkspaceRoot;
 const workspaceWatch = new WorkspaceWatchController(() => {
@@ -5190,6 +5338,7 @@ app.whenReady().then(async () => {
     app.dock.setIcon(appIconPath);
   }
   await createWindow();
+  updateService.refreshReleaseNotesInBackground();
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       await createWindow();
@@ -5216,6 +5365,9 @@ ipcMain.handle("settings:save", async (_event, settings) => {
   currentSettings = await settingsStore.save(safe);
   return currentSettings;
 });
+ipcMain.handle("app:update-check", async () => updateService.checkForUpdates(app.getVersion()));
+ipcMain.handle("app:release-notes:get", async () => updateService.getReleaseNotes());
+ipcMain.handle("app:release-notes:refresh", async () => updateService.refreshReleaseNotes());
 ipcMain.handle("workspace:choose", async () => {
   const root = await workspaceService.chooseWorkspace();
   if (!root) {

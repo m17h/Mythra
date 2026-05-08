@@ -11,6 +11,7 @@ import { ModelSearch } from './components/ModelSearch';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SystemPromptInfoDialog } from './components/SystemPromptInfoDialog';
 import { SystemPromptModal } from './components/SystemPromptModal';
+import { ReleaseNotesDialog } from './components/ReleaseNotesDialog';
 import { WizardSettingsPanel } from './components/WizardSettingsPanel';
 import { WizardExportDialog } from './components/WizardExportDialog';
 import { WizardSetupModal } from './components/WizardSetupModal';
@@ -22,6 +23,7 @@ import logoNeonGrid from '../../Images/onboarding_1-1.png';
 import {
   defaultSettings,
   type AppSettings,
+  type AppUpdateCheckResult,
   type ChatActivity,
   type ChatAttachment,
   type ChatMessage,
@@ -33,6 +35,7 @@ import {
   type NexusSetupRequest,
   type OpenFile,
   type ProviderKind,
+  type ReleaseNotesCache,
   type SessionMode,
   type SavedChat,
   type SavedChatMeta,
@@ -797,6 +800,13 @@ export function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<AppUpdateCheckResult | null>(null);
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+  const [hasAutoCheckedForUpdates, setHasAutoCheckedForUpdates] = useState(false);
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+  const [releaseNotesCache, setReleaseNotesCache] = useState<ReleaseNotesCache | null>(null);
+  const [isLoadingReleaseNotes, setIsLoadingReleaseNotes] = useState(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
@@ -2144,6 +2154,80 @@ export function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+
+  const downloadUpdateAsset = useCallback((result: AppUpdateCheckResult | null) => {
+    const asset = result?.ok === true ? result.downloadAsset : undefined;
+    if (!asset) {
+      setSettingsStatus('No download is available for this platform yet.');
+      return;
+    }
+    void window.electronAPI.openExternalUrl(asset.downloadUrl);
+  }, []);
+
+  const runUpdateCheck = useCallback(async (source: 'auto' | 'manual') => {
+    if (isCheckingForUpdates) return;
+    setIsCheckingForUpdates(true);
+    if (source === 'manual') {
+      setSettingsStatus('Checking for updates...');
+    }
+    try {
+      const result = await window.electronAPI.checkForUpdates();
+      setUpdateCheck(result);
+      if (!result.ok) {
+        if (source === 'manual') setSettingsStatus(`Could not check for updates: ${result.error}`);
+        return;
+      }
+      if (result.updateAvailable) {
+        setUpdateNotice(result);
+        setSettingsStatus(`Mythra ${result.latestVersion} is available.`);
+        return;
+      }
+      if (source === 'manual') {
+        setSettingsStatus('Mythra is up to date.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (source === 'manual') setSettingsStatus(`Could not check for updates: ${message}`);
+    } finally {
+      setIsCheckingForUpdates(false);
+    }
+  }, [isCheckingForUpdates]);
+
+  const loadReleaseNotes = useCallback(async () => {
+    if (isLoadingReleaseNotes) return;
+    setIsLoadingReleaseNotes(true);
+    try {
+      const cached = await window.electronAPI.getReleaseNotes();
+      if (cached.releases.length > 0) {
+        setReleaseNotesCache(cached);
+      }
+      const refreshed = await window.electronAPI.refreshReleaseNotes();
+      setReleaseNotesCache(refreshed);
+      if (refreshed.releases.length === 0) {
+        setSettingsStatus('No release notes are available yet.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!releaseNotesCache?.releases.length) {
+        setSettingsStatus(`Could not load release notes: ${message}`);
+      } else {
+        setSettingsStatus('Showing saved release notes because Mythra could not refresh them online.');
+      }
+    } finally {
+      setIsLoadingReleaseNotes(false);
+    }
+  }, [isLoadingReleaseNotes, releaseNotesCache?.releases.length]);
+
+  const handleViewReleaseNotes = useCallback(() => {
+    setShowReleaseNotes(true);
+    void loadReleaseNotes();
+  }, [loadReleaseNotes]);
+
+  useEffect(() => {
+    if (!settings || hasAutoCheckedForUpdates) return;
+    setHasAutoCheckedForUpdates(true);
+    void runUpdateCheck('auto');
+  }, [hasAutoCheckedForUpdates, runUpdateCheck, settings]);
 
   const completeOnboarding = useCallback(async () => {
     setShowOnboarding(false);
@@ -4002,6 +4086,13 @@ export function App() {
         ) : null}
       </AnimatePresence>
       <SystemPromptInfoDialog onClose={() => setShowSystemPromptHelp(false)} open={showSystemPromptHelp} />
+      <ReleaseNotesDialog
+        cache={releaseNotesCache}
+        loading={isLoadingReleaseNotes}
+        onClose={() => setShowReleaseNotes(false)}
+        onRefresh={() => void loadReleaseNotes()}
+        open={showReleaseNotes}
+      />
       <WizardExportDialog
         onClose={() => setWizardExportChat(null)}
         onStatusMessage={(msg) => setSettingsStatus(msg)}
@@ -4033,6 +4124,31 @@ export function App() {
         onCreate={createNexus}
         open={showNexusSetup}
         wizards={wizardChatList}
+      />
+      <AppConfirmDialog
+        cancelLabel="Later"
+        confirmLabel={updateNotice?.ok === true && updateNotice.downloadAsset ? 'Download update' : 'OK'}
+        description={
+          updateNotice?.ok === true ? (
+            <>
+              Mythra {updateNotice.latestVersion} is available.{' '}
+              {updateNotice.downloadAsset
+                ? `Download ${updateNotice.downloadAsset.name} to install it.`
+                : 'No matching download asset was found for this platform yet.'}
+            </>
+          ) : (
+            'A newer Mythra release is available.'
+          )
+        }
+        kicker="App update"
+        onCancel={() => setUpdateNotice(null)}
+        onConfirm={() => {
+          const result = updateNotice;
+          setUpdateNotice(null);
+          downloadUpdateAsset(result);
+        }}
+        open={Boolean(updateNotice)}
+        title={updateNotice?.ok === true ? `Update to ${updateNotice.latestVersion}` : 'Update available'}
       />
       <AppConfirmDialog
         cancelLabel="Cancel"
@@ -5428,17 +5544,24 @@ export function App() {
                       />
                     ) : (
                       <SettingsPanel
+                        appVersion={__MYTHRA_VERSION__}
                         focusSearchSettingsKey={searchSettingsFocusKey}
+                        isCheckingForUpdates={isCheckingForUpdates}
+                        isLoadingReleaseNotes={isLoadingReleaseNotes}
                         modelOptions={models}
                         onChange={handleSettingsPanelChange}
+                        onCheckForUpdates={() => void runUpdateCheck('manual')}
+                        onDownloadUpdate={() => downloadUpdateAsset(updateCheck)}
                         onOpenConnectionHelp={() => setShowConnectionHelp(true)}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
                         onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}
                         onPresetPersist={persistAfterPresetAction}
                         onRefreshModels={refreshModels}
+                        onViewReleaseNotes={handleViewReleaseNotes}
                         settings={settings}
                         statusMessage={settingsStatus}
+                        updateCheck={updateCheck}
                       />
                     )}
                   </div>

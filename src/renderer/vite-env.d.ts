@@ -8,6 +8,7 @@ import type {
   ChatStreamDone,
   ChatStreamError,
   ChooseChatThreadBackgroundResult,
+  AppUpdateCheckResult,
   ReadChatThreadBackgroundRequest,
   ReadChatThreadBackgroundResult,
   CommandChunk,
@@ -29,7 +30,8 @@ import type {
   WizardSetupRequest,
   WizardSetupResult,
   WizardProfile,
-  ProviderKind
+  ProviderKind,
+  ReleaseNotesCache
 } from '@shared/types';
 
 declare global {
@@ -40,6 +42,9 @@ declare global {
       platform: string;
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
+      checkForUpdates: () => Promise<AppUpdateCheckResult>;
+      getReleaseNotes: () => Promise<ReleaseNotesCache>;
+      refreshReleaseNotes: () => Promise<ReleaseNotesCache>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       openLastWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
       getLastValidWorkspaceRoot: () => Promise<string | null>;

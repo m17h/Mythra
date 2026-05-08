@@ -1,6 +1,13 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
-import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type SearchProvider } from '@shared/types';
+import {
+  defaultSettings,
+  type AppSettings,
+  type AppUpdateCheckResult,
+  type ModelInfo,
+  type ProviderKind,
+  type SearchProvider
+} from '@shared/types';
 import { themes } from '@renderer/lib/themes';
 import { getThemeName } from '@shared/themes';
 import { CHAT_THREAD_BUILTIN_PRESETS } from '@shared/chat-thread-backgrounds';
@@ -25,6 +32,13 @@ interface SettingsPanelProps {
   onOpenSystemPromptInfo?: () => void;
   /** Opens the large system prompt editor (same dialog animation as Web Search info). */
   onOpenSystemPromptModal?: () => void;
+  appVersion?: string;
+  updateCheck?: AppUpdateCheckResult | null;
+  isCheckingForUpdates?: boolean;
+  isLoadingReleaseNotes?: boolean;
+  onCheckForUpdates?: () => void;
+  onViewReleaseNotes?: () => void;
+  onDownloadUpdate?: () => void;
   focusSearchSettingsKey?: number;
 }
 
@@ -50,6 +64,13 @@ export function SettingsPanel({
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
   onOpenSystemPromptModal,
+  appVersion,
+  updateCheck,
+  isCheckingForUpdates = false,
+  isLoadingReleaseNotes = false,
+  onCheckForUpdates,
+  onViewReleaseNotes,
+  onDownloadUpdate,
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [themeSectionExpanded, setThemeSectionExpanded] = useState(false);
@@ -83,6 +104,8 @@ export function SettingsPanel({
     Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
 
   const activeThemeLabel = getThemeName(settings.ui.themeId);
+  const updateAvailable = updateCheck?.ok === true && updateCheck.updateAvailable;
+  const updateDownloadName = updateCheck?.ok === true ? updateCheck.downloadAsset?.name : undefined;
 
   const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
   const chatBgSelectValue =
@@ -220,6 +243,51 @@ export function SettingsPanel({
           {isLmStudio && modelOptions.length === 0 && (
             <div className="inline-hint">No models loaded yet. Start the LM Studio server and load a model first.</div>
           )}
+        </div>
+
+        <div className="settings-section">
+          <h4 className="settings-section__title">App Updates</h4>
+          <div className="app-update-box">
+            <div className="app-update-box__copy">
+              <strong>
+                {updateAvailable
+                  ? `Mythra ${updateCheck.latestVersion} is available`
+                  : `Current build: ${appVersion || 'Loading version...'}`}
+              </strong>
+              <span>
+                {updateCheck?.ok === false
+                  ? updateCheck.error
+                  : updateAvailable
+                    ? updateDownloadName
+                      ? `Ready to download: ${updateDownloadName}`
+                      : 'A newer release is available, but no matching download asset was found for this platform.'
+                    : 'Check the public releases feed for a newer version.'}
+              </span>
+            </div>
+            <div className="app-update-box__actions">
+              <button
+                className="btn btn--secondary"
+                disabled={!onCheckForUpdates || isCheckingForUpdates}
+                onClick={onCheckForUpdates}
+                type="button"
+              >
+                {isCheckingForUpdates ? 'Checking...' : 'Check for updates'}
+              </button>
+              <button
+                className="btn btn--secondary"
+                disabled={!onViewReleaseNotes || isLoadingReleaseNotes}
+                onClick={onViewReleaseNotes}
+                type="button"
+              >
+                {isLoadingReleaseNotes ? 'Loading notes...' : 'Release notes'}
+              </button>
+              {updateAvailable && updateDownloadName ? (
+                <button className="btn btn--primary" disabled={!onDownloadUpdate} onClick={onDownloadUpdate} type="button">
+                  Download update
+                </button>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <div className="settings-section">

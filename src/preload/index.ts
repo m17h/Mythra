@@ -7,6 +7,7 @@ import type {
   ChatStreamDone,
   ChatStreamError,
   ChooseChatThreadBackgroundResult,
+  AppUpdateCheckResult,
   ReadChatThreadBackgroundRequest,
   ReadChatThreadBackgroundResult,
   CommandChunk,
@@ -28,13 +29,17 @@ import type {
   WizardMythwizPickImportResult,
   WizardSetupRequest,
   WizardSetupResult,
-  ProviderKind
+  ProviderKind,
+  ReleaseNotesCache
 } from '@shared/types';
 
 const electronAPI = {
   platform: process.platform,
   loadSettings: () => ipcRenderer.invoke('settings:load') as Promise<AppSettings>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings) as Promise<AppSettings>,
+  checkForUpdates: () => ipcRenderer.invoke('app:update-check') as Promise<AppUpdateCheckResult>,
+  getReleaseNotes: () => ipcRenderer.invoke('app:release-notes:get') as Promise<ReleaseNotesCache>,
+  refreshReleaseNotes: () => ipcRenderer.invoke('app:release-notes:refresh') as Promise<ReleaseNotesCache>,
   chooseWorkspace: () =>
     ipcRenderer.invoke('workspace:choose') as Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>,
   openLastWorkspace: () =>

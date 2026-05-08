@@ -14,6 +14,7 @@ import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
 import { SettingsStore } from './settings-store';
+import { UpdateService } from './update-service';
 import { WorkspaceService } from './workspace-service';
 import { WorkspaceWatchController } from './workspace-watch';
 import {
@@ -139,6 +140,7 @@ const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
+const updateService = new UpdateService();
 
 let mainWindow: BrowserWindow | null = null;
 let activeWorkspaceRoot: string | undefined;
@@ -660,6 +662,7 @@ app.whenReady().then(async () => {
   }
 
   await createWindow();
+  updateService.refreshReleaseNotesInBackground();
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -691,6 +694,12 @@ ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
   currentSettings = await settingsStore.save(safe);
   return currentSettings;
 });
+
+ipcMain.handle('app:update-check', async () => updateService.checkForUpdates(app.getVersion()));
+
+ipcMain.handle('app:release-notes:get', async () => updateService.getReleaseNotes());
+
+ipcMain.handle('app:release-notes:refresh', async () => updateService.refreshReleaseNotes());
 
 ipcMain.handle('workspace:choose', async () => {
   const root = await workspaceService.chooseWorkspace();
