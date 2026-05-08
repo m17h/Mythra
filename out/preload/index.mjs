@@ -4,6 +4,7 @@ const electronAPI = {
   loadSettings: () => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("app:update-check"),
+  downloadUpdate: () => ipcRenderer.invoke("app:update-download"),
   getReleaseNotes: () => ipcRenderer.invoke("app:release-notes:get"),
   refreshReleaseNotes: () => ipcRenderer.invoke("app:release-notes:refresh"),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
@@ -38,6 +39,11 @@ const electronAPI = {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("tool:approval-request", listener);
     return () => ipcRenderer.removeListener("tool:approval-request", listener);
+  },
+  onAppUpdateEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("app:update-event", listener);
+    return () => ipcRenderer.removeListener("app:update-event", listener);
   },
   openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
   saveGeneratedMedia: (dataUrl, fileName, filePath) => ipcRenderer.invoke("generated-media:save", dataUrl, fileName, filePath),

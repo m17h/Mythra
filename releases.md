@@ -42,12 +42,15 @@ Do not create macOS release assets from an unsigned, unnotarized, or pre-stapled
 For a normal release, prepare:
 
 ```text
+Mythra <version>.dmg
 Mythra-<version>-arm64-notarized.zip
+latest-mac.yml
 Mythra-Setup-<version>.exe
 Mythra-Setup-<version>.exe.blockmap
+latest.yml
 ```
 
-If update metadata is generated for the release, include it in the same version folder.
+The `.dmg` is for direct user downloads. The `.zip` plus `latest-mac.yml` are required for the in-app macOS updater. The `.exe`, `.exe.blockmap`, and `latest.yml` are required for the in-app Windows updater.
 
 ## Update System Notes
 
@@ -58,3 +61,5 @@ https://github.com/m17h/Mythra-Releases
 ```
 
 Release notes shown in the app come from GitHub Release notes in that public repo. Editing release notes on GitHub does not require rebuilding Mythra.
+
+The in-app updater uses Electron updater metadata from the same public release repo. Do not upload only the `.dmg` or only the `.exe`; without the matching `latest-mac.yml` / `latest.yml` metadata and updater asset files, Mythra can detect that a version exists but cannot show download progress, restart, and install it automatically.

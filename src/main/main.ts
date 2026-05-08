@@ -140,9 +140,11 @@ const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
-const updateService = new UpdateService();
-
 let mainWindow: BrowserWindow | null = null;
+const updateService = new UpdateService(() => {
+  const w = mainWindow;
+  return w && !w.isDestroyed() ? w : null;
+});
 let activeWorkspaceRoot: string | undefined;
 const workspaceWatch = new WorkspaceWatchController(() => {
   const w = mainWindow;
@@ -696,6 +698,8 @@ ipcMain.handle('settings:save', async (_event, settings: AppSettings) => {
 });
 
 ipcMain.handle('app:update-check', async () => updateService.checkForUpdates(app.getVersion()));
+
+ipcMain.handle('app:update-download', async () => updateService.downloadAndInstallUpdate());
 
 ipcMain.handle('app:release-notes:get', async () => updateService.getReleaseNotes());
 

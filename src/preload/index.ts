@@ -8,6 +8,7 @@ import type {
   ChatStreamError,
   ChooseChatThreadBackgroundResult,
   AppUpdateCheckResult,
+  AppUpdateEvent,
   ReadChatThreadBackgroundRequest,
   ReadChatThreadBackgroundResult,
   CommandChunk,
@@ -38,6 +39,7 @@ const electronAPI = {
   loadSettings: () => ipcRenderer.invoke('settings:load') as Promise<AppSettings>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings) as Promise<AppSettings>,
   checkForUpdates: () => ipcRenderer.invoke('app:update-check') as Promise<AppUpdateCheckResult>,
+  downloadUpdate: () => ipcRenderer.invoke('app:update-download') as Promise<{ ok: boolean; error?: string }>,
   getReleaseNotes: () => ipcRenderer.invoke('app:release-notes:get') as Promise<ReleaseNotesCache>,
   refreshReleaseNotes: () => ipcRenderer.invoke('app:release-notes:refresh') as Promise<ReleaseNotesCache>,
   chooseWorkspace: () =>
@@ -93,6 +95,11 @@ const electronAPI = {
     const listener = (_event: unknown, payload: ToolApprovalRequest) => callback(payload);
     ipcRenderer.on('tool:approval-request', listener);
     return () => ipcRenderer.removeListener('tool:approval-request', listener);
+  },
+  onAppUpdateEvent: (callback: (payload: AppUpdateEvent) => void) => {
+    const listener = (_event: unknown, payload: AppUpdateEvent) => callback(payload);
+    ipcRenderer.on('app:update-event', listener);
+    return () => ipcRenderer.removeListener('app:update-event', listener);
   },
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
   saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) =>

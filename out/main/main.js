@@ -7,6 +7,7 @@ import { app, dialog, BrowserWindow, ipcMain, nativeImage, shell } from "electro
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
+import electronUpdater from "electron-updater";
 import { promisify } from "node:util";
 import JSZip from "jszip";
 import __cjs_mod__ from "node:module";
@@ -3778,6 +3779,13 @@ class SettingsStore {
 }
 const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100";
 const RELEASE_NOTES_CACHE_FILE = "release-notes.json";
+const { autoUpdater } = electronUpdater;
+const UPDATE_FEED = {
+  provider: "github",
+  owner: "m17h",
+  repo: "Mythra-Releases",
+  private: false
+};
 function releaseNotesCachePath() {
   return join$1(app.getPath("userData"), RELEASE_NOTES_CACHE_FILE);
 }
@@ -3845,6 +3853,24 @@ function chooseDownloadAsset(assets) {
   }
   return platformAssets[0] ?? assets[0];
 }
+function releaseFromUpdateInfo(info) {
+  const notes = typeof info.releaseNotes === "string" ? info.releaseNotes : Array.isArray(info.releaseNotes) ? info.releaseNotes.map((note) => note.note).join("\n\n") : "";
+  return {
+    version: normalizeReleaseTag(info.version),
+    title: info.releaseName?.trim() || info.version,
+    body: sanitizeReleaseBody(notes),
+    publishedAt: info.releaseDate || null,
+    prerelease: false
+  };
+}
+function progressFromElectron(info) {
+  return {
+    percent: Number.isFinite(info.percent) ? info.percent : 0,
+    transferred: info.transferred,
+    total: info.total,
+    bytesPerSecond: info.bytesPerSecond
+  };
+}
 async function fetchGithubReleases() {
   const response = await fetch(RELEASES_API_URL, {
     headers: {
@@ -3867,6 +3893,54 @@ async function fetchGithubReleases() {
   return parsed.map((release) => normalizeRelease(release)).filter((release) => Boolean(release)).filter((release) => !release.draft);
 }
 class UpdateService {
+  constructor(getWindow) {
+    this.getWindow = getWindow;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.setFeedURL(UPDATE_FEED);
+    autoUpdater.on("checking-for-update", () => {
+      this.emit({ status: "checking" });
+    });
+    autoUpdater.on("update-available", (info) => {
+      this.latestUpdate = releaseFromUpdateInfo(info);
+      this.emit({ status: "available", update: this.latestUpdate });
+    });
+    autoUpdater.on("update-not-available", (info) => {
+      this.emit({
+        status: "not-available",
+        currentVersion: app.getVersion(),
+        latestVersion: info.version ? normalizeReleaseTag(info.version) : void 0
+      });
+    });
+    autoUpdater.on("download-progress", (progress) => {
+      this.emit({ status: "downloading", update: this.latestUpdate, progress: progressFromElectron(progress) });
+    });
+    autoUpdater.on("update-downloaded", (event) => {
+      this.downloading = false;
+      this.latestUpdate = releaseFromUpdateInfo(event);
+      this.emit({ status: "downloaded", update: this.latestUpdate });
+      setTimeout(() => {
+        this.emit({ status: "installing", update: this.latestUpdate });
+        autoUpdater.quitAndInstall(false, true);
+      }, 700);
+    });
+    autoUpdater.on("error", (error) => {
+      this.checking = false;
+      this.downloading = false;
+      this.emit({ status: "error", error: error.message || String(error) });
+    });
+  }
+  getWindow;
+  checking = false;
+  downloading = false;
+  latestUpdate;
+  emit(event) {
+    const win = this.getWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("app:update-event", event);
+    }
+  }
   async getReleaseNotes() {
     try {
       const raw = await readFile(releaseNotesCachePath(), "utf8");
@@ -3892,6 +3966,14 @@ class UpdateService {
     });
   }
   async checkForUpdates(currentVersion) {
+    if (this.checking) {
+      return {
+        ok: false,
+        currentVersion,
+        error: "An update check is already running."
+      };
+    }
+    this.checking = true;
     try {
       const releases = await fetchGithubReleases();
       const latest = releases.find((release) => !release.prerelease) ?? releases[0];
@@ -3905,6 +3987,9 @@ class UpdateService {
         };
       }
       const updateAvailable = compareVersions(latest.version, currentVersion) > 0;
+      if (updateAvailable) {
+        this.latestUpdate = latest;
+      }
       return {
         ok: true,
         currentVersion,
@@ -3915,11 +4000,36 @@ class UpdateService {
         downloadAsset: chooseDownloadAsset(latest.assets)
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         ok: false,
         currentVersion,
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       };
+    } finally {
+      this.checking = false;
+    }
+  }
+  async downloadAndInstallUpdate() {
+    if (this.downloading) {
+      return { ok: true };
+    }
+    this.downloading = true;
+    try {
+      autoUpdater.setFeedURL(UPDATE_FEED);
+      const result = await autoUpdater.checkForUpdates();
+      if (!result?.isUpdateAvailable) {
+        this.downloading = false;
+        this.emit({ status: "not-available", currentVersion: app.getVersion(), latestVersion: result?.updateInfo.version });
+        return { ok: false, error: "No update is available to install." };
+      }
+      await autoUpdater.downloadUpdate();
+      return { ok: true };
+    } catch (error) {
+      this.downloading = false;
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit({ status: "error", error: message });
+      return { ok: false, error: message };
     }
   }
 }
@@ -4927,8 +5037,11 @@ const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
-const updateService = new UpdateService();
 let mainWindow = null;
+const updateService = new UpdateService(() => {
+  const w = mainWindow;
+  return w && !w.isDestroyed() ? w : null;
+});
 let activeWorkspaceRoot;
 const workspaceWatch = new WorkspaceWatchController(() => {
   const w = mainWindow;
@@ -5366,6 +5479,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
   return currentSettings;
 });
 ipcMain.handle("app:update-check", async () => updateService.checkForUpdates(app.getVersion()));
+ipcMain.handle("app:update-download", async () => updateService.downloadAndInstallUpdate());
 ipcMain.handle("app:release-notes:get", async () => updateService.getReleaseNotes());
 ipcMain.handle("app:release-notes:refresh", async () => updateService.refreshReleaseNotes());
 ipcMain.handle("workspace:choose", async () => {

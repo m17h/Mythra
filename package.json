@@ -1,6 +1,6 @@
 {
   "name": "mythra",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "Mythra",
   "description": "Mythra — a retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
   "productName": "Mythra",
@@ -23,13 +23,23 @@
       "output": "dist",
       "buildResources": "build"
     },
-    "files": ["out/**/*", "package.json"],
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
     "asar": false,
     "afterPack": "./scripts/after-pack.cjs",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "Images/app_icon.png",
-      "target": [{ "target": "dir", "arch": ["arm64"] }],
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
       "extendInfo": {
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": true
@@ -38,6 +48,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^12.23.24",
     "jszip": "^3.10.1",
     "openai": "^6.3.0",

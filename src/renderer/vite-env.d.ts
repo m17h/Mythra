@@ -9,6 +9,7 @@ import type {
   ChatStreamError,
   ChooseChatThreadBackgroundResult,
   AppUpdateCheckResult,
+  AppUpdateEvent,
   ReadChatThreadBackgroundRequest,
   ReadChatThreadBackgroundResult,
   CommandChunk,
@@ -43,6 +44,7 @@ declare global {
       loadSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<AppSettings>;
       checkForUpdates: () => Promise<AppUpdateCheckResult>;
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
       getReleaseNotes: () => Promise<ReleaseNotesCache>;
       refreshReleaseNotes: () => Promise<ReleaseNotesCache>;
       chooseWorkspace: () => Promise<{ root: string; label: string; tree: WorkspaceNode[] } | null>;
@@ -70,6 +72,7 @@ declare global {
       respondToolApproval: (id: string, approved: boolean) => Promise<void>;
       onWizardPromptApprovalRequest: (callback: (payload: WizardPromptApprovalRequest) => void) => () => void;
       onToolApprovalRequest: (callback: (payload: ToolApprovalRequest) => void) => () => void;
+      onAppUpdateEvent: (callback: (payload: AppUpdateEvent) => void) => () => void;
       openExternalUrl: (url: string) => Promise<void>;
       saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) => Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>;
       openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) => Promise<{ ok: boolean; error?: string }>;

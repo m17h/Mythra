@@ -259,8 +259,8 @@ export function SettingsPanel({
                   ? updateCheck.error
                   : updateAvailable
                     ? updateDownloadName
-                      ? `Ready to download: ${updateDownloadName}`
-                      : 'A newer release is available, but no matching download asset was found for this platform.'
+                      ? `Ready to install: ${updateDownloadName}`
+                      : 'A newer release is available, but the installer is not ready for this platform yet.'
                     : 'Check the public releases feed for a newer version.'}
               </span>
             </div>
@@ -283,7 +283,7 @@ export function SettingsPanel({
               </button>
               {updateAvailable && updateDownloadName ? (
                 <button className="btn btn--primary" disabled={!onDownloadUpdate} onClick={onDownloadUpdate} type="button">
-                  Download update
+                  Install update
                 </button>
               ) : null}
             </div>

@@ -36155,7 +36155,7 @@ function SettingsPanel({
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__copy", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateAvailable ? `Mythra ${updateCheck.latestVersion} is available` : `Current build: ${appVersion || "Loading version..."}` }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateCheck?.ok === false ? updateCheck.error : updateAvailable ? updateDownloadName ? `Ready to download: ${updateDownloadName}` : "A newer release is available, but no matching download asset was found for this platform." : "Check the public releases feed for a newer version." })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateCheck?.ok === false ? updateCheck.error : updateAvailable ? updateDownloadName ? `Ready to install: ${updateDownloadName}` : "A newer release is available, but the installer is not ready for this platform yet." : "Check the public releases feed for a newer version." })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__actions", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -36178,7 +36178,7 @@ function SettingsPanel({
                 children: isLoadingReleaseNotes ? "Loading notes..." : "Release notes"
               }
             ),
-            updateAvailable && updateDownloadName ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !onDownloadUpdate, onClick: onDownloadUpdate, type: "button", children: "Download update" }) : null
+            updateAvailable && updateDownloadName ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !onDownloadUpdate, onClick: onDownloadUpdate, type: "button", children: "Install update" }) : null
           ] })
         ] })
       ] }),
@@ -38936,7 +38936,8 @@ function App() {
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
   const [updateCheck, setUpdateCheck] = reactExports.useState(null);
-  const [updateNotice, setUpdateNotice] = reactExports.useState(null);
+  const [updateToast, setUpdateToast] = reactExports.useState(null);
+  const [updateProgress, setUpdateProgress] = reactExports.useState(null);
   const [isCheckingForUpdates, setIsCheckingForUpdates] = reactExports.useState(false);
   const [hasAutoCheckedForUpdates, setHasAutoCheckedForUpdates] = reactExports.useState(false);
   const [showReleaseNotes, setShowReleaseNotes] = reactExports.useState(false);
@@ -40106,17 +40107,43 @@ function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
-  const downloadUpdateAsset = reactExports.useCallback((result) => {
-    const asset = result?.ok === true ? result.downloadAsset : void 0;
-    if (!asset) {
-      setSettingsStatus("No download is available for this platform yet.");
-      return;
+  const describeUpdateProgress = reactExports.useCallback((progress2) => {
+    const total = progress2.total > 0 ? `${Math.round(progress2.total / 1024 / 1024)} MB` : "update";
+    const speed = progress2.bytesPerSecond > 0 ? `${Math.round(progress2.bytesPerSecond / 1024)} KB/s` : "";
+    return speed ? `${total} at ${speed}` : total;
+  }, []);
+  const startUpdateInstall = reactExports.useCallback(async () => {
+    setUpdateToast({
+      kind: "info",
+      title: "Preparing update",
+      body: "Mythra is starting the installer.",
+      persistent: true
+    });
+    setUpdateProgress({ active: true, label: "Preparing update...", percent: 0 });
+    try {
+      const result = await window.electronAPI.downloadUpdate();
+      if (!result.ok) {
+        setUpdateProgress(null);
+        setUpdateToast({
+          kind: "error",
+          title: "Update failed",
+          body: result.error ?? "Mythra could not start the update."
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateProgress(null);
+      setUpdateToast({
+        kind: "error",
+        title: "Update failed",
+        body: message
+      });
     }
-    void window.electronAPI.openExternalUrl(asset.downloadUrl);
   }, []);
   const runUpdateCheck = reactExports.useCallback(async (source) => {
     if (isCheckingForUpdates) return;
     setIsCheckingForUpdates(true);
+    setUpdateProgress(null);
     if (source === "manual") {
       setSettingsStatus("Checking for updates...");
     }
@@ -40124,24 +40151,111 @@ function App() {
       const result = await window.electronAPI.checkForUpdates();
       setUpdateCheck(result);
       if (!result.ok) {
-        if (source === "manual") setSettingsStatus(`Could not check for updates: ${result.error}`);
+        if (source === "manual") {
+          setSettingsStatus(`Could not check for updates: ${result.error}`);
+          setUpdateToast({
+            kind: "error",
+            title: "Update check failed",
+            body: result.error ?? "Mythra could not check for updates."
+          });
+        }
         return;
       }
       if (result.updateAvailable) {
-        setUpdateNotice(result);
         setSettingsStatus(`Mythra ${result.latestVersion} is available.`);
+        setUpdateToast({
+          kind: "info",
+          title: `Mythra ${result.latestVersion} is available`,
+          body: "Install it now or keep working and update later.",
+          action: "install",
+          persistent: true
+        });
         return;
       }
       if (source === "manual") {
         setSettingsStatus("Mythra is up to date.");
+        setUpdateToast({
+          kind: "success",
+          title: "Mythra is up to date",
+          body: `You are running Mythra ${result.currentVersion}.`
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (source === "manual") setSettingsStatus(`Could not check for updates: ${message}`);
+      if (source === "manual") {
+        setSettingsStatus(`Could not check for updates: ${message}`);
+        setUpdateToast({
+          kind: "error",
+          title: "Update check failed",
+          body: message
+        });
+      }
     } finally {
       setIsCheckingForUpdates(false);
     }
   }, [isCheckingForUpdates]);
+  reactExports.useEffect(() => {
+    return window.electronAPI.onAppUpdateEvent((event) => {
+      if (event.status === "checking") {
+        setIsCheckingForUpdates(true);
+        setUpdateProgress((current) => current?.active ? { ...current, label: "Preparing update..." } : current);
+        return;
+      }
+      if (event.status === "downloading") {
+        setIsCheckingForUpdates(false);
+        const percent2 = Math.max(0, Math.min(100, event.progress.percent || 0));
+        setUpdateProgress({
+          active: true,
+          label: `Downloading Mythra ${event.update?.version ?? "update"}...`,
+          percent: percent2,
+          detail: describeUpdateProgress(event.progress)
+        });
+        setUpdateToast({
+          kind: "info",
+          title: "Downloading update",
+          body: "Mythra will restart when the update is ready.",
+          persistent: true
+        });
+        return;
+      }
+      if (event.status === "downloaded") {
+        setIsCheckingForUpdates(false);
+        setUpdateProgress({
+          active: true,
+          label: `Installing Mythra ${event.update?.version ?? "update"}...`,
+          percent: 100,
+          detail: "Restarting to apply the update."
+        });
+        setUpdateToast({
+          kind: "info",
+          title: "Update ready",
+          body: "Mythra is restarting to install the update.",
+          persistent: true
+        });
+        return;
+      }
+      if (event.status === "installing") {
+        setUpdateProgress({
+          active: true,
+          label: "Restarting Mythra...",
+          percent: 100,
+          detail: "The update will be applied now."
+        });
+        return;
+      }
+      if (event.status === "error") {
+        setIsCheckingForUpdates(false);
+        setUpdateProgress(null);
+        setUpdateToast({
+          kind: "error",
+          title: "Update failed",
+          body: event.error
+        });
+        return;
+      }
+      setIsCheckingForUpdates(false);
+    });
+  }, [describeUpdateProgress]);
   const loadReleaseNotes = reactExports.useCallback(async () => {
     if (isLoadingReleaseNotes) return;
     setIsLoadingReleaseNotes(true);
@@ -41621,6 +41735,34 @@ Project mission: ${full.nexus.mission.trim()}` : "";
   const toolApprovalDiff = toolApprovalRequest && typeof toolApprovalRequest.diffBefore === "string" && typeof toolApprovalRequest.diffAfter === "string" ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter) : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
+    updateProgress?.active ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-progress", role: "status", "aria-live": "polite", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-progress__copy", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateProgress.label }),
+        updateProgress.detail ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateProgress.detail }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-update-progress__track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-update-progress__bar", style: { width: `${updateProgress.percent}%` } }) })
+    ] }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: updateToast ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      motion.div,
+      {
+        animate: { opacity: 1, y: 0 },
+        className: `app-update-toast app-update-toast--${updateToast.kind}`,
+        exit: { opacity: 0, y: -8 },
+        initial: { opacity: 0, y: -8 },
+        role: "status",
+        transition: { duration: 0.16, ease: "easeOut" },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-toast__copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateToast.title }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateToast.body })
+          ] }),
+          updateToast.action || !updateToast.persistent ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-toast__actions", children: [
+            updateToast.action === "install" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: () => void startUpdateInstall(), type: "button", children: "Install" }) : null,
+            updateToast.action === "install" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setUpdateToast(null), type: "button", children: "Not now" }) : !updateToast.persistent ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setUpdateToast(null), type: "button", children: "Dismiss" }) : null
+          ] }) : null
+        ]
+      }
+    ) : null }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingDialog, { onComplete: completeOnboarding, open: showOnboarding }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: mediaPickerKind ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
@@ -41809,29 +41951,6 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         onCreate: createNexus,
         open: showNexusSetup,
         wizards: wizardChatList
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      AppConfirmDialog,
-      {
-        cancelLabel: "Later",
-        confirmLabel: updateNotice?.ok === true && updateNotice.downloadAsset ? "Download update" : "OK",
-        description: updateNotice?.ok === true ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          "Mythra ",
-          updateNotice.latestVersion,
-          " is available.",
-          " ",
-          updateNotice.downloadAsset ? `Download ${updateNotice.downloadAsset.name} to install it.` : "No matching download asset was found for this platform yet."
-        ] }) : "A newer Mythra release is available.",
-        kicker: "App update",
-        onCancel: () => setUpdateNotice(null),
-        onConfirm: () => {
-          const result = updateNotice;
-          setUpdateNotice(null);
-          downloadUpdateAsset(result);
-        },
-        open: Boolean(updateNotice),
-        title: updateNotice?.ok === true ? `Update to ${updateNotice.latestVersion}` : "Update available"
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -42211,9 +42330,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.1"}`, children: [
                   "v",
-                  "0.3.0"
+                  "0.3.1"
                 ] })
               ] })
             ] }),
@@ -43277,14 +43396,14 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.0",
+                        appVersion: "0.3.1",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,
                         modelOptions: models,
                         onChange: handleSettingsPanelChange,
                         onCheckForUpdates: () => void runUpdateCheck("manual"),
-                        onDownloadUpdate: () => downloadUpdateAsset(updateCheck),
+                        onDownloadUpdate: () => void startUpdateInstall(),
                         onOpenConnectionHelp: () => setShowConnectionHelp(true),
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onOpenSystemPromptModal: () => setShowSystemPromptModal(true),

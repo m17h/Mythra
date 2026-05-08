@@ -3802,6 +3802,98 @@ details.chat-activity--collapsible {
   gap: 8px;
 }
 
+.app-update-toast {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 24000;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: min(460px, calc(100vw - 44px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-strong) 94%, black 6%);
+  box-shadow: var(--shadow-lg);
+}
+
+.app-update-toast--success {
+  border-color: color-mix(in srgb, var(--success, #42d392) 52%, var(--line));
+}
+
+.app-update-toast--error {
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 62%, var(--line));
+}
+
+.app-update-toast__copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-update-toast__copy strong {
+  color: var(--text-0);
+  font-size: 0.88rem;
+}
+
+.app-update-toast__copy span {
+  color: var(--text-2);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.app-update-toast__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-update-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 24500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 18px 8px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-strong) 94%, black 6%);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+}
+
+.app-update-progress__copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--text-0);
+  font-size: 0.8rem;
+}
+
+.app-update-progress__copy span {
+  color: var(--text-2);
+}
+
+.app-update-progress__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-update-progress__bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  transition: width 0.18s ease;
+}
+
 .nexus-settings-team-hint {
   margin: -6px 0 12px;
 }
@@ -4334,7 +4426,7 @@ details.chat-activity--collapsible {
   background: rgba(0, 0, 0, 0.06);
 }
 
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled { opacity: 0.4; cursor: default; }
 
 .field {
   display: grid;

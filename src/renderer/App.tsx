@@ -24,6 +24,8 @@ import {
   defaultSettings,
   type AppSettings,
   type AppUpdateCheckResult,
+  type AppUpdateEvent,
+  type AppUpdateProgress,
   type ChatActivity,
   type ChatAttachment,
   type ChatMessage,
@@ -596,6 +598,21 @@ const MEDIA_CHAT_BADGES: Record<MediaGenerationKind, { label: string; shortLabel
   image: { label: 'Image chat', shortLabel: 'Image' }
 };
 
+type UpdateToast = {
+  kind: 'info' | 'success' | 'error';
+  title: string;
+  body: string;
+  action?: 'install';
+  persistent?: boolean;
+};
+
+type UpdateProgressState = {
+  active: boolean;
+  label: string;
+  percent: number;
+  detail?: string;
+};
+
 const MEDIA_GENERATION_HELP: Record<MediaGenerationKind, string> = {
   music: 'Choose an audio or music generation model for this chat.',
   video: 'Choose a video generation model such as Google Veo.',
@@ -801,7 +818,8 @@ export function App() {
   const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
-  const [updateNotice, setUpdateNotice] = useState<AppUpdateCheckResult | null>(null);
+  const [updateToast, setUpdateToast] = useState<UpdateToast | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgressState | null>(null);
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
   const [hasAutoCheckedForUpdates, setHasAutoCheckedForUpdates] = useState(false);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
@@ -2155,18 +2173,45 @@ export function App() {
     }
   };
 
-  const downloadUpdateAsset = useCallback((result: AppUpdateCheckResult | null) => {
-    const asset = result?.ok === true ? result.downloadAsset : undefined;
-    if (!asset) {
-      setSettingsStatus('No download is available for this platform yet.');
-      return;
+  const describeUpdateProgress = useCallback((progress: AppUpdateProgress) => {
+    const total = progress.total > 0 ? `${Math.round(progress.total / 1024 / 1024)} MB` : 'update';
+    const speed = progress.bytesPerSecond > 0 ? `${Math.round(progress.bytesPerSecond / 1024)} KB/s` : '';
+    return speed ? `${total} at ${speed}` : total;
+  }, []);
+
+  const startUpdateInstall = useCallback(async () => {
+    setUpdateToast({
+      kind: 'info',
+      title: 'Preparing update',
+      body: 'Mythra is starting the installer.',
+      persistent: true
+    });
+    setUpdateProgress({ active: true, label: 'Preparing update...', percent: 0 });
+    try {
+      const result = await window.electronAPI.downloadUpdate();
+      if (!result.ok) {
+        setUpdateProgress(null);
+        setUpdateToast({
+          kind: 'error',
+          title: 'Update failed',
+          body: result.error ?? 'Mythra could not start the update.'
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateProgress(null);
+      setUpdateToast({
+        kind: 'error',
+        title: 'Update failed',
+        body: message
+      });
     }
-    void window.electronAPI.openExternalUrl(asset.downloadUrl);
   }, []);
 
   const runUpdateCheck = useCallback(async (source: 'auto' | 'manual') => {
     if (isCheckingForUpdates) return;
     setIsCheckingForUpdates(true);
+    setUpdateProgress(null);
     if (source === 'manual') {
       setSettingsStatus('Checking for updates...');
     }
@@ -2174,24 +2219,112 @@ export function App() {
       const result = await window.electronAPI.checkForUpdates();
       setUpdateCheck(result);
       if (!result.ok) {
-        if (source === 'manual') setSettingsStatus(`Could not check for updates: ${result.error}`);
+        if (source === 'manual') {
+          setSettingsStatus(`Could not check for updates: ${result.error}`);
+          setUpdateToast({
+            kind: 'error',
+            title: 'Update check failed',
+            body: result.error ?? 'Mythra could not check for updates.'
+          });
+        }
         return;
       }
       if (result.updateAvailable) {
-        setUpdateNotice(result);
         setSettingsStatus(`Mythra ${result.latestVersion} is available.`);
+        setUpdateToast({
+          kind: 'info',
+          title: `Mythra ${result.latestVersion} is available`,
+          body: 'Install it now or keep working and update later.',
+          action: 'install',
+          persistent: true
+        });
         return;
       }
       if (source === 'manual') {
         setSettingsStatus('Mythra is up to date.');
+        setUpdateToast({
+          kind: 'success',
+          title: 'Mythra is up to date',
+          body: `You are running Mythra ${result.currentVersion}.`
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (source === 'manual') setSettingsStatus(`Could not check for updates: ${message}`);
+      if (source === 'manual') {
+        setSettingsStatus(`Could not check for updates: ${message}`);
+        setUpdateToast({
+          kind: 'error',
+          title: 'Update check failed',
+          body: message
+        });
+      }
     } finally {
       setIsCheckingForUpdates(false);
     }
   }, [isCheckingForUpdates]);
+
+  useEffect(() => {
+    return window.electronAPI.onAppUpdateEvent((event: AppUpdateEvent) => {
+      if (event.status === 'checking') {
+        setIsCheckingForUpdates(true);
+        setUpdateProgress((current) => (current?.active ? { ...current, label: 'Preparing update...' } : current));
+        return;
+      }
+      if (event.status === 'downloading') {
+        setIsCheckingForUpdates(false);
+        const percent = Math.max(0, Math.min(100, event.progress.percent || 0));
+        setUpdateProgress({
+          active: true,
+          label: `Downloading Mythra ${event.update?.version ?? 'update'}...`,
+          percent,
+          detail: describeUpdateProgress(event.progress)
+        });
+        setUpdateToast({
+          kind: 'info',
+          title: 'Downloading update',
+          body: 'Mythra will restart when the update is ready.',
+          persistent: true
+        });
+        return;
+      }
+      if (event.status === 'downloaded') {
+        setIsCheckingForUpdates(false);
+        setUpdateProgress({
+          active: true,
+          label: `Installing Mythra ${event.update?.version ?? 'update'}...`,
+          percent: 100,
+          detail: 'Restarting to apply the update.'
+        });
+        setUpdateToast({
+          kind: 'info',
+          title: 'Update ready',
+          body: 'Mythra is restarting to install the update.',
+          persistent: true
+        });
+        return;
+      }
+      if (event.status === 'installing') {
+        setUpdateProgress({
+          active: true,
+          label: 'Restarting Mythra...',
+          percent: 100,
+          detail: 'The update will be applied now.'
+        });
+        return;
+      }
+      if (event.status === 'error') {
+        setIsCheckingForUpdates(false);
+        setUpdateProgress(null);
+        setUpdateToast({
+          kind: 'error',
+          title: 'Update failed',
+          body: event.error
+        });
+        return;
+      }
+      setIsCheckingForUpdates(false);
+    });
+  }, [describeUpdateProgress]);
 
   const loadReleaseNotes = useCallback(async () => {
     if (isLoadingReleaseNotes) return;
@@ -3942,6 +4075,52 @@ export function App() {
   return (
     <div className="app-shell">
       <div className="background-grid" />
+      {updateProgress?.active ? (
+        <div className="app-update-progress" role="status" aria-live="polite">
+          <div className="app-update-progress__copy">
+            <strong>{updateProgress.label}</strong>
+            {updateProgress.detail ? <span>{updateProgress.detail}</span> : null}
+          </div>
+          <div className="app-update-progress__track">
+            <div className="app-update-progress__bar" style={{ width: `${updateProgress.percent}%` }} />
+          </div>
+        </div>
+      ) : null}
+      <AnimatePresence>
+        {updateToast ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className={`app-update-toast app-update-toast--${updateToast.kind}`}
+            exit={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -8 }}
+            role="status"
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+          >
+            <div className="app-update-toast__copy">
+              <strong>{updateToast.title}</strong>
+              <span>{updateToast.body}</span>
+            </div>
+            {updateToast.action || !updateToast.persistent ? (
+              <div className="app-update-toast__actions">
+                {updateToast.action === 'install' ? (
+                  <button className="btn btn--primary" onClick={() => void startUpdateInstall()} type="button">
+                    Install
+                  </button>
+                ) : null}
+                {updateToast.action === 'install' ? (
+                  <button className="btn btn--secondary" onClick={() => setUpdateToast(null)} type="button">
+                    Not now
+                  </button>
+                ) : !updateToast.persistent ? (
+                  <button className="btn btn--secondary" onClick={() => setUpdateToast(null)} type="button">
+                    Dismiss
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       <OnboardingDialog onComplete={completeOnboarding} open={showOnboarding} />
       <AnimatePresence>
         {mediaPickerKind ? (
@@ -4124,31 +4303,6 @@ export function App() {
         onCreate={createNexus}
         open={showNexusSetup}
         wizards={wizardChatList}
-      />
-      <AppConfirmDialog
-        cancelLabel="Later"
-        confirmLabel={updateNotice?.ok === true && updateNotice.downloadAsset ? 'Download update' : 'OK'}
-        description={
-          updateNotice?.ok === true ? (
-            <>
-              Mythra {updateNotice.latestVersion} is available.{' '}
-              {updateNotice.downloadAsset
-                ? `Download ${updateNotice.downloadAsset.name} to install it.`
-                : 'No matching download asset was found for this platform yet.'}
-            </>
-          ) : (
-            'A newer Mythra release is available.'
-          )
-        }
-        kicker="App update"
-        onCancel={() => setUpdateNotice(null)}
-        onConfirm={() => {
-          const result = updateNotice;
-          setUpdateNotice(null);
-          downloadUpdateAsset(result);
-        }}
-        open={Boolean(updateNotice)}
-        title={updateNotice?.ok === true ? `Update to ${updateNotice.latestVersion}` : 'Update available'}
       />
       <AppConfirmDialog
         cancelLabel="Cancel"
@@ -5551,7 +5705,7 @@ export function App() {
                         modelOptions={models}
                         onChange={handleSettingsPanelChange}
                         onCheckForUpdates={() => void runUpdateCheck('manual')}
-                        onDownloadUpdate={() => downloadUpdateAsset(updateCheck)}
+                        onDownloadUpdate={() => void startUpdateInstall()}
                         onOpenConnectionHelp={() => setShowConnectionHelp(true)}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}

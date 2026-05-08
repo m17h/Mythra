@@ -429,6 +429,22 @@ export interface ReleaseNotesCache {
   releases: AppReleaseNote[];
 }
 
+export interface AppUpdateProgress {
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+}
+
+export type AppUpdateEvent =
+  | { status: 'checking' }
+  | { status: 'not-available'; currentVersion: string; latestVersion?: string }
+  | { status: 'available'; update: AppReleaseNote }
+  | { status: 'downloading'; update?: AppReleaseNote; progress: AppUpdateProgress }
+  | { status: 'downloaded'; update?: AppReleaseNote }
+  | { status: 'installing'; update?: AppReleaseNote }
+  | { status: 'error'; error: string };
+
 export type AppUpdateCheckResult =
   | {
       ok: true;

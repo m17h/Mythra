@@ -1,10 +1,26 @@
 import { join } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
-import { app } from 'electron';
-import type { AppReleaseNote, AppUpdateCheckResult, ReleaseAssetInfo, ReleaseNotesCache } from '@shared/types';
+import { app, type BrowserWindow } from 'electron';
+import electronUpdater from 'electron-updater';
+import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
+import type {
+  AppReleaseNote,
+  AppUpdateCheckResult,
+  AppUpdateEvent,
+  AppUpdateProgress,
+  ReleaseAssetInfo,
+  ReleaseNotesCache
+} from '@shared/types';
 
 const RELEASES_API_URL = 'https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100';
 const RELEASE_NOTES_CACHE_FILE = 'release-notes.json';
+const { autoUpdater } = electronUpdater;
+const UPDATE_FEED = {
+  provider: 'github' as const,
+  owner: 'm17h',
+  repo: 'Mythra-Releases',
+  private: false
+};
 
 interface GithubAsset {
   name?: unknown;
@@ -118,6 +134,31 @@ function chooseDownloadAsset(assets: ReleaseAssetInfo[]): ReleaseAssetInfo | und
   return platformAssets[0] ?? assets[0];
 }
 
+function releaseFromUpdateInfo(info: UpdateInfo): AppReleaseNote {
+  const notes =
+    typeof info.releaseNotes === 'string'
+      ? info.releaseNotes
+      : Array.isArray(info.releaseNotes)
+        ? info.releaseNotes.map((note) => note.note).join('\n\n')
+        : '';
+  return {
+    version: normalizeReleaseTag(info.version),
+    title: info.releaseName?.trim() || info.version,
+    body: sanitizeReleaseBody(notes),
+    publishedAt: info.releaseDate || null,
+    prerelease: false
+  };
+}
+
+function progressFromElectron(info: ProgressInfo): AppUpdateProgress {
+  return {
+    percent: Number.isFinite(info.percent) ? info.percent : 0,
+    transferred: info.transferred,
+    total: info.total,
+    bytesPerSecond: info.bytesPerSecond
+  };
+}
+
 async function fetchGithubReleases(): Promise<Array<AppReleaseNote & { draft: boolean; assets: ReleaseAssetInfo[] }>> {
   const response = await fetch(RELEASES_API_URL, {
     headers: {
@@ -145,6 +186,56 @@ async function fetchGithubReleases(): Promise<Array<AppReleaseNote & { draft: bo
 }
 
 export class UpdateService {
+  private checking = false;
+  private downloading = false;
+  private latestUpdate: AppReleaseNote | undefined;
+
+  constructor(private readonly getWindow: () => BrowserWindow | null) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.setFeedURL(UPDATE_FEED);
+
+    autoUpdater.on('checking-for-update', () => {
+      this.emit({ status: 'checking' });
+    });
+    autoUpdater.on('update-available', (info) => {
+      this.latestUpdate = releaseFromUpdateInfo(info);
+      this.emit({ status: 'available', update: this.latestUpdate });
+    });
+    autoUpdater.on('update-not-available', (info) => {
+      this.emit({
+        status: 'not-available',
+        currentVersion: app.getVersion(),
+        latestVersion: info.version ? normalizeReleaseTag(info.version) : undefined
+      });
+    });
+    autoUpdater.on('download-progress', (progress) => {
+      this.emit({ status: 'downloading', update: this.latestUpdate, progress: progressFromElectron(progress) });
+    });
+    autoUpdater.on('update-downloaded', (event: UpdateDownloadedEvent) => {
+      this.downloading = false;
+      this.latestUpdate = releaseFromUpdateInfo(event);
+      this.emit({ status: 'downloaded', update: this.latestUpdate });
+      setTimeout(() => {
+        this.emit({ status: 'installing', update: this.latestUpdate });
+        autoUpdater.quitAndInstall(false, true);
+      }, 700);
+    });
+    autoUpdater.on('error', (error) => {
+      this.checking = false;
+      this.downloading = false;
+      this.emit({ status: 'error', error: error.message || String(error) });
+    });
+  }
+
+  private emit(event: AppUpdateEvent) {
+    const win = this.getWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('app:update-event', event);
+    }
+  }
+
   async getReleaseNotes(): Promise<ReleaseNotesCache> {
     try {
       const raw = await readFile(releaseNotesCachePath(), 'utf8');
@@ -173,6 +264,14 @@ export class UpdateService {
   }
 
   async checkForUpdates(currentVersion: string): Promise<AppUpdateCheckResult> {
+    if (this.checking) {
+      return {
+        ok: false,
+        currentVersion,
+        error: 'An update check is already running.'
+      };
+    }
+    this.checking = true;
     try {
       const releases = await fetchGithubReleases();
       const latest = releases.find((release) => !release.prerelease) ?? releases[0];
@@ -186,6 +285,9 @@ export class UpdateService {
         };
       }
       const updateAvailable = compareVersions(latest.version, currentVersion) > 0;
+      if (updateAvailable) {
+        this.latestUpdate = latest;
+      }
       return {
         ok: true,
         currentVersion,
@@ -196,11 +298,37 @@ export class UpdateService {
         downloadAsset: chooseDownloadAsset(latest.assets)
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         ok: false,
         currentVersion,
-        error: error instanceof Error ? error.message : String(error)
+        error: message
       };
+    } finally {
+      this.checking = false;
+    }
+  }
+
+  async downloadAndInstallUpdate(): Promise<{ ok: boolean; error?: string }> {
+    if (this.downloading) {
+      return { ok: true };
+    }
+    this.downloading = true;
+    try {
+      autoUpdater.setFeedURL(UPDATE_FEED);
+      const result = await autoUpdater.checkForUpdates();
+      if (!result?.isUpdateAvailable) {
+        this.downloading = false;
+        this.emit({ status: 'not-available', currentVersion: app.getVersion(), latestVersion: result?.updateInfo.version });
+        return { ok: false, error: 'No update is available to install.' };
+      }
+      await autoUpdater.downloadUpdate();
+      return { ok: true };
+    } catch (error) {
+      this.downloading = false;
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit({ status: 'error', error: message });
+      return { ok: false, error: message };
     }
   }
 }
