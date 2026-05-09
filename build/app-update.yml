@@ -1,0 +1,4 @@
+provider: github
+owner: m17h
+repo: Mythra-Releases
+updaterCacheDirName: mythra-updater

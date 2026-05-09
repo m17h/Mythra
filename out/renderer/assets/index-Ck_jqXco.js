@@ -42429,9 +42429,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.2"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.3"}`, children: [
                   "v",
-                  "0.3.2"
+                  "0.3.3"
                 ] })
               ] })
             ] }),
@@ -43502,7 +43502,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.2",
+                        appVersion: "0.3.3",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

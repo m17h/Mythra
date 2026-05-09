@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { app, type BrowserWindow } from 'electron';
 import electronUpdater from 'electron-updater';
 import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
@@ -14,6 +14,7 @@ import type {
 
 const RELEASES_API_URL = 'https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100';
 const RELEASE_NOTES_CACHE_FILE = 'release-notes.json';
+const APP_UPDATE_CONFIG_FILE = 'app-update.yml';
 const { autoUpdater } = electronUpdater;
 const UPDATE_FEED = {
   provider: 'github' as const,
@@ -41,6 +42,20 @@ interface GithubRelease {
 
 function releaseNotesCachePath() {
   return join(app.getPath('userData'), RELEASE_NOTES_CACHE_FILE);
+}
+
+function appUpdateConfigPath() {
+  return join(app.getPath('userData'), APP_UPDATE_CONFIG_FILE);
+}
+
+function appUpdateConfigYaml() {
+  return [
+    'provider: github',
+    `owner: ${UPDATE_FEED.owner}`,
+    `repo: ${UPDATE_FEED.repo}`,
+    'updaterCacheDirName: mythra-updater',
+    ''
+  ].join('\n');
 }
 
 function normalizeReleaseTag(tag: string): string {
@@ -189,6 +204,7 @@ export class UpdateService {
   private checking = false;
   private downloading = false;
   private latestUpdate: AppReleaseNote | undefined;
+  private updaterConfigReady: Promise<void> | null = null;
 
   constructor(private readonly getWindow: () => BrowserWindow | null) {
     autoUpdater.autoDownload = false;
@@ -219,7 +235,8 @@ export class UpdateService {
       this.emit({ status: 'downloaded', update: this.latestUpdate });
       setTimeout(() => {
         this.emit({ status: 'installing', update: this.latestUpdate });
-        autoUpdater.quitAndInstall(false, true);
+        /** Windows NSIS updates should run in updater/silent mode, not as the interactive installer UI. */
+        autoUpdater.quitAndInstall(process.platform === 'win32', true);
       }, 700);
     });
     autoUpdater.on('error', (error) => {
@@ -227,6 +244,19 @@ export class UpdateService {
       this.downloading = false;
       this.emit({ status: 'error', error: error.message || String(error) });
     });
+  }
+
+  private async ensureUpdaterConfig() {
+    if (!this.updaterConfigReady) {
+      this.updaterConfigReady = (async () => {
+        const configPath = appUpdateConfigPath();
+        await mkdir(app.getPath('userData'), { recursive: true });
+        await writeFile(configPath, appUpdateConfigYaml(), 'utf8');
+        autoUpdater.updateConfigPath = configPath;
+        autoUpdater.setFeedURL(UPDATE_FEED);
+      })();
+    }
+    await this.updaterConfigReady;
   }
 
   private emit(event: AppUpdateEvent) {
@@ -315,7 +345,7 @@ export class UpdateService {
     }
     this.downloading = true;
     try {
-      autoUpdater.setFeedURL(UPDATE_FEED);
+      await this.ensureUpdaterConfig();
       const result = await autoUpdater.checkForUpdates();
       if (!result?.isUpdateAvailable) {
         this.downloading = false;

@@ -1,6 +1,6 @@
 {
   "name": "mythra",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "author": "Mythra",
   "description": "Mythra — a retro-lit AI coding desktop app for local LM Studio models and OpenRouter.",
   "productName": "Mythra",
@@ -27,8 +27,21 @@
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "build/app-update.yml",
+        "to": "app-update.yml"
+      }
+    ],
     "asar": false,
     "afterPack": "./scripts/after-pack.cjs",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "m17h",
+        "repo": "Mythra-Releases"
+      }
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "Images/app_icon.png",

@@ -3780,6 +3780,7 @@ class SettingsStore {
 }
 const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100";
 const RELEASE_NOTES_CACHE_FILE = "release-notes.json";
+const APP_UPDATE_CONFIG_FILE = "app-update.yml";
 const { autoUpdater } = electronUpdater;
 const UPDATE_FEED = {
   provider: "github",
@@ -3789,6 +3790,18 @@ const UPDATE_FEED = {
 };
 function releaseNotesCachePath() {
   return join$1(app.getPath("userData"), RELEASE_NOTES_CACHE_FILE);
+}
+function appUpdateConfigPath() {
+  return join$1(app.getPath("userData"), APP_UPDATE_CONFIG_FILE);
+}
+function appUpdateConfigYaml() {
+  return [
+    "provider: github",
+    `owner: ${UPDATE_FEED.owner}`,
+    `repo: ${UPDATE_FEED.repo}`,
+    "updaterCacheDirName: mythra-updater",
+    ""
+  ].join("\n");
 }
 function normalizeReleaseTag(tag) {
   return tag.trim().replace(/^app-/i, "").replace(/^v/i, "");
@@ -3923,7 +3936,7 @@ class UpdateService {
       this.emit({ status: "downloaded", update: this.latestUpdate });
       setTimeout(() => {
         this.emit({ status: "installing", update: this.latestUpdate });
-        autoUpdater.quitAndInstall(false, true);
+        autoUpdater.quitAndInstall(process.platform === "win32", true);
       }, 700);
     });
     autoUpdater.on("error", (error) => {
@@ -3936,6 +3949,19 @@ class UpdateService {
   checking = false;
   downloading = false;
   latestUpdate;
+  updaterConfigReady = null;
+  async ensureUpdaterConfig() {
+    if (!this.updaterConfigReady) {
+      this.updaterConfigReady = (async () => {
+        const configPath = appUpdateConfigPath();
+        await mkdir(app.getPath("userData"), { recursive: true });
+        await writeFile(configPath, appUpdateConfigYaml(), "utf8");
+        autoUpdater.updateConfigPath = configPath;
+        autoUpdater.setFeedURL(UPDATE_FEED);
+      })();
+    }
+    await this.updaterConfigReady;
+  }
   emit(event) {
     const win = this.getWindow();
     if (win && !win.isDestroyed()) {
@@ -4017,7 +4043,7 @@ class UpdateService {
     }
     this.downloading = true;
     try {
-      autoUpdater.setFeedURL(UPDATE_FEED);
+      await this.ensureUpdaterConfig();
       const result = await autoUpdater.checkForUpdates();
       if (!result?.isUpdateAvailable) {
         this.downloading = false;
