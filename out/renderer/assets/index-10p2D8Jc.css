@@ -3849,15 +3849,22 @@ details.chat-activity--collapsible {
   right: 22px;
   z-index: 24000;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, max-content) auto;
   align-items: center;
   gap: 14px;
-  width: min(460px, calc(100vw - 44px));
+  width: fit-content;
+  max-width: min(360px, calc(100vw - 44px));
   padding: 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--panel-strong) 94%, black 6%);
   box-shadow: var(--shadow-lg);
+}
+
+.app-update-toast:has(.app-update-toast__actions) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: min(460px, calc(100vw - 44px));
+  max-width: calc(100vw - 44px);
 }
 
 .app-update-toast--success {
@@ -3872,6 +3879,11 @@ details.chat-activity--collapsible {
   display: grid;
   gap: 4px;
   min-width: 0;
+  text-align: center;
+}
+
+.app-update-toast:has(.app-update-toast__actions) .app-update-toast__copy {
+  text-align: left;
 }
 
 .app-update-toast__copy strong {

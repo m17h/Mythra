@@ -150,6 +150,51 @@ export function SettingsPanel({
 
       <div className="settings-scroll">
         <div className="settings-section">
+          <h4 className="settings-section__title">App Updates</h4>
+          <div className="app-update-box">
+            <div className="app-update-box__copy">
+              <strong>
+                {updateAvailable
+                  ? `Mythra ${updateCheck.latestVersion} is available`
+                  : `Current build: ${appVersion || 'Loading version...'}`}
+              </strong>
+              <span>
+                {updateCheck?.ok === false
+                  ? updateCheck.error
+                  : updateAvailable
+                    ? updateDownloadName
+                      ? `Ready to install: ${updateDownloadName}`
+                      : 'A newer release is available, but the installer is not ready for this platform yet.'
+                    : 'Check the public releases feed for a newer version.'}
+              </span>
+            </div>
+            <div className="app-update-box__actions">
+              <button
+                className="btn btn--secondary"
+                disabled={!onCheckForUpdates || isCheckingForUpdates}
+                onClick={onCheckForUpdates}
+                type="button"
+              >
+                {isCheckingForUpdates ? 'Checking...' : 'Check for updates'}
+              </button>
+              <button
+                className="btn btn--secondary"
+                disabled={!onViewReleaseNotes || isLoadingReleaseNotes}
+                onClick={onViewReleaseNotes}
+                type="button"
+              >
+                {isLoadingReleaseNotes ? 'Loading notes...' : 'Release notes'}
+              </button>
+              {updateAvailable && updateDownloadName ? (
+                <button className="btn btn--primary" disabled={!onDownloadUpdate} onClick={onDownloadUpdate} type="button">
+                  Install update
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-section">
           <div className="settings-section__title-cluster">
             <h4 className="settings-section__title settings-section__title--cluster">Connection</h4>
             {onOpenConnectionHelp ? (
@@ -243,51 +288,6 @@ export function SettingsPanel({
           {isLmStudio && modelOptions.length === 0 && (
             <div className="inline-hint">No models loaded yet. Start the LM Studio server and load a model first.</div>
           )}
-        </div>
-
-        <div className="settings-section">
-          <h4 className="settings-section__title">App Updates</h4>
-          <div className="app-update-box">
-            <div className="app-update-box__copy">
-              <strong>
-                {updateAvailable
-                  ? `Mythra ${updateCheck.latestVersion} is available`
-                  : `Current build: ${appVersion || 'Loading version...'}`}
-              </strong>
-              <span>
-                {updateCheck?.ok === false
-                  ? updateCheck.error
-                  : updateAvailable
-                    ? updateDownloadName
-                      ? `Ready to install: ${updateDownloadName}`
-                      : 'A newer release is available, but the installer is not ready for this platform yet.'
-                    : 'Check the public releases feed for a newer version.'}
-              </span>
-            </div>
-            <div className="app-update-box__actions">
-              <button
-                className="btn btn--secondary"
-                disabled={!onCheckForUpdates || isCheckingForUpdates}
-                onClick={onCheckForUpdates}
-                type="button"
-              >
-                {isCheckingForUpdates ? 'Checking...' : 'Check for updates'}
-              </button>
-              <button
-                className="btn btn--secondary"
-                disabled={!onViewReleaseNotes || isLoadingReleaseNotes}
-                onClick={onViewReleaseNotes}
-                type="button"
-              >
-                {isLoadingReleaseNotes ? 'Loading notes...' : 'Release notes'}
-              </button>
-              {updateAvailable && updateDownloadName ? (
-                <button className="btn btn--primary" disabled={!onDownloadUpdate} onClick={onDownloadUpdate} type="button">
-                  Install update
-                </button>
-              ) : null}
-            </div>
-          </div>
         </div>
 
         <div className="settings-section">

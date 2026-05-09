@@ -1,19 +1,39 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useMemo, useState } from 'react';
-import type { NexusSetupRequest, SavedChatMeta } from '@shared/types';
+import type { AppSettings, NexusSetupRequest, SavedChatMeta } from '@shared/types';
+import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { AppSelect } from './AppSelect';
 
 interface NexusSetupModalProps {
   open: boolean;
+  settings: AppSettings | null;
   wizards: SavedChatMeta[];
   onClose: () => void;
   onCreate: (request: NexusSetupRequest) => Promise<void>;
+  onPersistNexusProjectsParentFolder: (absoluteFolderPath: string) => Promise<void>;
 }
 
-export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetupModalProps) {
+function previewNexusWorkspacePath(platform: string, parentFolder: string, projectDisplayName: string): string {
+  const segment = sanitizeWizardFolderSegment(projectDisplayName);
+  if (!segment) return '';
+  const base = parentFolder.trim().replace(/[/\\]+$/, '');
+  if (!base) return segment;
+  const sep = platform === 'win32' ? '\\' : '/';
+  return `${base}${sep}${segment}`;
+}
+
+export function NexusSetupModal({
+  open,
+  settings,
+  wizards,
+  onClose,
+  onCreate,
+  onPersistNexusProjectsParentFolder
+}: NexusSetupModalProps) {
   const [name, setName] = useState('');
   const [mission, setMission] = useState('');
-  const [workspaceRoot, setWorkspaceRoot] = useState('');
+  const [nexusProjectsParentFolder, setNexusProjectsParentFolder] = useState('');
+  const [lastValidWorkspaceRoot, setLastValidWorkspaceRoot] = useState<string | null>(null);
   const [leaderWizardId, setLeaderWizardId] = useState('');
   const [memberWizardIds, setMemberWizardIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
@@ -28,12 +48,15 @@ export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetup
     if (!open) return;
     setName('');
     setMission('');
-    setWorkspaceRoot('');
+    setNexusProjectsParentFolder(settings?.ui?.nexusProjectsParentFolder?.trim() ?? '');
     const firstWizardId = wizards[0]?.id ?? '';
     setLeaderWizardId(firstWizardId);
     setMemberWizardIds(firstWizardId ? new Set([firstWizardId]) : new Set());
     setCreating(false);
     setError('');
+    void window.electronAPI.getLastValidWorkspaceRoot().then(setLastValidWorkspaceRoot);
+    // Intentionally read settings once per open; saving the folder preference mid-modal should not reset the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- settings read once when the dialog opens
   }, [open, wizards]);
 
   const selectedMembers = useMemo(() => {
@@ -42,12 +65,24 @@ export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetup
     return ids;
   }, [leaderWizardId, memberWizardIds]);
 
-  const canCreate = Boolean(name.trim() && mission.trim() && workspaceRoot.trim() && leaderWizardId && selectedMembers.size >= 2);
+  const workspacePreview = useMemo(
+    () => previewNexusWorkspacePath(window.electronAPI.platform, nexusProjectsParentFolder, name),
+    [nexusProjectsParentFolder, name]
+  );
 
-  const chooseWorkspace = async () => {
+  const canCreate = Boolean(name.trim() && mission.trim() && nexusProjectsParentFolder.trim() && leaderWizardId && selectedMembers.size >= 2);
+
+  const chooseProjectsFolder = async () => {
     setError('');
-    const picked = await window.electronAPI.chooseNexusWorkspace(workspaceRoot || undefined);
-    if (picked) setWorkspaceRoot(picked);
+    const hint = nexusProjectsParentFolder.trim() || lastValidWorkspaceRoot || undefined;
+    const picked = await window.electronAPI.chooseNexusWorkspace(hint);
+    if (!picked) return;
+    setNexusProjectsParentFolder(picked);
+    try {
+      await onPersistNexusProjectsParentFolder(picked);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save Nexus projects folder preference.');
+    }
   };
 
   const submit = async () => {
@@ -58,7 +93,7 @@ export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetup
       await onCreate({
         name: name.trim(),
         mission: mission.trim(),
-        workspaceRoot: workspaceRoot.trim(),
+        workspaceRoot: nexusProjectsParentFolder.trim(),
         leaderWizardId,
         memberWizardIds: [...selectedMembers]
       });
@@ -133,19 +168,35 @@ export function NexusSetupModal({ open, wizards, onClose, onCreate }: NexusSetup
               </label>
 
               <div className="field wizard-setup__wide">
-                <span>Shared project workspace</span>
+                <span>Nexus projects folder</span>
                 <div className="wizard-setup__workspace-actions">
-                  <button className="btn btn--secondary" onClick={() => void chooseWorkspace()} type="button">
+                  <button className="btn btn--secondary" onClick={() => void chooseProjectsFolder()} type="button">
                     Choose folder…
                   </button>
                 </div>
                 <div className="inline-hint">
-                  {workspaceRoot ? (
+                  Pick one folder that will hold every Nexus project workspace. Each project is created as a subfolder
+                  named from its title (sanitized).
+                </div>
+                {nexusProjectsParentFolder ? (
+                  <div className="inline-hint">
+                    <strong>Parent:</strong> {nexusProjectsParentFolder}
+                  </div>
+                ) : (
+                  <div className="inline-hint">Choose a local folder (cloud-synced paths are blocked).</div>
+                )}
+                {workspacePreview ? (
+                  <div className="inline-hint">
+                    <strong>This Nexus:</strong> <code>{workspacePreview}</code>
+                  </div>
+                ) : null}
+                <div className="inline-hint">
+                  {nexusProjectsParentFolder ? (
                     <>
-                      <strong>Project:</strong> {workspaceRoot}
+                      The team will read and write files in this generated project folder.
                     </>
                   ) : (
-                    'Choose a local folder where the Nexus team can read and write project files.'
+                    'Choose where Nexus project folders should live before creating this project.'
                   )}
                 </div>
               </div>

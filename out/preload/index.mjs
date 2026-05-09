@@ -28,6 +28,7 @@ const electronAPI = {
   chooseWizardImportMythwiz: () => ipcRenderer.invoke("wizard:choose-import-mythwiz"),
   deleteWizardWorkspace: (root) => ipcRenderer.invoke("wizard:delete-workspace", root),
   chooseNexusWorkspace: (preferredDefaultPath) => ipcRenderer.invoke("nexus:choose-workspace", preferredDefaultPath),
+  setupNexus: (request) => ipcRenderer.invoke("nexus:setup", request),
   respondWizardPromptApproval: (id, approved) => ipcRenderer.invoke("wizard:prompt-approval-response", id, approved),
   respondToolApproval: (id, approved) => ipcRenderer.invoke("tool:approval-response", id, approved),
   onWizardPromptApprovalRequest: (callback) => {

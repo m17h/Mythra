@@ -15,6 +15,8 @@ import type {
   CommandResult,
   ModelInfo,
   ModelListOptions,
+  NexusSetupRequest,
+  NexusSetupResult,
   OpenFile,
   SavedChat,
   SavedChatMeta,
@@ -82,6 +84,8 @@ const electronAPI = {
     ipcRenderer.invoke('wizard:delete-workspace', root) as Promise<{ path: string }>,
   chooseNexusWorkspace: (preferredDefaultPath?: string) =>
     ipcRenderer.invoke('nexus:choose-workspace', preferredDefaultPath) as Promise<string | null>,
+  setupNexus: (request: NexusSetupRequest) =>
+    ipcRenderer.invoke('nexus:setup', request) as Promise<NexusSetupResult>,
   respondWizardPromptApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke('wizard:prompt-approval-response', id, approved) as Promise<void>,
   respondToolApproval: (id: string, approved: boolean) =>

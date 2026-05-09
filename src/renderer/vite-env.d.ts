@@ -16,6 +16,8 @@ import type {
   CommandResult,
   ModelInfo,
   ModelListOptions,
+  NexusSetupRequest,
+  NexusSetupResult,
   OpenFile,
   SavedChat,
   SavedChatMeta,
@@ -60,6 +62,7 @@ declare global {
       chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) => Promise<string | null>;
       chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
       chooseNexusWorkspace: (preferredDefaultPath?: string) => Promise<string | null>;
+      setupNexus: (request: NexusSetupRequest) => Promise<NexusSetupResult>;
       setupWizard: (request: WizardSetupRequest) => Promise<WizardSetupResult>;
       listWizardDocuments: (workspaceRoot: string) => Promise<WizardDocument[]>;
       readWizardDocument: (workspaceRoot: string, target: string) => Promise<OpenFile>;

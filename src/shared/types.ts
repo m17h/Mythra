@@ -78,9 +78,18 @@ export interface NexusProject {
 export interface NexusSetupRequest {
   name: string;
   mission: string;
+  /**
+   * Absolute path of the folder that holds Nexus project workspaces. Each Nexus project is created at
+   * `<nexusProjectsParent>/<sanitized project name>/`.
+   */
   workspaceRoot: string;
   leaderWizardId: string;
   memberWizardIds: string[];
+}
+
+export interface NexusSetupResult {
+  workspaceRoot: string;
+  tree: WorkspaceNode[];
 }
 
 export interface WizardSetupRequest {
@@ -226,6 +235,10 @@ export interface UiSettings {
    * Folder where new Wizards get subfolders (`<this>/<sanitized name>/`). Persisted when chosen in New Wizard.
    */
   wizardProjectsParentFolder: string | null;
+  /**
+   * Folder where new Nexus projects get subfolders (`<this>/<sanitized name>/`). Persisted when chosen in New Nexus.
+   */
+  nexusProjectsParentFolder: string | null;
   /** First-run product tour. Once true, Mythra does not show onboarding automatically. */
   onboardingCompleted: boolean;
 /**
@@ -548,6 +561,7 @@ export const defaultSettings: AppSettings = {
     webSearch: false,
     favoriteModels: { lmstudio: [], openrouter: [] },
     wizardProjectsParentFolder: null,
+    nexusProjectsParentFolder: null,
     onboardingCompleted: false,
     chatThreadBackgroundPreset: 'mystic',
     chatThreadBackgroundPath: null

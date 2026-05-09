@@ -36068,6 +36068,38 @@ function SettingsPanel({
     ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "App Updates" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateAvailable ? `Mythra ${updateCheck.latestVersion} is available` : `Current build: ${appVersion || "Loading version..."}` }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateCheck?.ok === false ? updateCheck.error : updateAvailable ? updateDownloadName ? `Ready to install: ${updateDownloadName}` : "A newer release is available, but the installer is not ready for this platform yet." : "Check the public releases feed for a newer version." })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__actions", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "btn btn--secondary",
+                disabled: !onCheckForUpdates || isCheckingForUpdates,
+                onClick: onCheckForUpdates,
+                type: "button",
+                children: isCheckingForUpdates ? "Checking..." : "Check for updates"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "btn btn--secondary",
+                disabled: !onViewReleaseNotes || isLoadingReleaseNotes,
+                onClick: onViewReleaseNotes,
+                type: "button",
+                children: isLoadingReleaseNotes ? "Loading notes..." : "Release notes"
+              }
+            ),
+            updateAvailable && updateDownloadName ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !onDownloadUpdate, onClick: onDownloadUpdate, type: "button", children: "Install update" }) : null
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Connection" }),
           onOpenConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -36149,38 +36181,6 @@ function SettingsPanel({
           isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
         ] }),
         isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "App Updates" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__copy", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateAvailable ? `Mythra ${updateCheck.latestVersion} is available` : `Current build: ${appVersion || "Loading version..."}` }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateCheck?.ok === false ? updateCheck.error : updateAvailable ? updateDownloadName ? `Ready to install: ${updateDownloadName}` : "A newer release is available, but the installer is not ready for this platform yet." : "Check the public releases feed for a newer version." })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__actions", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn btn--secondary",
-                disabled: !onCheckForUpdates || isCheckingForUpdates,
-                onClick: onCheckForUpdates,
-                type: "button",
-                children: isCheckingForUpdates ? "Checking..." : "Check for updates"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn btn--secondary",
-                disabled: !onViewReleaseNotes || isLoadingReleaseNotes,
-                onClick: onViewReleaseNotes,
-                type: "button",
-                children: isLoadingReleaseNotes ? "Loading notes..." : "Release notes"
-              }
-            ),
-            updateAvailable && updateDownloadName ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", disabled: !onDownloadUpdate, onClick: onDownloadUpdate, type: "button", children: "Install update" }) : null
-          ] })
-        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -37541,10 +37541,25 @@ function WizardSetupModal({
     }
   ) : null });
 }
-function NexusSetupModal({ open, wizards, onClose, onCreate }) {
+function previewNexusWorkspacePath(platform, parentFolder, projectDisplayName) {
+  const segment = sanitizeWizardFolderSegment(projectDisplayName);
+  const base = parentFolder.trim().replace(/[/\\]+$/, "");
+  if (!base) return segment;
+  const sep = platform === "win32" ? "\\" : "/";
+  return `${base}${sep}${segment}`;
+}
+function NexusSetupModal({
+  open,
+  settings,
+  wizards,
+  onClose,
+  onCreate,
+  onPersistNexusProjectsParentFolder
+}) {
   const [name2, setName] = reactExports.useState("");
   const [mission, setMission] = reactExports.useState("");
-  const [workspaceRoot, setWorkspaceRoot] = reactExports.useState("");
+  const [nexusProjectsParentFolder, setNexusProjectsParentFolder] = reactExports.useState("");
+  const [lastValidWorkspaceRoot, setLastValidWorkspaceRoot] = reactExports.useState(null);
   const [leaderWizardId, setLeaderWizardId] = reactExports.useState("");
   const [memberWizardIds, setMemberWizardIds] = reactExports.useState(/* @__PURE__ */ new Set());
   const [creating, setCreating] = reactExports.useState(false);
@@ -37557,23 +37572,35 @@ function NexusSetupModal({ open, wizards, onClose, onCreate }) {
     if (!open) return;
     setName("");
     setMission("");
-    setWorkspaceRoot("");
+    setNexusProjectsParentFolder(settings?.ui?.nexusProjectsParentFolder?.trim() ?? "");
     const firstWizardId = wizards[0]?.id ?? "";
     setLeaderWizardId(firstWizardId);
     setMemberWizardIds(firstWizardId ? /* @__PURE__ */ new Set([firstWizardId]) : /* @__PURE__ */ new Set());
     setCreating(false);
     setError("");
+    void window.electronAPI.getLastValidWorkspaceRoot().then(setLastValidWorkspaceRoot);
   }, [open, wizards]);
   const selectedMembers = reactExports.useMemo(() => {
     const ids = new Set(memberWizardIds);
     if (leaderWizardId) ids.add(leaderWizardId);
     return ids;
   }, [leaderWizardId, memberWizardIds]);
-  const canCreate = Boolean(name2.trim() && mission.trim() && workspaceRoot.trim() && leaderWizardId && selectedMembers.size >= 2);
-  const chooseWorkspace = async () => {
+  const workspacePreview = reactExports.useMemo(
+    () => previewNexusWorkspacePath(window.electronAPI.platform, nexusProjectsParentFolder, name2),
+    [nexusProjectsParentFolder, name2]
+  );
+  const canCreate = Boolean(name2.trim() && mission.trim() && nexusProjectsParentFolder.trim() && leaderWizardId && selectedMembers.size >= 2);
+  const chooseProjectsFolder = async () => {
     setError("");
-    const picked = await window.electronAPI.chooseNexusWorkspace(workspaceRoot || void 0);
-    if (picked) setWorkspaceRoot(picked);
+    const hint = nexusProjectsParentFolder.trim() || lastValidWorkspaceRoot || void 0;
+    const picked = await window.electronAPI.chooseNexusWorkspace(hint);
+    if (!picked) return;
+    setNexusProjectsParentFolder(picked);
+    try {
+      await onPersistNexusProjectsParentFolder(picked);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save Nexus projects folder preference.");
+    }
   };
   const submit = async () => {
     if (!canCreate || creating) return;
@@ -37583,7 +37610,7 @@ function NexusSetupModal({ open, wizards, onClose, onCreate }) {
       await onCreate({
         name: name2.trim(),
         mission: mission.trim(),
-        workspaceRoot: workspaceRoot.trim(),
+        workspaceRoot: nexusProjectsParentFolder.trim(),
         leaderWizardId,
         memberWizardIds: [...selectedMembers]
       });
@@ -37652,13 +37679,20 @@ function NexusSetupModal({ open, wizards, onClose, onCreate }) {
                 )
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field wizard-setup__wide", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Shared project workspace" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-setup__workspace-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => void chooseWorkspace(), type: "button", children: "Choose folder…" }) }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Project:" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Nexus projects folder" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-setup__workspace-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => void chooseProjectsFolder(), type: "button", children: "Choose folder…" }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Pick one folder that will hold every Nexus project workspace. Each project is created as a subfolder named from its title (sanitized)." }),
+                nexusProjectsParentFolder ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Parent:" }),
                   " ",
-                  workspaceRoot
-                ] }) : "Choose a local folder where the Nexus team can read and write project files." })
+                  nexusProjectsParentFolder
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Choose a local folder (cloud-synced paths are blocked)." }),
+                workspacePreview ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "This Nexus:" }),
+                  " ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: workspacePreview })
+                ] }) : null,
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: nexusProjectsParentFolder ? /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: "The team will read and write files in this generated project folder." }) : "Choose where Nexus project folders should live before creating this project." })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field wizard-setup__wide", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Team" }),
@@ -39549,13 +39583,18 @@ function App() {
       return;
     }
     let cancelled = false;
-    void window.electronAPI.listModels(settings, overrideModelProvider).then((list2) => {
-      if (!cancelled) setOverrideModels(list2);
+    void window.electronAPI.listModels(
+      settings,
+      overrideModelProvider,
+      activeMediaOverrideKind ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] } : void 0
+    ).then((list2) => {
+      if (cancelled) return;
+      setOverrideModels(activeMediaOverrideKind ? list2.filter((model) => modelMatchesMediaKind(model, activeMediaOverrideKind)) : list2);
     });
     return () => {
       cancelled = true;
     };
-  }, [settings, overrideModelProvider]);
+  }, [activeMediaOverrideKind, settings, overrideModelProvider]);
   reactExports.useEffect(() => {
     if (!settings || !mediaPickerKind) {
       setMediaPickerModels([]);
@@ -40075,6 +40114,26 @@ function App() {
       throw e;
     }
   }, []);
+  const persistNexusProjectsParentFolder = reactExports.useCallback(async (folder) => {
+    flushSettingsAutosaveTimer();
+    const s = settingsRef.current;
+    if (!s) return;
+    const updated = {
+      ...s,
+      ui: { ...s.ui, nexusProjectsParentFolder: folder }
+    };
+    settingsRef.current = updated;
+    setSettings(updated);
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+      settingsRef.current = saved;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : "Save failed";
+      setSettingsStatus(`Could not save Nexus projects folder: ${m}`);
+      throw e;
+    }
+  }, []);
   const jumpToSearchSettings = reactExports.useCallback(() => {
     setShowWebSearchNotice(false);
     setInspectorTab("settings");
@@ -40194,6 +40253,11 @@ function App() {
       setIsCheckingForUpdates(false);
     }
   }, [isCheckingForUpdates]);
+  reactExports.useEffect(() => {
+    if (!updateToast || updateToast.persistent || updateToast.action) return;
+    const timeout = window.setTimeout(() => setUpdateToast(null), 3e3);
+    return () => window.clearTimeout(timeout);
+  }, [updateToast]);
   reactExports.useEffect(() => {
     return window.electronAPI.onAppUpdateEvent((event) => {
       if (event.status === "checking") {
@@ -40358,9 +40422,31 @@ function App() {
     if (!mediaPickerKind || !mediaPickerSelectedModel) return;
     const override = { provider: mediaPickerProvider, model: mediaPickerSelectedModel, mediaKind: mediaPickerKind };
     await startNewChat();
-    setNewChatModelOverride(override);
+    const now2 = Date.now();
+    const id2 = uid();
+    const label = MEDIA_CHAT_BADGES[mediaPickerKind].shortLabel;
+    const title = `${label} chat`;
+    const chat = {
+      id: id2,
+      kind: "normal",
+      title,
+      titleOverride: null,
+      messages: [],
+      timeline: [],
+      createdAt: now2,
+      updatedAt: now2,
+      pinned: false,
+      modelOverride: override
+    };
+    await window.electronAPI.saveChat(chat);
+    setActiveChatId(id2);
+    activeChatIdRef.current = id2;
+    setChatSessionId(id2);
+    chatSessionIdRef.current = id2;
+    await refreshChatList();
     setOverrideModelProvider(mediaPickerProvider);
     setChatModelExpanded(true);
+    setSidebarTab("chats");
     closeMediaModelPicker();
   };
   const handleChatsTabClick = () => {
@@ -40861,16 +40947,22 @@ Project mission: ${full.nexus.mission.trim()}` : "";
   };
   const saveChatModelOverride = reactExports.useCallback(
     async (override) => {
+      const mediaKind = mediaKindForOverride(activeChatId ? activeChatMeta?.modelOverride : newChatModelOverrideRef.current);
+      if (mediaKind && !override) {
+        setSettingsStatus(`${MEDIA_CHAT_BADGES[mediaKind].shortLabel} chats must keep a matching media model.`);
+        return;
+      }
+      const nextOverride = override && mediaKind ? { ...override, mediaKind } : override;
       if (!activeChatId) {
-        setNewChatModelOverride(override);
+        setNewChatModelOverride(nextOverride);
         return;
       }
       const full = await window.electronAPI.loadChat(activeChatId);
       if (!full) return;
-      await window.electronAPI.saveChat({ ...full, modelOverride: override, updatedAt: full.updatedAt });
+      await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
       await refreshChatList();
     },
-    [activeChatId, refreshChatList]
+    [activeChatId, activeChatMeta?.modelOverride, refreshChatList]
   );
   const listModelsForWizardSetup = reactExports.useCallback(
     async (provider) => {
@@ -41039,10 +41131,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       if (validMembers.length < 2) throw new Error("Choose at least two Wizards for a Nexus.");
       const now2 = Date.now();
       const id2 = uid();
+      const setup = await window.electronAPI.setupNexus(request);
       const nexus = {
         name: request.name,
         mission: request.mission,
-        workspaceRoot: request.workspaceRoot,
+        workspaceRoot: setup.workspaceRoot,
         leaderWizardId: request.leaderWizardId,
         members: validMembers.map((wizardId) => ({
           wizardId,
@@ -41062,7 +41155,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         parallelWizardResponses: false,
         maxSequentialWizardTurns: 24
       };
-      await activateWorkspace(request.workspaceRoot);
+      setWorkspaceRoot(setup.workspaceRoot);
+      setWorkspaceTree(setup.tree);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(void 0);
       const chat = {
         id: id2,
         kind: "nexus",
@@ -41083,7 +41180,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         title: nexus.name,
         titleOverride: nexus.name
       });
-      void refreshWorkspaceChanges(request.workspaceRoot);
+      void refreshWorkspaceChanges(setup.workspaceRoot);
     },
     [refreshChatList, refreshWorkspaceChanges, wizardChatList]
   );
@@ -41756,9 +41853,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateToast.title }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: updateToast.body })
           ] }),
-          updateToast.action || !updateToast.persistent ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-toast__actions", children: [
+          updateToast.action ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-toast__actions", children: [
             updateToast.action === "install" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: () => void startUpdateInstall(), type: "button", children: "Install" }) : null,
-            updateToast.action === "install" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setUpdateToast(null), type: "button", children: "Not now" }) : !updateToast.persistent ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setUpdateToast(null), type: "button", children: "Dismiss" }) : null
+            updateToast.action === "install" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => setUpdateToast(null), type: "button", children: "Not now" }) : null
           ] }) : null
         ]
       }
@@ -41949,7 +42046,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       {
         onClose: () => setShowNexusSetup(false),
         onCreate: createNexus,
+        onPersistNexusProjectsParentFolder: persistNexusProjectsParentFolder,
         open: showNexusSetup,
+        settings,
         wizards: wizardChatList
       }
     ),
@@ -42330,9 +42429,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.1"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.2"}`, children: [
                   "v",
-                  "0.3.1"
+                  "0.3.2"
                 ] })
               ] })
             ] }),
@@ -42591,8 +42690,10 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                   "input",
                                   {
                                     checked: Boolean(effectiveModelOverride),
+                                    disabled: Boolean(activeMediaOverrideKind),
                                     onChange: async (e) => {
                                       if (!settings) return;
+                                      if (activeMediaOverrideKind) return;
                                       if (e.target.checked) {
                                         const list2 = await window.electronAPI.listModels(settings, overrideModelProvider);
                                         const model = pickDefaultModel(list2, list2[0]?.id);
@@ -42607,8 +42708,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                   }
                                 ),
                                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__model-toggle-text", children: [
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Use a specific model" }),
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "only for this chat" })
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: activeMediaOverrideKind ? `${MEDIA_CHAT_BADGES[activeMediaOverrideKind].shortLabel} model` : "Use a specific model" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: activeMediaOverrideKind ? "locked to matching media models" : "only for this chat" })
                                 ] }),
                                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
                               ]
@@ -42634,8 +42735,13 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                       onChange: async (p) => {
                                         setOverrideModelProvider(p);
                                         if (!settings) return;
-                                        const list2 = await window.electronAPI.listModels(settings, p);
-                                        const model = pickDefaultModel(list2, void 0);
+                                        const list2 = await window.electronAPI.listModels(
+                                          settings,
+                                          p,
+                                          activeMediaOverrideKind ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] } : void 0
+                                        );
+                                        const modelList = activeMediaOverrideKind ? list2.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind)) : list2;
+                                        const model = pickDefaultModel(modelList, void 0);
                                         if (model) {
                                           await saveChatModelOverride({ provider: p, model });
                                         }
@@ -43396,7 +43502,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.1",
+                        appVersion: "0.3.2",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

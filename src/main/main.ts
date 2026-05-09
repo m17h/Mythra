@@ -45,6 +45,7 @@ import {
   type WizardProfile,
   type WizardPromptApprovalRequest,
   type ReadChatThreadBackgroundRequest,
+  type NexusSetupRequest,
   type WizardSetupRequest
 } from '@shared/types';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
@@ -819,6 +820,14 @@ ipcMain.handle('nexus:choose-workspace', async (_event, preferredDefaultPath?: s
   const root = await workspaceService.chooseNexusWorkspace(preferredDefaultPath);
   if (root) await trustWorkspaceRoot(root);
   return root;
+});
+
+ipcMain.handle('nexus:setup', async (_event, request: NexusSetupRequest) => {
+  const result = await workspaceService.setupNexusWorkspace(request);
+  await trustWorkspaceRoot(result.workspaceRoot);
+  activeWorkspaceRoot = result.workspaceRoot;
+  workspaceWatch.setRoot(result.workspaceRoot);
+  return result;
 });
 
 ipcMain.handle('wizard:setup', async (_event, request: WizardSetupRequest) => {

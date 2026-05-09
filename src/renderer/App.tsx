@@ -1566,13 +1566,20 @@ export function App() {
       return;
     }
     let cancelled = false;
-    void window.electronAPI.listModels(settings, overrideModelProvider).then((list) => {
-      if (!cancelled) setOverrideModels(list);
-    });
+    void window.electronAPI
+      .listModels(
+        settings,
+        overrideModelProvider,
+        activeMediaOverrideKind ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] } : undefined
+      )
+      .then((list) => {
+        if (cancelled) return;
+        setOverrideModels(activeMediaOverrideKind ? list.filter((model) => modelMatchesMediaKind(model, activeMediaOverrideKind)) : list);
+      });
     return () => {
       cancelled = true;
     };
-  }, [settings, overrideModelProvider]);
+  }, [activeMediaOverrideKind, settings, overrideModelProvider]);
 
   useEffect(() => {
     if (!settings || !mediaPickerKind) {
@@ -2138,6 +2145,27 @@ export function App() {
     }
   }, []);
 
+  const persistNexusProjectsParentFolder = useCallback(async (folder: string) => {
+    flushSettingsAutosaveTimer();
+    const s = settingsRef.current;
+    if (!s) return;
+    const updated: AppSettings = {
+      ...s,
+      ui: { ...s.ui, nexusProjectsParentFolder: folder }
+    };
+    settingsRef.current = updated;
+    setSettings(updated);
+    try {
+      const saved = await window.electronAPI.saveSettings(updated);
+      setSettings(saved);
+      settingsRef.current = saved;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'Save failed';
+      setSettingsStatus(`Could not save Nexus projects folder: ${m}`);
+      throw e;
+    }
+  }, []);
+
   const jumpToSearchSettings = useCallback(() => {
     setShowWebSearchNotice(false);
     setInspectorTab('settings');
@@ -2262,6 +2290,12 @@ export function App() {
       setIsCheckingForUpdates(false);
     }
   }, [isCheckingForUpdates]);
+
+  useEffect(() => {
+    if (!updateToast || updateToast.persistent || updateToast.action) return;
+    const timeout = window.setTimeout(() => setUpdateToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [updateToast]);
 
   useEffect(() => {
     return window.electronAPI.onAppUpdateEvent((event: AppUpdateEvent) => {
@@ -2438,9 +2472,31 @@ export function App() {
     if (!mediaPickerKind || !mediaPickerSelectedModel) return;
     const override: ChatModelOverride = { provider: mediaPickerProvider, model: mediaPickerSelectedModel, mediaKind: mediaPickerKind };
     await startNewChat();
-    setNewChatModelOverride(override);
+    const now = Date.now();
+    const id = uid();
+    const label = MEDIA_CHAT_BADGES[mediaPickerKind].shortLabel;
+    const title = `${label} chat`;
+    const chat: SavedChat = {
+      id,
+      kind: 'normal',
+      title,
+      titleOverride: null,
+      messages: [],
+      timeline: [],
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      modelOverride: override
+    };
+    await window.electronAPI.saveChat(chat);
+    setActiveChatId(id);
+    activeChatIdRef.current = id;
+    setChatSessionId(id);
+    chatSessionIdRef.current = id;
+    await refreshChatList();
     setOverrideModelProvider(mediaPickerProvider);
     setChatModelExpanded(true);
+    setSidebarTab('chats');
     closeMediaModelPicker();
   };
 
@@ -3032,16 +3088,22 @@ export function App() {
 
   const saveChatModelOverride = useCallback(
     async (override: ChatModelOverride | null) => {
+      const mediaKind = mediaKindForOverride(activeChatId ? activeChatMeta?.modelOverride : newChatModelOverrideRef.current);
+      if (mediaKind && !override) {
+        setSettingsStatus(`${MEDIA_CHAT_BADGES[mediaKind].shortLabel} chats must keep a matching media model.`);
+        return;
+      }
+      const nextOverride = override && mediaKind ? { ...override, mediaKind } : override;
       if (!activeChatId) {
-        setNewChatModelOverride(override);
+        setNewChatModelOverride(nextOverride);
         return;
       }
       const full = await window.electronAPI.loadChat(activeChatId);
       if (!full) return;
-      await window.electronAPI.saveChat({ ...full, modelOverride: override, updatedAt: full.updatedAt });
+      await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
       await refreshChatList();
     },
-    [activeChatId, refreshChatList]
+    [activeChatId, activeChatMeta?.modelOverride, refreshChatList]
   );
 
   const listModelsForWizardSetup = useCallback(
@@ -3228,10 +3290,11 @@ export function App() {
       if (validMembers.length < 2) throw new Error('Choose at least two Wizards for a Nexus.');
       const now = Date.now();
       const id = uid();
+      const setup = await window.electronAPI.setupNexus(request);
       const nexus: NexusProject = {
         name: request.name,
         mission: request.mission,
-        workspaceRoot: request.workspaceRoot,
+        workspaceRoot: setup.workspaceRoot,
         leaderWizardId: request.leaderWizardId,
         members: validMembers.map((wizardId) => ({
           wizardId,
@@ -3251,7 +3314,11 @@ export function App() {
         parallelWizardResponses: false,
         maxSequentialWizardTurns: 24
       };
-      await activateWorkspace(request.workspaceRoot);
+      setWorkspaceRoot(setup.workspaceRoot);
+      setWorkspaceTree(setup.tree);
+      setWorkspaceChanges(null);
+      setBuffers({});
+      setActiveFilePath(undefined);
       const chat: SavedChat = {
         id,
         kind: 'nexus',
@@ -3277,7 +3344,7 @@ export function App() {
         pinned: false,
         nexus
       });
-      void refreshWorkspaceChanges(request.workspaceRoot);
+      void refreshWorkspaceChanges(setup.workspaceRoot);
     },
     [refreshChatList, refreshWorkspaceChanges, wizardChatList]
   );
@@ -4100,7 +4167,7 @@ export function App() {
               <strong>{updateToast.title}</strong>
               <span>{updateToast.body}</span>
             </div>
-            {updateToast.action || !updateToast.persistent ? (
+            {updateToast.action ? (
               <div className="app-update-toast__actions">
                 {updateToast.action === 'install' ? (
                   <button className="btn btn--primary" onClick={() => void startUpdateInstall()} type="button">
@@ -4110,10 +4177,6 @@ export function App() {
                 {updateToast.action === 'install' ? (
                   <button className="btn btn--secondary" onClick={() => setUpdateToast(null)} type="button">
                     Not now
-                  </button>
-                ) : !updateToast.persistent ? (
-                  <button className="btn btn--secondary" onClick={() => setUpdateToast(null)} type="button">
-                    Dismiss
                   </button>
                 ) : null}
               </div>
@@ -4301,7 +4364,9 @@ export function App() {
       <NexusSetupModal
         onClose={() => setShowNexusSetup(false)}
         onCreate={createNexus}
+        onPersistNexusProjectsParentFolder={persistNexusProjectsParentFolder}
         open={showNexusSetup}
+        settings={settings}
         wizards={wizardChatList}
       />
       <AppConfirmDialog
@@ -4911,8 +4976,10 @@ export function App() {
                                 >
                                   <input
                                     checked={Boolean(effectiveModelOverride)}
+                                    disabled={Boolean(activeMediaOverrideKind)}
                                     onChange={async (e) => {
                                       if (!settings) return;
+                                      if (activeMediaOverrideKind) return;
                                       if (e.target.checked) {
                                         const list = await window.electronAPI.listModels(settings, overrideModelProvider);
                                         const model = pickDefaultModel(list, list[0]?.id);
@@ -4926,8 +4993,8 @@ export function App() {
                                     type="checkbox"
                                   />
                                   <span className="chat-thread-options__model-toggle-text">
-                                    <span>Use a specific model</span>
-                                    <span>only for this chat</span>
+                                    <span>{activeMediaOverrideKind ? `${MEDIA_CHAT_BADGES[activeMediaOverrideKind].shortLabel} model` : 'Use a specific model'}</span>
+                                    <span>{activeMediaOverrideKind ? 'locked to matching media models' : 'only for this chat'}</span>
                                   </span>
                                   <span className="chat-panel__web-toggle-track">
                                     <span className="chat-panel__web-toggle-knob" />
@@ -4954,8 +5021,17 @@ export function App() {
                                             onChange={async (p) => {
                                               setOverrideModelProvider(p);
                                               if (!settings) return;
-                                              const list = await window.electronAPI.listModels(settings, p);
-                                              const model = pickDefaultModel(list, undefined);
+                                              const list = await window.electronAPI.listModels(
+                                                settings,
+                                                p,
+                                                activeMediaOverrideKind
+                                                  ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] }
+                                                  : undefined
+                                              );
+                                              const modelList = activeMediaOverrideKind
+                                                ? list.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind))
+                                                : list;
+                                              const model = pickDefaultModel(modelList, undefined);
                                               if (model) {
                                                 await saveChatModelOverride({ provider: p, model });
                                               }

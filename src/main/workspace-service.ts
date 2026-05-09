@@ -10,6 +10,8 @@ import type {
   WizardDocument,
   WizardMythwizExportRequest,
   WizardMythwizImportedPayload,
+  NexusSetupRequest,
+  NexusSetupResult,
   WizardProfile,
   WizardSetupRequest,
   WizardSetupResult,
@@ -423,7 +425,8 @@ export class WorkspaceService {
     const result = await dialog.showOpenDialog({
       buttonLabel: 'Use this folder',
       defaultPath,
-      message: 'Choose a local project folder that the Nexus team will share.',
+      message:
+        'Choose a folder for Nexus project workspaces. Each new Nexus project will get its own subfolder inside here (named from the project title).',
       properties: ['openDirectory', 'createDirectory']
     });
 
@@ -432,6 +435,41 @@ export class WorkspaceService {
     }
 
     return this.assertUsableLocalWorkspace(result.filePaths[0]);
+  }
+
+  async setupNexusWorkspace(request: NexusSetupRequest): Promise<NexusSetupResult> {
+    const name = request.name.trim();
+    if (!name) {
+      throw new Error('Nexus project name is required.');
+    }
+
+    const parentDir = resolve(request.workspaceRoot.trim());
+    assertLocalWorkspace(parentDir);
+    const parentStat = await stat(parentDir).catch(() => null);
+    if (!parentStat?.isDirectory()) {
+      throw new Error('Nexus projects folder must be an existing local folder.');
+    }
+
+    const childSegment = sanitizeWizardFolderSegment(name);
+    const root = resolve(join(parentDir, childSegment));
+
+    try {
+      await stat(root);
+      throw new Error(
+        `A Nexus project folder "${childSegment}" already exists in that location. Choose a different project name, or delete or rename that folder.`
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('A Nexus project folder')) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+
+    await mkdir(root, { recursive: true });
+    return {
+      workspaceRoot: root,
+      tree: await this.getTree(root)
+    };
   }
 
   getRecommendedWizardWorkspace(name: string): string {
