@@ -20479,7 +20479,7 @@ function formatOverrideLabel(override, pathLabel2) {
   return `${prov}: ${pathLabel2(override.model)}`;
 }
 var reactDomExports = requireReactDom();
-const dialogTransition$4 = { duration: 0.18, ease: "easeOut" };
+const dialogTransition$5 = { duration: 0.18, ease: "easeOut" };
 function AppConfirmDialog({
   open,
   kicker,
@@ -20524,7 +20524,7 @@ function AppConfirmDialog({
             exit: { opacity: 0, scale: 0.98, y: 8 },
             initial: { opacity: 0, scale: 0.98, y: 8 },
             role: "dialog",
-            transition: dialogTransition$4,
+            transition: dialogTransition$5,
             children: [
               kicker ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: kicker }) : null,
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: titleId, children: title }),
@@ -20548,6 +20548,45 @@ function AppConfirmDialog({
     ) : null }),
     document.body
   );
+}
+const dialogTransition$4 = { duration: 0.18, ease: "easeOut" };
+function AppUpdatesInfoDialog({ open, onClose }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      onClick: onClose,
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          animate: { opacity: 1, scale: 1, y: 0 },
+          "aria-describedby": "app-updates-info-desc",
+          "aria-labelledby": "app-updates-info-title",
+          "aria-modal": "true",
+          className: "app-dialog",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          onClick: (e) => e.stopPropagation(),
+          role: "dialog",
+          transition: dialogTransition$4,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "App updates" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "app-updates-info-title", children: "Need help or want something changed?" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { id: "app-updates-info-desc", children: [
+              "Email ",
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "support@morgangermani.com" }),
+              " if you have a feature request, found a bug, or need help with Mythra."
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: onClose, type: "button", children: "Got it" }) })
+          ]
+        }
+      )
+    }
+  ) : null });
 }
 function AppSelect({
   options,
@@ -34447,26 +34486,37 @@ function ChatPanel({
       ) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose", children: [
         nexusRelayProgress ? /* @__PURE__ */ jsxRuntimeExports.jsx(NexusRelayProgressBar, { ...nexusRelayProgress }) : null,
-        workspaceGateNotice ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__notice", role: "alert", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-compose__notice-text", children: workspaceGateNotice }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              type: "button",
-              className: "chat-compose__notice-dismiss",
-              "aria-label": "Dismiss",
-              title: "Dismiss",
-              onClick: dismissWorkspaceGateNotice,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 2l8 8M10 2l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) })
-            }
-          )
-        ] }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: workspaceGateNotice ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            animate: { opacity: 1, scale: 1, y: 0 },
+            className: "chat-compose__notice",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            role: "alert",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-compose__notice-text", children: workspaceGateNotice }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  className: "chat-compose__notice-dismiss",
+                  "aria-label": "Dismiss",
+                  title: "Dismiss",
+                  onClick: dismissWorkspaceGateNotice,
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 2l8 8M10 2l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) })
+                }
+              )
+            ]
+          }
+        ) : null }),
         attachments.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "composer-attachments", children: attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "composer-attachment", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att, compact: true }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: att.name }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => onRemoveAttachment(att.id), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 1l8 8M9 1l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) }) })
         ] }, att.id)) }) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__bar", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-compose__bar ${isStreaming ? "is-working" : ""}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "chat-compose__attach", title: "Attach images", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 10l-3.5-3.5a2 2 0 00-2.83 0L2 12M14 10v4H2v-2M14 10V5a2 2 0 00-2-2H4a2 2 0 00-2 2v7", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" }),
@@ -35997,6 +36047,7 @@ function SettingsPanel({
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
+  onOpenAppUpdatesInfo,
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
   onOpenSystemPromptModal,
@@ -36068,7 +36119,23 @@ function SettingsPanel({
     ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "App Updates" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "App Updates" }),
+          onOpenAppUpdatesInfo ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              "aria-label": "About app updates and support",
+              className: "settings-info-button",
+              onClick: onOpenAppUpdatesInfo,
+              title: "Support and feedback",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 16v-4.5M12 8h.01", stroke: "currentColor", strokeLinecap: "round", strokeWidth: "2" })
+              ] })
+            }
+          ) : null
+        ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-box__copy", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: updateAvailable ? `Mythra ${updateCheck.latestVersion} is available` : `Current build: ${appVersion || "Loading version..."}` }),
@@ -38969,6 +39036,7 @@ function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
+  const [showAppUpdatesInfo, setShowAppUpdatesInfo] = reactExports.useState(false);
   const [updateCheck, setUpdateCheck] = reactExports.useState(null);
   const [updateToast, setUpdateToast] = reactExports.useState(null);
   const [updateProgress, setUpdateProgress] = reactExports.useState(null);
@@ -41995,6 +42063,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         )
       }
     ) : null }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AppUpdatesInfoDialog, { onClose: () => setShowAppUpdatesInfo(false), open: showAppUpdatesInfo }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(SystemPromptInfoDialog, { onClose: () => setShowSystemPromptHelp(false), open: showSystemPromptHelp }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       ReleaseNotesDialog,
@@ -42429,9 +42498,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.3"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.4"}`, children: [
                   "v",
-                  "0.3.3"
+                  "0.3.4"
                 ] })
               ] })
             ] }),
@@ -43502,7 +43571,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.3",
+                        appVersion: "0.3.4",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,
@@ -43510,6 +43579,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                         onChange: handleSettingsPanelChange,
                         onCheckForUpdates: () => void runUpdateCheck("manual"),
                         onDownloadUpdate: () => void startUpdateInstall(),
+                        onOpenAppUpdatesInfo: () => setShowAppUpdatesInfo(true),
                         onOpenConnectionHelp: () => setShowConnectionHelp(true),
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onOpenSystemPromptModal: () => setShowSystemPromptModal(true),

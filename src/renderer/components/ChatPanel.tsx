@@ -1204,22 +1204,31 @@ export function ChatPanel({
 
       <div className="chat-compose">
         {nexusRelayProgress ? <NexusRelayProgressBar {...nexusRelayProgress} /> : null}
-        {workspaceGateNotice ? (
-          <div className="chat-compose__notice" role="alert">
-            <p className="chat-compose__notice-text">{workspaceGateNotice}</p>
-            <button
-              type="button"
-              className="chat-compose__notice-dismiss"
-              aria-label="Dismiss"
-              title="Dismiss"
-              onClick={dismissWorkspaceGateNotice}
+        <AnimatePresence>
+          {workspaceGateNotice ? (
+            <motion.div
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="chat-compose__notice"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              role="alert"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
             >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        ) : null}
+              <p className="chat-compose__notice-text">{workspaceGateNotice}</p>
+              <button
+                type="button"
+                className="chat-compose__notice-dismiss"
+                aria-label="Dismiss"
+                title="Dismiss"
+                onClick={dismissWorkspaceGateNotice}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                  <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
         {attachments.length ? (
           <div className="composer-attachments">
             {attachments.map((att) => (
@@ -1233,7 +1242,7 @@ export function ChatPanel({
             ))}
           </div>
         ) : null}
-        <div className="chat-compose__bar">
+        <div className={`chat-compose__bar ${isStreaming ? 'is-working' : ''}`}>
           <label className="chat-compose__attach" title="Attach images">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 10l-3.5-3.5a2 2 0 00-2.83 0L2 12M14 10v4H2v-2M14 10V5a2 2 0 00-2-2H4a2 2 0 00-2 2v7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/><circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.3"/></svg>
             <input

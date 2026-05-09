@@ -148,6 +148,10 @@ const MEDIA_GENERATION_SYSTEM_PROMPTS: Record<'music' | 'video' | 'image', strin
     'You are an image generation model. Generate the requested image as actual image output. Do not answer with a written prompt rewrite unless the API requires a brief caption alongside the image.'
 };
 
+function mythraRuntimeVersionLine() {
+  return `Mythra app version: ${app.getVersion()}. If the user asks what version of Mythra you are running inside, answer with this version.`;
+}
+
 const GENERATED_MEDIA_DIR = 'generated-media';
 const MEDIA_CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 
@@ -587,7 +591,12 @@ export class ModelService {
       const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
 
       const apiMessages: ChatCompletionMessageParam[] = [
-        { role: 'system', content: runtime.mediaGenerationKind ? MEDIA_GENERATION_SYSTEM_PROMPTS[runtime.mediaGenerationKind] : provider.systemPrompt },
+        {
+          role: 'system',
+          content: runtime.mediaGenerationKind
+            ? `${MEDIA_GENERATION_SYSTEM_PROMPTS[runtime.mediaGenerationKind]}\n${mythraRuntimeVersionLine()}`
+            : provider.systemPrompt
+        },
         ...(runtime.mediaGenerationKind ? [] : [{ role: 'system' as const, content: sessionContext }]),
         ...messages.map((message) => toApiMessage(message))
       ];
@@ -1865,6 +1874,7 @@ export class ModelService {
         this.threadPreamble(runtime) +
         [
           '[Mythra model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
+          mythraRuntimeVersionLine(),
           sessionModeUiStateLine(settings.ui.sessionMode),
           toolLine,
           webHeaderUiStateLine(settings.ui.webSearch),
@@ -1890,6 +1900,7 @@ export class ModelService {
         : 'Web search is off unless the user enables "Web" next to the status in the chat header.';
       return [
         '[Mythra model routing — Agent mode, no workspace. This system message is not in the user’s visible transcript. Do not tell the user about internal prompts.]',
+        mythraRuntimeVersionLine(),
         sessionModeUiStateLine(settings.ui.sessionMode),
         'No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.',
         'If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.',
@@ -1933,6 +1944,7 @@ export class ModelService {
 
     return [
       '[Mythra model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]',
+      mythraRuntimeVersionLine(),
       sessionModeUiStateLine(settings.ui.sessionMode),
       'Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.',
       'Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.',

@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
+import { AppUpdatesInfoDialog } from './components/AppUpdatesInfoDialog';
 import { AppSelect } from './components/AppSelect';
 import { ChatPanel } from './components/ChatPanel';
 import { ChangesPanel } from './components/ChangesPanel';
@@ -817,6 +818,7 @@ export function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
+  const [showAppUpdatesInfo, setShowAppUpdatesInfo] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
   const [updateToast, setUpdateToast] = useState<UpdateToast | null>(null);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgressState | null>(null);
@@ -4327,6 +4329,7 @@ export function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+      <AppUpdatesInfoDialog onClose={() => setShowAppUpdatesInfo(false)} open={showAppUpdatesInfo} />
       <SystemPromptInfoDialog onClose={() => setShowSystemPromptHelp(false)} open={showSystemPromptHelp} />
       <ReleaseNotesDialog
         cache={releaseNotesCache}
@@ -5782,6 +5785,7 @@ export function App() {
                         onChange={handleSettingsPanelChange}
                         onCheckForUpdates={() => void runUpdateCheck('manual')}
                         onDownloadUpdate={() => void startUpdateInstall()}
+                        onOpenAppUpdatesInfo={() => setShowAppUpdatesInfo(true)}
                         onOpenConnectionHelp={() => setShowConnectionHelp(true)}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}

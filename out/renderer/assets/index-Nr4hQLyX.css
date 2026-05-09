@@ -2898,6 +2898,7 @@ details.chat-activity--collapsible {
 /* Composer */
 
 .chat-compose {
+  position: relative;
   padding: 12px 14px;
   border-top: 1px solid var(--line);
   background: var(--composer-bg, transparent);
@@ -2971,14 +2972,19 @@ details.chat-activity--collapsible {
 }
 
 .chat-compose__notice {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% + 10px);
+  z-index: 8;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  margin-bottom: 10px;
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--accent-subtle);
+  background: color-mix(in srgb, var(--panel-strong) 92%, var(--accent) 8%);
+  box-shadow: var(--shadow-lg);
   color: var(--text-0);
 }
 
@@ -3104,6 +3110,39 @@ details.chat-activity--collapsible {
 .chat-compose__bar:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.chat-compose__bar.is-working {
+  border-color: color-mix(in srgb, var(--accent-light) 68%, var(--line));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent-light) 24%, transparent),
+    0 0 22px color-mix(in srgb, var(--accent-light) 28%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--accent) 10%, transparent);
+  animation: mythra-compose-working-glow 1.8s ease-in-out infinite;
+}
+
+.chat-compose__bar.is-working:focus-within {
+  border-color: var(--accent-light);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent-light) 34%, transparent),
+    0 0 24px color-mix(in srgb, var(--accent-light) 34%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+@keyframes mythra-compose-working-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--accent-light) 20%, transparent),
+      0 0 18px color-mix(in srgb, var(--accent-light) 22%, transparent),
+      inset 0 0 14px color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--accent-light) 34%, transparent),
+      0 0 30px color-mix(in srgb, var(--accent-light) 38%, transparent),
+      inset 0 0 22px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
 }
 
 .chat-compose__input {

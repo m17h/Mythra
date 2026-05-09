@@ -26,6 +26,8 @@ interface SettingsPanelProps {
   onRefreshModels: () => void;
   /** Opens the in-app Connection guide (OpenRouter & LM Studio) from Settings. */
   onOpenConnectionHelp?: () => void;
+  /** Opens support/contact guidance for app updates. */
+  onOpenAppUpdatesInfo?: () => void;
   /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
   onOpenWebSearchInfo?: () => void;
   /** Opens guidance about writing system prompts and presets. */
@@ -61,6 +63,7 @@ export function SettingsPanel({
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
+  onOpenAppUpdatesInfo,
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
   onOpenSystemPromptModal,
@@ -150,7 +153,23 @@ export function SettingsPanel({
 
       <div className="settings-scroll">
         <div className="settings-section">
-          <h4 className="settings-section__title">App Updates</h4>
+          <div className="settings-section__title-cluster">
+            <h4 className="settings-section__title settings-section__title--cluster">App Updates</h4>
+            {onOpenAppUpdatesInfo ? (
+              <button
+                aria-label="About app updates and support"
+                className="settings-info-button"
+                onClick={onOpenAppUpdatesInfo}
+                title="Support and feedback"
+                type="button"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
           <div className="app-update-box">
             <div className="app-update-box__copy">
               <strong>
