@@ -554,9 +554,19 @@ export function SettingsPanel({
                           ]}
                         />
                       </label>
-                      {settings.ui.chatThreadBackgroundPreset === 'mystic' && mysticPreset ? (
-                        <p className="inline-hint">{mysticPreset.description}</p>
-                      ) : null}
+                      <label className={`toggle-row ${settings.ui.chatThreadBackgroundBlur ? 'is-active-soft' : ''}`}>
+                        <span>Gaussian blur</span>
+                        <input
+                          checked={settings.ui.chatThreadBackgroundBlur}
+                          onChange={(e) =>
+                            onChange({
+                              ...settings,
+                              ui: { ...settings.ui, chatThreadBackgroundBlur: e.target.checked }
+                            })
+                          }
+                          type="checkbox"
+                        />
+                      </label>
                       {chatBgSelectValue === 'custom' ? (
                         <>
                           <div className="chat-thread-bg-actions">

@@ -7,6 +7,7 @@ import type {
   ChatCompletionTokenUsage,
   ChatMessage,
   ChatTimelineEntry,
+  ProviderKind,
   SessionMode
 } from '@shared/types';
 import {
@@ -297,6 +298,7 @@ interface ChatPanelProps {
   /** e.g. “New conversation” or the saved chat title */
   sessionSubheading: string;
   selectedProviderLabel: string;
+  selectedProviderKind: ProviderKind;
   selectedModel: string;
   sessionMode: SessionMode;
   isWizard?: boolean;
@@ -341,6 +343,8 @@ interface ChatPanelProps {
   onOpenWizardCreator?: () => void;
   /** `blob:` URL from App (Settings → Theme background); shown behind the thread. */
   chatThreadBackgroundUrl?: string | null;
+  /** Applies a soft Gaussian blur to the chat thread background art. */
+  chatThreadBackgroundBlur?: boolean;
 }
 
 const activityLabelMap = {
@@ -559,6 +563,7 @@ export function ChatPanel({
   attachments,
   sessionSubheading,
   selectedProviderLabel,
+  selectedProviderKind,
   selectedModel,
   sessionMode,
   isWizard = false,
@@ -588,7 +593,8 @@ export function ChatPanel({
   onOpenWizardCreator,
   nexusRelayProgress = null,
   nexusRelayQueueDuringStream = false,
-  chatThreadBackgroundUrl = null
+  chatThreadBackgroundUrl = null,
+  chatThreadBackgroundBlur = false
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -857,13 +863,17 @@ export function ChatPanel({
         : 'Waiting';
 
   const statusModifierClass = isStreaming || providerConnected ? 'is-live' : modelCatalogSettled ? 'is-disconnected' : '';
+  const openRouterModelUrl =
+    selectedProviderKind === 'openrouter' && selectedModel.trim()
+      ? `https://openrouter.ai/${selectedModel.split('/').map((part) => encodeURIComponent(part)).join('/')}`
+      : null;
 
   const renderChunks = useMemo(() => buildRenderChunks(timeline), [timeline]);
 
   const chatBgLayers =
     chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== '' ? (
       <>
-        <div className="chat-scroll__bg" aria-hidden>
+        <div className={`chat-scroll__bg ${chatThreadBackgroundBlur ? 'is-blurred' : ''}`} aria-hidden>
           <img
             alt=""
             className="chat-scroll__bg-img"
@@ -1066,7 +1076,23 @@ export function ChatPanel({
                 />
               </div>
             )}
-            <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+            {openRouterModelUrl ? (
+              <a
+                className="chat-panel__model chat-panel__model-link"
+                href={openRouterModelUrl}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void window.electronAPI.openExternalUrl(openRouterModelUrl);
+                }}
+                rel="noreferrer"
+                target="_blank"
+                title={`Open ${selectedModel} on OpenRouter`}
+              >
+                {selectedModel}
+              </a>
+            ) : (
+              <span className="chat-panel__model">{selectedModel || 'No model selected'}</span>
+            )}
           </div>
           <span className="chat-panel__session" title={sessionSubheading}>
             {sessionSubheading}

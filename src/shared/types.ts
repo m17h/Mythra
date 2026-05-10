@@ -251,6 +251,8 @@ export interface UiSettings {
    * Set via Settings → Theme when using a custom image; cleared when using a built-in pack or no background.
    */
   chatThreadBackgroundPath: string | null;
+  /** When true, applies a soft Gaussian blur to the chat thread background image. */
+  chatThreadBackgroundBlur: boolean;
 }
 
 export type ChooseChatThreadBackgroundResult =
@@ -564,7 +566,8 @@ export const defaultSettings: AppSettings = {
     nexusProjectsParentFolder: null,
     onboardingCompleted: false,
     chatThreadBackgroundPreset: 'mystic',
-    chatThreadBackgroundPath: null
+    chatThreadBackgroundPath: null,
+    chatThreadBackgroundBlur: false
   },
   lastWorkspaceRoot: null
 };

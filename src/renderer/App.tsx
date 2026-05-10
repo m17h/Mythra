@@ -811,6 +811,7 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
   const [wizardsSidebarPane, setWizardsSidebarPane] = useState<WizardsSidebarPane>('wizards');
   const [showNewMenu, setShowNewMenu] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement | null>(null);
   const [showWizardSetup, setShowWizardSetup] = useState(false);
   const [showNexusSetup, setShowNexusSetup] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -835,6 +836,7 @@ export function App() {
   const [wizardExportChat, setWizardExportChat] = useState<SavedChatMeta | null>(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [nexusDeleteTarget, setNexusDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [normalChatDeleteTarget, setNormalChatDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{
@@ -1423,6 +1425,18 @@ export function App() {
       root.style.removeProperty('color-scheme');
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (!showNewMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (newMenuRef.current?.contains(target)) return;
+      setShowNewMenu(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [showNewMenu]);
 
   useEffect(() => {
     const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
@@ -2742,6 +2756,10 @@ export function App() {
   };
 
   const requestDeleteChat = (chat: SavedChatMeta) => {
+    if (chat.kind === 'normal') {
+      setNormalChatDeleteTarget(chat);
+      return;
+    }
     if (chat.kind === 'wizard') {
       setWizardDeleteTarget(chat);
       return;
@@ -4123,10 +4141,12 @@ export function App() {
     if (!id) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id)?.contextLength ?? 131072;
   })();
-  const selectedProviderLabel =
+  const selectedProviderKind: ProviderKind =
     (activeNexus
       ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider
-      : activeWizard?.provider ?? settings?.selectedProvider) === 'openrouter'
+      : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? 'lmstudio';
+  const selectedProviderLabel =
+    selectedProviderKind === 'openrouter'
       ? 'OpenRouter'
       : 'LM Studio';
   const sessionMode = activeWizard || activeNexus ? 'agent' : activeMediaOverrideKind ? 'talk' : (settings?.ui.sessionMode ?? 'agent');
@@ -4447,6 +4467,26 @@ export function App() {
       />
       <AppConfirmDialog
         cancelLabel="Cancel"
+        confirmLabel="Delete chat"
+        confirmVariant="danger"
+        description={
+          <>
+            Delete <strong>{normalChatDeleteTarget?.title ?? 'this chat'}</strong>? This removes the conversation
+            history and any generated media kept with this chat.
+          </>
+        }
+        kicker="Delete Chat"
+        onCancel={() => setNormalChatDeleteTarget(null)}
+        onConfirm={() => {
+          const target = normalChatDeleteTarget;
+          setNormalChatDeleteTarget(null);
+          if (target) void deleteChat(target.id);
+        }}
+        open={Boolean(normalChatDeleteTarget)}
+        title="Delete this chat?"
+      />
+      <AppConfirmDialog
+        cancelLabel="Cancel"
         confirmLabel="Delete session"
         confirmVariant="danger"
         description={
@@ -4758,7 +4798,7 @@ export function App() {
             </div>
 
             <div className="sidebar-quick">
-              <div className={`sidebar-new ${showNewMenu ? 'is-open' : ''}`}>
+              <div className={`sidebar-new ${showNewMenu ? 'is-open' : ''}`} ref={newMenuRef}>
                 <button
                   className="sidebar-quick__btn sidebar-quick__btn--primary"
                   onClick={() => setShowNewMenu((v) => !v)}
@@ -5618,6 +5658,7 @@ export function App() {
             sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind)}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
+            selectedProviderKind={selectedProviderKind}
             selectedProviderLabel={selectedProviderLabel}
             hasWorkspace={Boolean(workspaceRoot)}
             terminalLogs={inlineTerminalLogs}
@@ -5625,6 +5666,7 @@ export function App() {
             onTerminalRun={runInlineTerminal}
             onTerminalKill={killInlineTerminal}
             chatThreadBackgroundUrl={chatThreadBackgroundUrl}
+            chatThreadBackgroundBlur={settings?.ui.chatThreadBackgroundBlur ?? false}
           />
         </motion.section>
 

@@ -33934,6 +33934,7 @@ function ChatPanel({
   attachments,
   sessionSubheading,
   selectedProviderLabel,
+  selectedProviderKind,
   selectedModel,
   sessionMode,
   isWizard = false,
@@ -33963,7 +33964,8 @@ function ChatPanel({
   onOpenWizardCreator,
   nexusRelayProgress = null,
   nexusRelayQueueDuringStream = false,
-  chatThreadBackgroundUrl = null
+  chatThreadBackgroundUrl = null,
+  chatThreadBackgroundBlur = false
 }) {
   const scrollRef = reactExports.useRef(null);
   const innerRef = reactExports.useRef(null);
@@ -34180,9 +34182,10 @@ function ChatPanel({
   const isTalk = !isWizard && !isNexus && sessionMode === "talk";
   const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
+  const openRouterModelUrl = selectedProviderKind === "openrouter" && selectedModel.trim() ? `https://openrouter.ai/${selectedModel.split("/").map((part) => encodeURIComponent(part)).join("/")}` : null;
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
   const chatBgLayers = chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== "" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__bg", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `chat-scroll__bg ${chatThreadBackgroundBlur ? "is-blurred" : ""}`, "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       "img",
       {
         alt: "",
@@ -34346,7 +34349,21 @@ function ChatPanel({
               }
             )
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__model", children: selectedModel || "No model selected" })
+          openRouterModelUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "a",
+            {
+              className: "chat-panel__model chat-panel__model-link",
+              href: openRouterModelUrl,
+              onClick: (event) => {
+                event.preventDefault();
+                void window.electronAPI.openExternalUrl(openRouterModelUrl);
+              },
+              rel: "noreferrer",
+              target: "_blank",
+              title: `Open ${selectedModel} on OpenRouter`,
+              children: selectedModel
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__model", children: selectedModel || "No model selected" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__session", title: sessionSubheading, children: sessionSubheading })
       ] }),
@@ -36497,7 +36514,20 @@ function SettingsPanel({
                     }
                   )
                 ] }),
-                settings.ui.chatThreadBackgroundPreset === "mystic" && mysticPreset ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-hint", children: mysticPreset.description }) : null,
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row ${settings.ui.chatThreadBackgroundBlur ? "is-active-soft" : ""}`, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Gaussian blur" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      checked: settings.ui.chatThreadBackgroundBlur,
+                      onChange: (e) => onChange({
+                        ...settings,
+                        ui: { ...settings.ui, chatThreadBackgroundBlur: e.target.checked }
+                      }),
+                      type: "checkbox"
+                    }
+                  )
+                ] }),
                 chatBgSelectValue === "custom" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-bg-actions", children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -39029,6 +39059,7 @@ function App() {
   const [sidebarTab, setSidebarTab] = reactExports.useState("chats");
   const [wizardsSidebarPane, setWizardsSidebarPane] = reactExports.useState("wizards");
   const [showNewMenu, setShowNewMenu] = reactExports.useState(false);
+  const newMenuRef = reactExports.useRef(null);
   const [showWizardSetup, setShowWizardSetup] = reactExports.useState(false);
   const [showNexusSetup, setShowNexusSetup] = reactExports.useState(false);
   const [showOnboarding, setShowOnboarding] = reactExports.useState(false);
@@ -39053,6 +39084,7 @@ function App() {
   const [wizardExportChat, setWizardExportChat] = reactExports.useState(null);
   const [wizardDeleteTarget, setWizardDeleteTarget] = reactExports.useState(null);
   const [nexusDeleteTarget, setNexusDeleteTarget] = reactExports.useState(null);
+  const [normalChatDeleteTarget, setNormalChatDeleteTarget] = reactExports.useState(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
@@ -39538,6 +39570,17 @@ function App() {
       root2.style.removeProperty("color-scheme");
     }
   }, [settings]);
+  reactExports.useEffect(() => {
+    if (!showNewMenu) return;
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (newMenuRef.current?.contains(target)) return;
+      setShowNewMenu(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [showNewMenu]);
   reactExports.useEffect(() => {
     const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
     const path2 = settings?.ui.chatThreadBackgroundPath?.trim();
@@ -40709,6 +40752,10 @@ function App() {
     await refreshChatList();
   };
   const requestDeleteChat = (chat) => {
+    if (chat.kind === "normal") {
+      setNormalChatDeleteTarget(chat);
+      return;
+    }
     if (chat.kind === "wizard") {
       setWizardDeleteTarget(chat);
       return;
@@ -41893,7 +41940,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     if (!id2) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
-  const selectedProviderLabel = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? settings?.selectedProvider) === "openrouter" ? "OpenRouter" : "LM Studio";
+  const selectedProviderKind = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? "lmstudio";
+  const selectedProviderLabel = selectedProviderKind === "openrouter" ? "OpenRouter" : "LM Studio";
   const sessionMode = activeWizard || activeNexus ? "agent" : activeMediaOverrideKind ? "talk" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
@@ -42200,6 +42248,28 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       AppConfirmDialog,
       {
         cancelLabel: "Cancel",
+        confirmLabel: "Delete chat",
+        confirmVariant: "danger",
+        description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          "Delete ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: normalChatDeleteTarget?.title ?? "this chat" }),
+          "? This removes the conversation history and any generated media kept with this chat."
+        ] }),
+        kicker: "Delete Chat",
+        onCancel: () => setNormalChatDeleteTarget(null),
+        onConfirm: () => {
+          const target = normalChatDeleteTarget;
+          setNormalChatDeleteTarget(null);
+          if (target) void deleteChat(target.id);
+        },
+        open: Boolean(normalChatDeleteTarget),
+        title: "Delete this chat?"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AppConfirmDialog,
+      {
+        cancelLabel: "Cancel",
         confirmLabel: "Delete session",
         confirmVariant: "danger",
         description: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -42498,14 +42568,14 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.4"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.5"}`, children: [
                   "v",
-                  "0.3.4"
+                  "0.3.5"
                 ] })
               ] })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-quick", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sidebar-new ${showNewMenu ? "is-open" : ""}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sidebar-new ${showNewMenu ? "is-open" : ""}`, ref: newMenuRef, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs(
                   "button",
                   {
@@ -43395,13 +43465,15 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind),
               sessionMode,
               selectedModel: effectiveHeaderModelId,
+              selectedProviderKind,
               selectedProviderLabel,
               hasWorkspace: Boolean(workspaceRoot),
               terminalLogs: inlineTerminalLogs,
               terminalJobId: inlineTerminalJobId,
               onTerminalRun: runInlineTerminal,
               onTerminalKill: killInlineTerminal,
-              chatThreadBackgroundUrl
+              chatThreadBackgroundUrl,
+              chatThreadBackgroundBlur: settings?.ui.chatThreadBackgroundBlur ?? false
             }
           )
         }
@@ -43571,7 +43643,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.4",
+                        appVersion: "0.3.5",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

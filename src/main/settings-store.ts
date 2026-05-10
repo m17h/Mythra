@@ -68,6 +68,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       typeof saved?.ui?.chatThreadBackgroundPath === 'string' && saved.ui.chatThreadBackgroundPath.trim().length > 0
         ? saved.ui.chatThreadBackgroundPath.trim()
         : null,
+    chatThreadBackgroundBlur:
+      typeof saved?.ui?.chatThreadBackgroundBlur === 'boolean'
+        ? saved.ui.chatThreadBackgroundBlur
+        : defaultSettings.ui.chatThreadBackgroundBlur,
     favoriteModels: {
       lmstudio: [
         ...(saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio)
