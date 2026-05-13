@@ -5,12 +5,14 @@ interface EditorPanelProps {
   filePath?: string;
   content: string;
   imagePreview?: { mimeType: string; dataUrl: string };
+  readOnly?: boolean;
+  readOnlyReason?: string;
   dirty: boolean;
   onChange: (next: string) => void;
   onSave: () => void;
 }
 
-export function EditorPanel({ filePath, content, imagePreview, dirty, onChange, onSave }: EditorPanelProps) {
+export function EditorPanel({ filePath, content, imagePreview, readOnly, readOnlyReason, dirty, onChange, onSave }: EditorPanelProps) {
   if (!filePath) {
     return (
       <section className="workspace-empty">
@@ -36,12 +38,12 @@ export function EditorPanel({ filePath, content, imagePreview, dirty, onChange, 
         </div>
         <button
           className="action-button"
-          disabled={Boolean(imagePreview)}
+          disabled={Boolean(imagePreview) || Boolean(readOnly)}
           onClick={onSave}
-          title={imagePreview ? 'Preview-only for images' : undefined}
+          title={imagePreview ? 'Preview-only for images' : readOnlyReason}
           type="button"
         >
-          {imagePreview ? 'Image preview' : dirty ? 'Save Buffer' : 'Saved'}
+          {imagePreview ? 'Image preview' : readOnly ? 'Read-only preview' : dirty ? 'Save Buffer' : 'Saved'}
         </button>
       </div>
       {imagePreview ? (
@@ -59,9 +61,13 @@ export function EditorPanel({ filePath, content, imagePreview, dirty, onChange, 
             defaultLanguage="typescript"
             path={filePath}
             value={content}
-            onChange={(next) => onChange(next ?? '')}
+            onChange={(next) => {
+              if (!readOnly) onChange(next ?? '');
+            }}
             theme="vs-dark"
             options={{
+              readOnly: Boolean(readOnly),
+              readOnlyMessage: { value: readOnlyReason ?? 'This preview is read-only.' },
               minimap: { enabled: false },
               fontSize: 14,
               smoothScrolling: true,

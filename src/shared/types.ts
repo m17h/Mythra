@@ -318,6 +318,10 @@ export interface WorkspaceNode {
 export interface OpenFile {
   path: string;
   content: string;
+  kind?: 'text' | 'pdf';
+  /** When true, content is extracted/preview text and should not be saved back over the original file. */
+  readOnly?: boolean;
+  readOnlyReason?: string;
   /** When set (PNG, JPEG, GIF, WebP, SVG, …), the editor shows this preview instead of Monaco. */
   imagePreview?: {
     mimeType: string;

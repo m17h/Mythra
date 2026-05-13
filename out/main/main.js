@@ -2,12 +2,14 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { join as join$1, resolve, sep, relative, dirname, basename, extname } from "node:path";
 import { existsSync, realpathSync, statSync, watch } from "node:fs";
-import { readdir, mkdir, copyFile, readFile, writeFile, rm, unlink, stat, rename, realpath } from "node:fs/promises";
+import { readdir, mkdir, copyFile, readFile, writeFile, rm, unlink, stat, rename, realpath, mkdtemp } from "node:fs/promises";
 import { app, dialog, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
 import electronUpdater from "electron-updater";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import JSZip from "jszip";
 import __cjs_mod__ from "node:module";
@@ -1443,7 +1445,7 @@ const mythraSetAppThemeAgentInstruction = `App theme (Agent only): For full cust
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
 const mythraProductFeaturesInstruction = "Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In normal Chats mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons for media chats. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there so Mythra can render and save the generated media locally in that chat. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.";
-const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
+const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
   const cur = acc.get(i) ?? { id: "", name: "", args: "" };
@@ -2441,7 +2443,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     const wizardOutsideOn = Boolean(runtime.wizardId && runtime.wizardAllowOutsideWorkspace);
     const wizardOutsideOff = Boolean(runtime.wizardId && !runtime.wizardAllowOutsideWorkspace);
     const toolPathPropDesc = wizardOutsideOn ? "Relative workspace path, ../ segment, or absolute local path (Wizard “Allow paths outside workspace” is on). Cloud-sync folders are blocked." : wizardOutsideOff ? "Relative path inside this Wizard workspace. For files elsewhere, ask the user to enable **Allow paths outside workspace** in Wizard settings." : "Relative path inside the workspace.";
-    const readFileToolDesc = wizardOutsideOn ? "Read UTF-8 text; paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths." : wizardOutsideOff ? "Read UTF-8 text using a path relative to this Wizard workspace only. If the user needs another Wizard’s folder or arbitrary paths, tell them to enable **Allow paths outside workspace** in Wizard settings (Inspector)." : "Read a UTF-8 text file using a path relative to the current workspace root.";
+    const readFileToolDesc = wizardOutsideOn ? "Read UTF-8 text or extract text from PDFs. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text. Paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths." : wizardOutsideOff ? "Read UTF-8 text or extract text from PDFs. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text. Paths must be relative to this Wizard workspace unless outside access is enabled." : "Read a UTF-8 text file or extract text from a PDF. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text.";
     const writeFileToolDesc = wizardOutsideOn ? "Create or overwrite UTF-8 text (creates parent folders). Paths may escape the workspace folder when this Wizard setting allows it—local disks only." : wizardOutsideOff ? "Create or overwrite UTF-8 inside this Wizard workspace. For targets outside it, ask the user to enable **Allow paths outside workspace**." : "Create or overwrite UTF-8 inside the workspace (creates parent folders).";
     const replaceInFileToolDesc = wizardOutsideOn ? "Replace exact text inside one UTF-8 file. Use after read_file. Paths may use ../ or absolute local targets when allowed (cloud-sync blocked). Set replace_all only when every occurrence should change." : wizardOutsideOff ? "Replace exact text inside one UTF-8 file under this Wizard workspace unless the user enables **Allow paths outside workspace**. Use after read_file." : "Replace exact text inside one UTF-8 file. Use for small, precise edits after read_file. Set replace_all only when every occurrence should change.";
     const insertAfterToolDesc = wizardOutsideOn ? "Insert text immediately after an exact anchor string in one UTF-8 file (paths may escape workspace when allowed)." : wizardOutsideOff ? "Insert text after an anchor in one UTF-8 file under this Wizard workspace unless **Allow paths outside workspace** is enabled." : "Insert text immediately after an exact anchor string in one UTF-8 file.";
@@ -2473,6 +2475,19 @@ ${text}` : "The model did not return an image file. Try again or choose another 
               path: {
                 type: "string",
                 description: toolPathPropDesc
+              },
+              pdf_start_page: {
+                type: "number",
+                description: "PDF-only. 1-based page number to start reading from. Use to continue long PDFs in chunks."
+              },
+              pdf_page_count: {
+                type: "number",
+                description: "PDF-only. Number of pages to read from pdf_start_page. Defaults to a bounded chunk."
+              },
+              pdf_ocr: {
+                type: "string",
+                enum: ["auto", "on", "off"],
+                description: "PDF-only. auto OCRs pages with little/no embedded text, on OCRs every page in the requested range, off returns embedded text only."
               }
             },
             required: ["path"],
@@ -3135,7 +3150,17 @@ ${truncate(system_prompt, 900)}`
         if (!path) {
           throw new Error("read_file requires a path.");
         }
-        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
+        const pdfStartPage = Number(args.pdf_start_page);
+        const pdfPageCount = Number(args.pdf_page_count);
+        const rawPdfOcr = String(args.pdf_ocr ?? "auto");
+        const pdfOcr = rawPdfOcr === "on" || rawPdfOcr === "off" ? rawPdfOcr : "auto";
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside, {
+          pdf: {
+            startPage: Number.isFinite(pdfStartPage) ? pdfStartPage : void 0,
+            pageCount: Number.isFinite(pdfPageCount) ? pdfPageCount : void 0,
+            ocr: pdfOcr
+          }
+        });
         if (file.imagePreview && !file.content) {
           return JSON.stringify(
             {
@@ -3151,6 +3176,9 @@ ${truncate(system_prompt, 900)}`
         return JSON.stringify(
           {
             path: relative(workspaceRoot, file.path),
+            kind: file.readOnlyReason?.toLowerCase().includes("pdf") ? "pdf" : "text",
+            readOnly: Boolean(file.readOnly),
+            note: file.readOnlyReason,
             content: truncate(file.content)
           },
           null,
@@ -4083,11 +4111,18 @@ const MAX_LIST_ENTRIES = 5e3;
 const MAX_SEARCH_FILES = 1500;
 const MAX_SEARCH_FILE_BYTES = 5e5;
 const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_PDF_READ_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_TEXT_CHARS = 1e6;
+const MIN_PDF_TEXT_CHARS_BEFORE_OCR = 120;
+const MAX_PDF_OCR_PAGES = 12;
+const MAX_PDF_OCR_RENDER_PIXELS = 4e6;
+const DEFAULT_PDF_RANGE_PAGE_COUNT = 24;
 const MAX_MYTHWIZ_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_MYTHWIZ_FILES = 1e3;
 const MAX_MYTHWIZ_FILE_CHARS = 5 * 1024 * 1024;
 const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+const requireFromWorkspaceService = createRequire(import.meta.url);
 const WIZARD_CORE_DOCS = [
   ["soul.md", "Soul"],
   ["tools.md", "Tools"],
@@ -4339,6 +4374,149 @@ const RASTER_IMAGE_EXT = {
   ".ico": "image/x-icon",
   ".avif": "image/avif"
 };
+function patchPdfCanvasContext(context) {
+  for (const methodName of ["clip", "fill", "stroke"]) {
+    const original = context[methodName].bind(context);
+    context[methodName] = (...args) => {
+      try {
+        return original(...args);
+      } catch (error) {
+        if (args.length > 0 && typeof args[0] === "object") {
+          return typeof args[1] === "string" ? original(args[1]) : original();
+        }
+        throw error;
+      }
+    };
+  }
+}
+async function renderPdfPageToPng(page) {
+  const { createCanvas } = await import("@napi-rs/canvas");
+  const baseViewport = page.getViewport({ scale: 1 });
+  const basePixels = Math.max(1, baseViewport.width * baseViewport.height);
+  const scale = Math.min(2, Math.sqrt(MAX_PDF_OCR_RENDER_PIXELS / basePixels));
+  const viewport = page.getViewport({ scale });
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  const context = canvas.getContext("2d");
+  patchPdfCanvasContext(context);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  return canvas.toBuffer("image/png");
+}
+async function recognizePdfPage(worker, page, pageNumber) {
+  const png = await renderPdfPageToPng(page);
+  const tempDir = await mkdtemp(join$1(tmpdir(), "mythra-pdf-ocr-"));
+  const imagePath = join$1(tempDir, `page-${pageNumber}.png`);
+  try {
+    await writeFile(imagePath, png);
+    const result = await worker.recognize(imagePath);
+    return result.data.text.replace(/[ \t]+/g, " ").trim();
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
+  }
+}
+function tesseractEnglishLangPath() {
+  return `${dirname(requireFromWorkspaceService.resolve("@tesseract.js-data/eng/4.0.0/eng.traineddata.gz"))}${sep}`;
+}
+async function createOcrWorker() {
+  const Tesseract = (await import("tesseract.js")).default;
+  return Tesseract.createWorker("eng", 1, {
+    cacheMethod: "none",
+    langPath: tesseractEnglishLangPath()
+  });
+}
+function normalizePdfReadOptions(options) {
+  const startPage = Number.isFinite(options?.startPage) ? Math.max(1, Math.floor(Number(options?.startPage))) : 1;
+  const pageCount = Number.isFinite(options?.pageCount) ? Math.min(250, Math.max(1, Math.floor(Number(options?.pageCount)))) : DEFAULT_PDF_RANGE_PAGE_COUNT;
+  const ocr = options?.ocr === "on" || options?.ocr === "off" ? options.ocr : "auto";
+  return { startPage, pageCount, ocr };
+}
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function formatPdfPage(page, ocrText) {
+  const chunks = [`--- Page ${page.pageNumber} ---`];
+  chunks.push(page.text || "[No extractable embedded text]");
+  if (page.needsOcr) {
+    chunks.push("[OCR suggested: this page has little/no embedded text and may be scanned or image-based.]");
+  }
+  if (ocrText != null) {
+    chunks.push(`--- Page ${page.pageNumber} OCR ---`);
+    chunks.push(ocrText || "[No text recognized by OCR]");
+  }
+  return chunks.join("\n");
+}
+async function extractPdfText(filePath, options) {
+  const st = await stat(filePath);
+  if (st.size > MAX_PDF_READ_BYTES) {
+    throw new Error(`PDF is too large to read (max ${Math.round(MAX_PDF_READ_BYTES / 1024 / 1024)} MB).`);
+  }
+  const readOptions = normalizePdfReadOptions(options);
+  const buf = await readFile(filePath);
+  const data = new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc = await pdfjs.getDocument({
+    data,
+    useSystemFonts: true
+  }).promise;
+  const startPage = Math.min(readOptions.startPage, doc.numPages);
+  const endPage = Math.min(doc.numPages, startPage + readOptions.pageCount - 1);
+  const pageTexts = [];
+  try {
+    for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+      const page = await doc.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      const text = textContent.items.map((item) => "str" in item ? item.str : "").filter(Boolean).join(" ").replace(/[ \t]+/g, " ").trim();
+      pageTexts.push({
+        pageNumber,
+        text,
+        charCount: text.length,
+        needsOcr: text.length < MIN_PDF_TEXT_CHARS_BEFORE_OCR
+      });
+    }
+    const ocrTargets = readOptions.ocr === "off" ? [] : readOptions.ocr === "on" ? pageTexts : pageTexts.filter((page) => page.needsOcr);
+    const limitedOcrTargets = ocrTargets.slice(0, MAX_PDF_OCR_PAGES);
+    const ocrByPage = /* @__PURE__ */ new Map();
+    if (limitedOcrTargets.length > 0) {
+      const worker = await createOcrWorker();
+      try {
+        for (const target of limitedOcrTargets) {
+          const page = await doc.getPage(target.pageNumber);
+          try {
+            ocrByPage.set(target.pageNumber, await recognizePdfPage(worker, page, target.pageNumber));
+          } catch (error) {
+            ocrByPage.set(target.pageNumber, `[OCR failed for this page: ${errorMessage(error)}]`);
+          }
+        }
+      } finally {
+        await worker.terminate();
+      }
+    }
+    const parts = [
+      `PDF read: pages ${startPage}-${endPage} of ${doc.numPages}.`,
+      readOptions.ocr === "off" ? "OCR: off for this read." : ocrByPage.size > 0 ? `OCR: ran on page${ocrByPage.size === 1 ? "" : "s"} ${[...ocrByPage.keys()].join(", ")}.` : "OCR: not needed for this read."
+    ];
+    if (ocrTargets.length > limitedOcrTargets.length) {
+      parts.push(
+        `OCR limit: processed ${limitedOcrTargets.length} of ${ocrTargets.length} requested/suggested pages. Read a narrower page range to OCR more.`
+      );
+    }
+    if (endPage < doc.numPages) {
+      parts.push(`More pages available: call read_file with pdf_start_page ${endPage + 1}.`);
+    }
+    parts.push(...pageTexts.map((page) => formatPdfPage(page, ocrByPage.get(page.pageNumber))));
+    const embeddedChars = pageTexts.reduce((sum, page) => sum + page.charCount, 0);
+    const content = parts.join("\n\n").slice(0, MAX_PDF_TEXT_CHARS);
+    const ocrApplied = ocrByPage.size > 0;
+    return {
+      content,
+      method: ocrApplied ? embeddedChars > 0 ? "embedded-text-with-ocr-fallback" : "ocr" : "embedded-text",
+      ocrApplied
+    };
+  } finally {
+    await doc.destroy();
+  }
+}
 class WorkspaceService {
   async assertUsableLocalWorkspace(root) {
     const resolved = resolve(root);
@@ -4761,7 +4939,7 @@ class WorkspaceService {
   isInsideRoot(root, target) {
     return isInsideRootSync(root, target);
   }
-  async openFile(root, target, allowOutsideWorkspace = false) {
+  async openFile(root, target, allowOutsideWorkspace = false, options) {
     const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
     if (ext === ".svg") {
@@ -4789,6 +4967,17 @@ class WorkspaceService {
         path: safePath,
         content: "",
         imagePreview: { mimeType: rasterMime, dataUrl }
+      };
+    }
+    if (ext === ".pdf") {
+      const extraction = await extractPdfText(safePath, options?.pdf);
+      const methodLabel = extraction.method === "ocr" ? "OCR text was extracted from scanned PDF pages." : extraction.method === "embedded-text-with-ocr-fallback" ? "PDF text was extracted with OCR fallback for scanned/low-text pages." : "PDF text is extracted for reading only.";
+      return {
+        path: safePath,
+        kind: "pdf",
+        content: extraction.content,
+        readOnly: true,
+        readOnlyReason: methodLabel
       };
     }
     const content = await readFile(safePath, "utf8");

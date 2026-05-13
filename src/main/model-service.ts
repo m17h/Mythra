@@ -269,7 +269,7 @@ const mythraProductFeaturesInstruction =
   'Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In normal Chats mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons for media chats. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there so Mythra can render and save the generated media locally in that chat. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.';
 
 const mythraCodingToolInstruction =
-  'Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.';
+  'Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.';
 
 type StreamingToolAcc = Map<number, { id: string; name: string; args: string }>;
 
@@ -1571,10 +1571,10 @@ export class ModelService {
         : 'Relative path inside the workspace.';
 
     const readFileToolDesc = wizardOutsideOn
-      ? 'Read UTF-8 text; paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths.'
+      ? 'Read UTF-8 text or extract text from PDFs. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text. Paths may be workspace-relative, ../ to reach sibling folders, or absolute local paths.'
       : wizardOutsideOff
-        ? 'Read UTF-8 text using a path relative to this Wizard workspace only. If the user needs another Wizard’s folder or arbitrary paths, tell them to enable **Allow paths outside workspace** in Wizard settings (Inspector).'
-        : 'Read a UTF-8 text file using a path relative to the current workspace root.';
+        ? 'Read UTF-8 text or extract text from PDFs. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text. Paths must be relative to this Wizard workspace unless outside access is enabled.'
+        : 'Read a UTF-8 text file or extract text from a PDF. PDFs are read page ranges: embedded text is returned for every page, and OCR runs only on low/no-text pages by default; use pdf_start_page/pdf_page_count to continue long PDFs and pdf_ocr=on for pages/regions that visually contain image text.';
 
     const writeFileToolDesc = wizardOutsideOn
       ? 'Create or overwrite UTF-8 text (creates parent folders). Paths may escape the workspace folder when this Wizard setting allows it—local disks only.'
@@ -1634,6 +1634,20 @@ export class ModelService {
               path: {
                 type: 'string',
                 description: toolPathPropDesc
+              },
+              pdf_start_page: {
+                type: 'number',
+                description: 'PDF-only. 1-based page number to start reading from. Use to continue long PDFs in chunks.'
+              },
+              pdf_page_count: {
+                type: 'number',
+                description: 'PDF-only. Number of pages to read from pdf_start_page. Defaults to a bounded chunk.'
+              },
+              pdf_ocr: {
+                type: 'string',
+                enum: ['auto', 'on', 'off'],
+                description:
+                  'PDF-only. auto OCRs pages with little/no embedded text, on OCRs every page in the requested range, off returns embedded text only.'
               }
             },
             required: ['path'],
@@ -2360,7 +2374,17 @@ export class ModelService {
           throw new Error('read_file requires a path.');
         }
 
-        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
+        const pdfStartPage = Number(args.pdf_start_page);
+        const pdfPageCount = Number(args.pdf_page_count);
+        const rawPdfOcr = String(args.pdf_ocr ?? 'auto');
+        const pdfOcr = rawPdfOcr === 'on' || rawPdfOcr === 'off' ? rawPdfOcr : 'auto';
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside, {
+          pdf: {
+            startPage: Number.isFinite(pdfStartPage) ? pdfStartPage : undefined,
+            pageCount: Number.isFinite(pdfPageCount) ? pdfPageCount : undefined,
+            ocr: pdfOcr
+          }
+        });
         if (file.imagePreview && !file.content) {
           return JSON.stringify(
             {
@@ -2376,6 +2400,9 @@ export class ModelService {
         return JSON.stringify(
           {
             path: relative(workspaceRoot, file.path),
+            kind: file.readOnlyReason?.toLowerCase().includes('pdf') ? 'pdf' : 'text',
+            readOnly: Boolean(file.readOnly),
+            note: file.readOnlyReason,
             content: truncate(file.content)
           },
           null,

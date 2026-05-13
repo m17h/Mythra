@@ -35263,7 +35263,7 @@ var Ft = de;
 function MythraMark({ className }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `mythra-mark${className ? ` ${className}` : ""}`, children: "Mythra" });
 }
-function EditorPanel({ filePath, content: content2, imagePreview, dirty, onChange, onSave }) {
+function EditorPanel({ filePath, content: content2, imagePreview, readOnly, readOnlyReason, dirty, onChange, onSave }) {
   if (!filePath) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "workspace-empty", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-empty__eyebrow", children: [
@@ -35284,11 +35284,11 @@ function EditorPanel({ filePath, content: content2, imagePreview, dirty, onChang
         "button",
         {
           className: "action-button",
-          disabled: Boolean(imagePreview),
+          disabled: Boolean(imagePreview) || Boolean(readOnly),
           onClick: onSave,
-          title: imagePreview ? "Preview-only for images" : void 0,
+          title: imagePreview ? "Preview-only for images" : readOnlyReason,
           type: "button",
-          children: imagePreview ? "Image preview" : dirty ? "Save Buffer" : "Saved"
+          children: imagePreview ? "Image preview" : readOnly ? "Read-only preview" : dirty ? "Save Buffer" : "Saved"
         }
       )
     ] }),
@@ -35306,9 +35306,13 @@ function EditorPanel({ filePath, content: content2, imagePreview, dirty, onChang
         defaultLanguage: "typescript",
         path: filePath,
         value: content2,
-        onChange: (next) => onChange(next ?? ""),
+        onChange: (next) => {
+          if (!readOnly) onChange(next ?? "");
+        },
         theme: "vs-dark",
         options: {
+          readOnly: Boolean(readOnly),
+          readOnlyMessage: { value: readOnlyReason ?? "This preview is read-only." },
           minimap: { enabled: false },
           fontSize: 14,
           smoothScrolling: true,
@@ -40068,7 +40072,7 @@ function App() {
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer2 = buffers[activeFilePath];
-    if (!activeBuffer2 || activeBuffer2.imagePreview) return;
+    if (!activeBuffer2 || activeBuffer2.imagePreview || activeBuffer2.readOnly) return;
     const saved = await window.electronAPI.saveFile(workspaceRoot, activeFilePath, activeBuffer2.content);
     setBuffers((current) => ({ ...current, [activeFilePath]: { ...saved, dirty: false } }));
     void refreshWorkspaceChanges(workspaceRoot);
@@ -42568,9 +42572,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.5"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.6"}`, children: [
                   "v",
-                  "0.3.5"
+                  "0.3.6"
                 ] })
               ] })
             ] }),
@@ -43533,10 +43537,12 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                       dirty: activeBuffer?.dirty ?? false,
                       filePath: activeFilePath,
                       imagePreview: activeBuffer?.imagePreview,
+                      readOnly: activeBuffer?.readOnly,
+                      readOnlyReason: activeBuffer?.readOnlyReason,
                       onChange: (next) => {
                         if (!activeFilePath) return;
                         const cur = buffers[activeFilePath];
-                        if (cur?.imagePreview) return;
+                        if (cur?.imagePreview || cur?.readOnly) return;
                         setBuffers((current) => ({
                           ...current,
                           [activeFilePath]: { ...current[activeFilePath], content: next, dirty: true }
@@ -43643,7 +43649,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.5",
+                        appVersion: "0.3.6",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

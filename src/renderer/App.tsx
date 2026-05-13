@@ -1984,7 +1984,7 @@ export function App() {
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer = buffers[activeFilePath];
-    if (!activeBuffer || activeBuffer.imagePreview) return;
+    if (!activeBuffer || activeBuffer.imagePreview || activeBuffer.readOnly) return;
     const saved = await window.electronAPI.saveFile(workspaceRoot, activeFilePath, activeBuffer.content);
     setBuffers((current) => ({ ...current, [activeFilePath]: { ...saved, dirty: false } }));
     void refreshWorkspaceChanges(workspaceRoot);
@@ -5718,10 +5718,12 @@ export function App() {
                     dirty={activeBuffer?.dirty ?? false}
                     filePath={activeFilePath}
                     imagePreview={activeBuffer?.imagePreview}
+                    readOnly={activeBuffer?.readOnly}
+                    readOnlyReason={activeBuffer?.readOnlyReason}
                     onChange={(next) => {
                       if (!activeFilePath) return;
                       const cur = buffers[activeFilePath];
-                      if (cur?.imagePreview) return;
+                      if (cur?.imagePreview || cur?.readOnly) return;
                       setBuffers((current) => ({
                         ...current,
                         [activeFilePath]: { ...current[activeFilePath], content: next, dirty: true }

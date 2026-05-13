@@ -1,6 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import JSZip from 'jszip';
@@ -28,11 +30,18 @@ const MAX_LIST_ENTRIES = 5_000;
 const MAX_SEARCH_FILES = 1_500;
 const MAX_SEARCH_FILE_BYTES = 500_000;
 const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_PDF_READ_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_TEXT_CHARS = 1_000_000;
+const MIN_PDF_TEXT_CHARS_BEFORE_OCR = 120;
+const MAX_PDF_OCR_PAGES = 12;
+const MAX_PDF_OCR_RENDER_PIXELS = 4_000_000;
+const DEFAULT_PDF_RANGE_PAGE_COUNT = 24;
 const MAX_MYTHWIZ_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_MYTHWIZ_FILES = 1_000;
 const MAX_MYTHWIZ_FILE_CHARS = 5 * 1024 * 1024;
 const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+const requireFromWorkspaceService = createRequire(import.meta.url);
 const WIZARD_CORE_DOCS = [
   ['soul.md', 'Soul'],
   ['tools.md', 'Tools'],
@@ -334,6 +343,202 @@ const RASTER_IMAGE_EXT: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.avif': 'image/avif'
 };
+
+interface PdfExtractionResult {
+  content: string;
+  method: 'embedded-text' | 'ocr' | 'embedded-text-with-ocr-fallback';
+  ocrApplied: boolean;
+}
+
+interface PdfReadOptions {
+  startPage?: number;
+  pageCount?: number;
+  ocr?: 'auto' | 'on' | 'off';
+}
+
+interface PdfPageText {
+  pageNumber: number;
+  text: string;
+  charCount: number;
+  needsOcr: boolean;
+}
+
+function patchPdfCanvasContext(context: any) {
+  // pdfjs passes Path2D objects that @napi-rs/canvas rejects on some PDFs; fall back to current-path calls for OCR renders.
+  for (const methodName of ['clip', 'fill', 'stroke'] as const) {
+    const original = context[methodName].bind(context);
+    context[methodName] = (...args: unknown[]) => {
+      try {
+        return original(...args);
+      } catch (error) {
+        if (args.length > 0 && typeof args[0] === 'object') {
+          return typeof args[1] === 'string' ? original(args[1]) : original();
+        }
+        throw error;
+      }
+    };
+  }
+}
+
+async function renderPdfPageToPng(page: any): Promise<Buffer> {
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const baseViewport = page.getViewport({ scale: 1 });
+  const basePixels = Math.max(1, baseViewport.width * baseViewport.height);
+  const scale = Math.min(2, Math.sqrt(MAX_PDF_OCR_RENDER_PIXELS / basePixels));
+  const viewport = page.getViewport({ scale });
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  const context = canvas.getContext('2d');
+  patchPdfCanvasContext(context);
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  return canvas.toBuffer('image/png');
+}
+
+async function recognizePdfPage(worker: any, page: any, pageNumber: number): Promise<string> {
+  const png = await renderPdfPageToPng(page);
+  const tempDir = await mkdtemp(join(tmpdir(), 'mythra-pdf-ocr-'));
+  const imagePath = join(tempDir, `page-${pageNumber}.png`);
+  try {
+    await writeFile(imagePath, png);
+    const result = await worker.recognize(imagePath);
+    return result.data.text.replace(/[ \t]+/g, ' ').trim();
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function tesseractEnglishLangPath() {
+  return `${dirname(requireFromWorkspaceService.resolve('@tesseract.js-data/eng/4.0.0/eng.traineddata.gz'))}${sep}`;
+}
+
+async function createOcrWorker() {
+  const Tesseract = (await import('tesseract.js')).default;
+  return Tesseract.createWorker('eng', 1, {
+    cacheMethod: 'none',
+    langPath: tesseractEnglishLangPath()
+  });
+}
+
+function normalizePdfReadOptions(options?: PdfReadOptions): Required<PdfReadOptions> {
+  const startPage = Number.isFinite(options?.startPage)
+    ? Math.max(1, Math.floor(Number(options?.startPage)))
+    : 1;
+  const pageCount = Number.isFinite(options?.pageCount)
+    ? Math.min(250, Math.max(1, Math.floor(Number(options?.pageCount))))
+    : DEFAULT_PDF_RANGE_PAGE_COUNT;
+  const ocr = options?.ocr === 'on' || options?.ocr === 'off' ? options.ocr : 'auto';
+  return { startPage, pageCount, ocr };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatPdfPage(page: PdfPageText, ocrText?: string) {
+  const chunks = [`--- Page ${page.pageNumber} ---`];
+  chunks.push(page.text || '[No extractable embedded text]');
+  if (page.needsOcr) {
+    chunks.push('[OCR suggested: this page has little/no embedded text and may be scanned or image-based.]');
+  }
+  if (ocrText != null) {
+    chunks.push(`--- Page ${page.pageNumber} OCR ---`);
+    chunks.push(ocrText || '[No text recognized by OCR]');
+  }
+  return chunks.join('\n');
+}
+
+async function extractPdfText(filePath: string, options?: PdfReadOptions): Promise<PdfExtractionResult> {
+  const st = await stat(filePath);
+  if (st.size > MAX_PDF_READ_BYTES) {
+    throw new Error(`PDF is too large to read (max ${Math.round(MAX_PDF_READ_BYTES / 1024 / 1024)} MB).`);
+  }
+
+  const readOptions = normalizePdfReadOptions(options);
+  const buf = await readFile(filePath);
+  const data = new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({
+    data,
+    useSystemFonts: true
+  }).promise;
+
+  const startPage = Math.min(readOptions.startPage, doc.numPages);
+  const endPage = Math.min(doc.numPages, startPage + readOptions.pageCount - 1);
+  const pageTexts: PdfPageText[] = [];
+  try {
+    for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+      const page = await doc.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+      const text = textContent.items
+        .map((item) => ('str' in item ? item.str : ''))
+        .filter(Boolean)
+        .join(' ')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+      pageTexts.push({
+        pageNumber,
+        text,
+        charCount: text.length,
+        needsOcr: text.length < MIN_PDF_TEXT_CHARS_BEFORE_OCR
+      });
+    }
+
+    const ocrTargets =
+      readOptions.ocr === 'off'
+        ? []
+        : readOptions.ocr === 'on'
+          ? pageTexts
+          : pageTexts.filter((page) => page.needsOcr);
+    const limitedOcrTargets = ocrTargets.slice(0, MAX_PDF_OCR_PAGES);
+    const ocrByPage = new Map<number, string>();
+
+    if (limitedOcrTargets.length > 0) {
+      const worker = await createOcrWorker();
+      try {
+        for (const target of limitedOcrTargets) {
+          const page = await doc.getPage(target.pageNumber);
+          try {
+            ocrByPage.set(target.pageNumber, await recognizePdfPage(worker, page, target.pageNumber));
+          } catch (error) {
+            ocrByPage.set(target.pageNumber, `[OCR failed for this page: ${errorMessage(error)}]`);
+          }
+        }
+      } finally {
+        await worker.terminate();
+      }
+    }
+
+    const parts = [
+      `PDF read: pages ${startPage}-${endPage} of ${doc.numPages}.`,
+      readOptions.ocr === 'off'
+        ? 'OCR: off for this read.'
+        : ocrByPage.size > 0
+          ? `OCR: ran on page${ocrByPage.size === 1 ? '' : 's'} ${[...ocrByPage.keys()].join(', ')}.`
+          : 'OCR: not needed for this read.'
+    ];
+    if (ocrTargets.length > limitedOcrTargets.length) {
+      parts.push(
+        `OCR limit: processed ${limitedOcrTargets.length} of ${ocrTargets.length} requested/suggested pages. Read a narrower page range to OCR more.`
+      );
+    }
+    if (endPage < doc.numPages) {
+      parts.push(`More pages available: call read_file with pdf_start_page ${endPage + 1}.`);
+    }
+    parts.push(...pageTexts.map((page) => formatPdfPage(page, ocrByPage.get(page.pageNumber))));
+
+    const embeddedChars = pageTexts.reduce((sum, page) => sum + page.charCount, 0);
+    const content = parts.join('\n\n').slice(0, MAX_PDF_TEXT_CHARS);
+    const ocrApplied = ocrByPage.size > 0;
+    return {
+      content,
+      method: ocrApplied ? (embeddedChars > 0 ? 'embedded-text-with-ocr-fallback' : 'ocr') : 'embedded-text',
+      ocrApplied
+    };
+  } finally {
+    await doc.destroy();
+  }
+}
 
 export class WorkspaceService {
   async assertUsableLocalWorkspace(root: string): Promise<string> {
@@ -835,7 +1040,12 @@ export class WorkspaceService {
     return isInsideRootSync(root, target);
   }
 
-  async openFile(root: string, target: string, allowOutsideWorkspace = false): Promise<OpenFile> {
+  async openFile(
+    root: string,
+    target: string,
+    allowOutsideWorkspace = false,
+    options?: { pdf?: PdfReadOptions }
+  ): Promise<OpenFile> {
     const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
     const ext = extname(safePath).toLowerCase();
 
@@ -865,6 +1075,23 @@ export class WorkspaceService {
         path: safePath,
         content: '',
         imagePreview: { mimeType: rasterMime, dataUrl }
+      };
+    }
+
+    if (ext === '.pdf') {
+      const extraction = await extractPdfText(safePath, options?.pdf);
+      const methodLabel =
+        extraction.method === 'ocr'
+          ? 'OCR text was extracted from scanned PDF pages.'
+          : extraction.method === 'embedded-text-with-ocr-fallback'
+            ? 'PDF text was extracted with OCR fallback for scanned/low-text pages.'
+            : 'PDF text is extracted for reading only.';
+      return {
+        path: safePath,
+        kind: 'pdf',
+        content: extraction.content,
+        readOnly: true,
+        readOnlyReason: methodLabel
       };
     }
 
