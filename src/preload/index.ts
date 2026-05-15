@@ -18,6 +18,7 @@ import type {
   NexusSetupRequest,
   NexusSetupResult,
   OpenFile,
+  OpenRouterCreditsResult,
   SavedChat,
   SavedChatMeta,
   ToolApprovalRequest,
@@ -111,6 +112,8 @@ const electronAPI = {
     ipcRenderer.invoke('generated-media:save', dataUrl, fileName, filePath) as Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>,
   openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) =>
     ipcRenderer.invoke('generated-media:open-image', dataUrl, fileName, mimeType, filePath) as Promise<{ ok: boolean; error?: string }>,
+  getOpenRouterCredits: (settings: AppSettings) =>
+    ipcRenderer.invoke('openrouter:credits', settings) as Promise<OpenRouterCreditsResult>,
   listModels: (settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) =>
     ipcRenderer.invoke('models:list', settings, providerKind, options) as Promise<ModelInfo[]>,
   streamChat: (

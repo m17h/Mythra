@@ -45,6 +45,7 @@ import {
   type WizardMythwizExportRequest,
   type WizardProfile,
   type WizardPromptApprovalRequest,
+  type OpenRouterCreditsResult,
   type ReadChatThreadBackgroundRequest,
   type NexusSetupRequest,
   type WizardSetupRequest
@@ -1166,6 +1167,61 @@ ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
 ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) =>
   modelService.listModels(settings, providerKind, options)
 );
+
+ipcMain.handle('openrouter:credits', async (_event, settings: AppSettings): Promise<OpenRouterCreditsResult> => {
+  const provider = settings.providers.openrouter;
+  const apiKey = provider.apiKey.trim();
+  if (!apiKey) {
+    return { ok: false, error: 'Add an OpenRouter API key first.' };
+  }
+
+  const baseUrl = (provider.baseUrl || defaultSettings.providers.openrouter.baseUrl).trim().replace(/\/+$/, '');
+  try {
+    const response = await fetch(`${baseUrl}/credits`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': provider.appUrl || defaultSettings.providers.openrouter.appUrl,
+        'X-OpenRouter-Title': provider.appName || defaultSettings.providers.openrouter.appName
+      }
+    });
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return {
+          ok: false,
+          status: response.status,
+          error: 'This OpenRouter key cannot read credits. Use an OpenRouter key with credits access.'
+        };
+      }
+      return {
+        ok: false,
+        status: response.status,
+        error: `OpenRouter credits request failed (${response.status}).`
+      };
+    }
+
+    const body = (await response.json()) as {
+      data?: { total_credits?: unknown; total_usage?: unknown };
+    };
+    const totalCredits = Number(body.data?.total_credits);
+    const totalUsage = Number(body.data?.total_usage);
+    if (!Number.isFinite(totalCredits) || !Number.isFinite(totalUsage)) {
+      return { ok: false, error: 'OpenRouter returned an unexpected credits response.' };
+    }
+
+    return {
+      ok: true,
+      totalCredits,
+      totalUsage,
+      remainingCredits: Math.max(0, totalCredits - totalUsage)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not load OpenRouter credits.'
+    };
+  }
+});
 
 ipcMain.handle(
   'chat:stream',

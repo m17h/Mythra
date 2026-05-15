@@ -300,6 +300,7 @@ interface ChatPanelProps {
   selectedProviderLabel: string;
   selectedProviderKind: ProviderKind;
   selectedModel: string;
+  openRouterCredits?: HeaderCreditsDisplay | null;
   sessionMode: SessionMode;
   isWizard?: boolean;
   isNexus?: boolean;
@@ -345,6 +346,13 @@ interface ChatPanelProps {
   chatThreadBackgroundUrl?: string | null;
   /** Applies a soft Gaussian blur to the chat thread background art. */
   chatThreadBackgroundBlur?: boolean;
+}
+
+export interface HeaderCreditsDisplay {
+  label: string;
+  title: string;
+  loading?: boolean;
+  error?: boolean;
 }
 
 const activityLabelMap = {
@@ -565,6 +573,7 @@ export function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  openRouterCredits,
   sessionMode,
   isWizard = false,
   isNexus = false,
@@ -1099,6 +1108,20 @@ export function ChatPanel({
           </span>
         </div>
         <div className="chat-panel__header-right">
+          {openRouterCredits ? (
+            <div
+              className={[
+                'chat-panel__credits',
+                openRouterCredits.loading ? 'is-loading' : '',
+                openRouterCredits.error ? 'is-error' : ''
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              title={openRouterCredits.title}
+            >
+              {openRouterCredits.label}
+            </div>
+          ) : null}
           <label
             className={`chat-panel__web-toggle ${webSearchDisabled ? 'is-disabled' : ''} ${webSearch ? 'is-on' : ''}`}
             title="Allow the model to call web_search in Chat or Agent"

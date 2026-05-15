@@ -226,6 +226,8 @@ export interface UiSettings {
   sessionMode: SessionMode;
   /** When on, the `web_search` tool is available in both Chat and Agent (public web via built-in search). */
   webSearch: boolean;
+  /** When on, shows remaining OpenRouter credits in the chat header while OpenRouter is active. */
+  showOpenRouterCredits: boolean;
   /**
    * Per-provider favorited model ids (matches catalog `id` for that provider).
    * Used in Settings model picker: favorites sort first, then the rest.
@@ -307,6 +309,19 @@ export interface ModelInfo {
 export interface ModelListOptions {
   outputModalities?: string[];
 }
+
+export type OpenRouterCreditsResult =
+  | {
+      ok: true;
+      totalCredits: number;
+      totalUsage: number;
+      remainingCredits: number;
+    }
+  | {
+      ok: false;
+      error: string;
+      status?: number;
+    };
 
 export interface WorkspaceNode {
   name: string;
@@ -576,6 +591,7 @@ export const defaultSettings: AppSettings = {
     themeId: 'neon-grid',
     sessionMode: 'agent',
     webSearch: false,
+    showOpenRouterCredits: false,
     favoriteModels: { lmstudio: [], openrouter: [], ollama: [] },
     wizardProjectsParentFolder: null,
     nexusProjectsParentFolder: null,

@@ -244,6 +244,31 @@ export function SettingsPanel({
             />
           </div>
 
+          <div className="settings-option">
+            <label className={`chat-panel__web-toggle settings-option__toggle ${settings.ui.showOpenRouterCredits ? 'is-on' : ''}`}>
+              <span className="settings-option__copy">
+                <span className="settings-option__label">OpenRouter credits</span>
+                <span className="settings-option__hint">Show remaining credits in the chat header when OpenRouter is active.</span>
+              </span>
+              <input
+                checked={settings.ui.showOpenRouterCredits}
+                onChange={(e) =>
+                  onChange({
+                    ...settings,
+                    ui: {
+                      ...settings.ui,
+                      showOpenRouterCredits: e.target.checked
+                    }
+                  })
+                }
+                type="checkbox"
+              />
+              <span className="chat-panel__web-toggle-track">
+                <span className="chat-panel__web-toggle-knob" />
+              </span>
+            </label>
+          </div>
+
           {isLmStudio || isOllama ? (
             <label className="field">
               <span>Base URL</span>

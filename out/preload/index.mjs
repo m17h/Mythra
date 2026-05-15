@@ -50,6 +50,7 @@ const electronAPI = {
   openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
   saveGeneratedMedia: (dataUrl, fileName, filePath) => ipcRenderer.invoke("generated-media:save", dataUrl, fileName, filePath),
   openGeneratedImage: (dataUrl, fileName, mimeType, filePath) => ipcRenderer.invoke("generated-media:open-image", dataUrl, fileName, mimeType, filePath),
+  getOpenRouterCredits: (settings) => ipcRenderer.invoke("openrouter:credits", settings),
   listModels: (settings, providerKind, options) => ipcRenderer.invoke("models:list", settings, providerKind, options),
   streamChat: (requestId, settings, messages, runtime) => ipcRenderer.invoke("chat:stream", requestId, settings, messages, runtime),
   stopChat: (requestId) => ipcRenderer.invoke("chat:stop", requestId),

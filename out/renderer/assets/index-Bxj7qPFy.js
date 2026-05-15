@@ -34007,6 +34007,7 @@ function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  openRouterCredits,
   sessionMode,
   isWizard = false,
   isNexus = false,
@@ -34439,6 +34440,18 @@ function ChatPanel({
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__session", title: sessionSubheading, children: sessionSubheading })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-panel__header-right", children: [
+        openRouterCredits ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            className: [
+              "chat-panel__credits",
+              openRouterCredits.loading ? "is-loading" : "",
+              openRouterCredits.error ? "is-error" : ""
+            ].filter(Boolean).join(" "),
+            title: openRouterCredits.title,
+            children: openRouterCredits.label
+          }
+        ) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "label",
           {
@@ -36290,6 +36303,27 @@ function SettingsPanel({
             }
           )
         ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-option", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `chat-panel__web-toggle settings-option__toggle ${settings.ui.showOpenRouterCredits ? "is-on" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-option__copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__label", children: "OpenRouter credits" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__hint", children: "Show remaining credits in the chat header when OpenRouter is active." })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              checked: settings.ui.showOpenRouterCredits,
+              onChange: (e) => onChange({
+                ...settings,
+                ui: {
+                  ...settings.ui,
+                  showOpenRouterCredits: e.target.checked
+                }
+              }),
+              type: "checkbox"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
+        ] }) }),
         isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Base URL" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => updateProvider({ baseUrl: e.target.value }), value: provider.baseUrl })
@@ -38769,6 +38803,10 @@ const normalizeProviderBaseUrl = (kind, baseUrl) => {
   if (kind === "openrouter") return trimmed;
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 };
+const formatOpenRouterCredits = (value) => `$${value.toLocaleString(void 0, {
+  minimumFractionDigits: value >= 100 ? 0 : 2,
+  maximumFractionDigits: value >= 100 ? 0 : 2
+})}`;
 const pickDefaultModel = (modelList, currentModel) => {
   if (currentModel && modelList.some((m) => m.id === currentModel)) return currentModel;
   const preferred = modelList.find((m) => !isEmbeddingModel(m.id));
@@ -39206,6 +39244,8 @@ function App() {
   const [showReleaseNotes, setShowReleaseNotes] = reactExports.useState(false);
   const [releaseNotesCache, setReleaseNotesCache] = reactExports.useState(null);
   const [isLoadingReleaseNotes, setIsLoadingReleaseNotes] = reactExports.useState(false);
+  const [openRouterCredits, setOpenRouterCredits] = reactExports.useState(null);
+  const openRouterCreditsRefreshAfterStreamRef = reactExports.useRef(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = reactExports.useState(0);
   const [editingTitleId, setEditingTitleId] = reactExports.useState(null);
   const [editingTitleDraft, setEditingTitleDraft] = reactExports.useState("");
@@ -42156,6 +42196,57 @@ Project mission: ${full.nexus.mission.trim()}` : "";
   })();
   const selectedProviderKind = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? "lmstudio";
   const selectedProviderLabel = providerLabel(selectedProviderKind);
+  const shouldShowOpenRouterCredits = Boolean(settings?.ui.showOpenRouterCredits && selectedProviderKind === "openrouter");
+  const openRouterCreditsApiKey = settings?.providers.openrouter.apiKey.trim() ?? "";
+  const refreshOpenRouterCredits = reactExports.useCallback(async () => {
+    const activeSettings = settingsRef.current;
+    if (!activeSettings || selectedProviderKind !== "openrouter" || !activeSettings.ui.showOpenRouterCredits) return;
+    if (!activeSettings.providers.openrouter.apiKey.trim()) {
+      setOpenRouterCredits({
+        loading: false,
+        result: { ok: false, error: "Add an OpenRouter API key first." },
+        fetchedAt: Date.now()
+      });
+      return;
+    }
+    setOpenRouterCredits((current) => ({ loading: true, result: current?.result ?? null, fetchedAt: current?.fetchedAt }));
+    const result = await window.electronAPI.getOpenRouterCredits(activeSettings).catch((error) => ({
+      ok: false,
+      error: error instanceof Error ? error.message : "Could not load OpenRouter credits."
+    }));
+    if (settingsRef.current?.selectedProvider !== "openrouter" && selectedProviderKind !== "openrouter") return;
+    setOpenRouterCredits({ loading: false, result, fetchedAt: Date.now() });
+  }, [selectedProviderKind]);
+  reactExports.useEffect(() => {
+    if (!shouldShowOpenRouterCredits) {
+      setOpenRouterCredits(null);
+      return;
+    }
+    void refreshOpenRouterCredits();
+  }, [shouldShowOpenRouterCredits, openRouterCreditsApiKey, refreshOpenRouterCredits]);
+  reactExports.useEffect(() => {
+    if (!shouldShowOpenRouterCredits) {
+      openRouterCreditsRefreshAfterStreamRef.current = false;
+      return;
+    }
+    if (chatStreaming) {
+      openRouterCreditsRefreshAfterStreamRef.current = true;
+      return;
+    }
+    if (!openRouterCreditsRefreshAfterStreamRef.current) return;
+    openRouterCreditsRefreshAfterStreamRef.current = false;
+    void refreshOpenRouterCredits();
+  }, [chatStreaming, refreshOpenRouterCredits, shouldShowOpenRouterCredits]);
+  const openRouterCreditsDisplay = shouldShowOpenRouterCredits && openRouterCredits ? openRouterCredits.loading && !openRouterCredits.result ? { label: "Credits: ...", title: "Loading OpenRouter credits.", loading: true } : openRouterCredits.result?.ok ? {
+    label: `Credits: ${formatOpenRouterCredits(openRouterCredits.result.remainingCredits)}`,
+    title: `Remaining OpenRouter credits: ${formatOpenRouterCredits(openRouterCredits.result.remainingCredits)}. Total: ${formatOpenRouterCredits(openRouterCredits.result.totalCredits)}. Used: ${formatOpenRouterCredits(openRouterCredits.result.totalUsage)}.`,
+    loading: openRouterCredits.loading
+  } : {
+    label: "Credits unavailable",
+    title: openRouterCredits.result?.error ?? "Could not load OpenRouter credits.",
+    error: true,
+    loading: openRouterCredits.loading
+  } : null;
   const sessionMode = activeWizard || activeNexus ? "agent" : activeMediaOverrideKind ? "talk" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
@@ -42854,9 +42945,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.4.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.4.1"}`, children: [
                   "v",
-                  "0.4.0"
+                  "0.4.1"
                 ] })
               ] })
             ] }),
@@ -43829,6 +43920,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind),
               sessionMode,
               selectedModel: effectiveHeaderModelId,
+              openRouterCredits: openRouterCreditsDisplay,
               selectedProviderKind,
               selectedProviderLabel,
               hasWorkspace: Boolean(workspaceRoot),
@@ -44010,7 +44102,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.4.0",
+                        appVersion: "0.4.1",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

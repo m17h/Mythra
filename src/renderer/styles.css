@@ -2037,6 +2037,31 @@ html[data-platform='darwin'] .app-shell {
   cursor: not-allowed;
 }
 
+.chat-panel__credits {
+  max-width: 160px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-1);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-panel__credits.is-loading {
+  color: var(--text-2);
+}
+
+.chat-panel__credits.is-error {
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
 .chat-panel__status {
   display: flex;
   align-items: center;
@@ -4004,6 +4029,48 @@ details.chat-activity--collapsible {
 
 .settings-section__title.settings-section__title--cluster {
   margin: 0;
+}
+
+.settings-option {
+  margin: 12px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+:root[data-theme='ice-station'] .settings-option,
+:root[data-theme='kiwi'] .settings-option,
+:root[data-theme='custom'][data-custom-light='true'] .settings-option {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.settings-option__toggle {
+  width: 100%;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  color: var(--text-0);
+}
+
+.settings-option__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-option__label {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.settings-option__hint {
+  color: var(--text-2);
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .app-update-box {

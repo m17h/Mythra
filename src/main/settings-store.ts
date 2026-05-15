@@ -76,6 +76,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       typeof saved?.ui?.chatThreadBackgroundBlur === 'boolean'
         ? saved.ui.chatThreadBackgroundBlur
         : defaultSettings.ui.chatThreadBackgroundBlur,
+    showOpenRouterCredits:
+      typeof saved?.ui?.showOpenRouterCredits === 'boolean'
+        ? saved.ui.showOpenRouterCredits
+        : defaultSettings.ui.showOpenRouterCredits,
     favoriteModels: {
       lmstudio: [
         ...(saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio)

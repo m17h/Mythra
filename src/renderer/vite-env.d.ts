@@ -19,6 +19,7 @@ import type {
   NexusSetupRequest,
   NexusSetupResult,
   OpenFile,
+  OpenRouterCreditsResult,
   SavedChat,
   SavedChatMeta,
   ToolApprovalRequest,
@@ -80,6 +81,7 @@ declare global {
       openExternalUrl: (url: string) => Promise<void>;
       saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) => Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>;
       openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) => Promise<{ ok: boolean; error?: string }>;
+      getOpenRouterCredits: (settings: AppSettings) => Promise<OpenRouterCreditsResult>;
       listModels: (settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) => Promise<ModelInfo[]>;
       streamChat: (
         requestId: string,

@@ -37,6 +37,7 @@ import {
   type NexusProject,
   type NexusSetupRequest,
   type OpenFile,
+  type OpenRouterCreditsResult,
   type ProviderKind,
   type ReleaseNotesCache,
   type SessionMode,
@@ -238,6 +239,11 @@ const normalizeProviderBaseUrl = (kind: AppSettings['selectedProvider'], baseUrl
   if (kind === 'openrouter') return trimmed;
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
 };
+const formatOpenRouterCredits = (value: number) =>
+  `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: value >= 100 ? 0 : 2,
+    maximumFractionDigits: value >= 100 ? 0 : 2
+  })}`;
 const pickDefaultModel = (modelList: ModelInfo[], currentModel?: string) => {
   if (currentModel && modelList.some((m) => m.id === currentModel)) return currentModel;
   const preferred = modelList.find((m) => !isEmbeddingModel(m.id));
@@ -745,6 +751,12 @@ interface NexusMultiResponseGroup {
   suppressFinalizeUntilOrchestrator?: boolean;
 }
 
+interface OpenRouterCreditsState {
+  loading: boolean;
+  result: OpenRouterCreditsResult | null;
+  fetchedAt?: number;
+}
+
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsStatus, setSettingsStatus] = useState('Load a provider profile, then refresh models.');
@@ -849,6 +861,8 @@ export function App() {
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [releaseNotesCache, setReleaseNotesCache] = useState<ReleaseNotesCache | null>(null);
   const [isLoadingReleaseNotes, setIsLoadingReleaseNotes] = useState(false);
+  const [openRouterCredits, setOpenRouterCredits] = useState<OpenRouterCreditsState | null>(null);
+  const openRouterCreditsRefreshAfterStreamRef = useRef(false);
   const [searchSettingsFocusKey, setSearchSettingsFocusKey] = useState(0);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleDraft, setEditingTitleDraft] = useState('');
@@ -4270,6 +4284,71 @@ export function App() {
       ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider
       : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? 'lmstudio';
   const selectedProviderLabel = providerLabel(selectedProviderKind);
+  const shouldShowOpenRouterCredits = Boolean(settings?.ui.showOpenRouterCredits && selectedProviderKind === 'openrouter');
+  const openRouterCreditsApiKey = settings?.providers.openrouter.apiKey.trim() ?? '';
+  const refreshOpenRouterCredits = useCallback(async () => {
+    const activeSettings = settingsRef.current;
+    if (!activeSettings || selectedProviderKind !== 'openrouter' || !activeSettings.ui.showOpenRouterCredits) return;
+    if (!activeSettings.providers.openrouter.apiKey.trim()) {
+      setOpenRouterCredits({
+        loading: false,
+        result: { ok: false, error: 'Add an OpenRouter API key first.' },
+        fetchedAt: Date.now()
+      });
+      return;
+    }
+
+    setOpenRouterCredits((current) => ({ loading: true, result: current?.result ?? null, fetchedAt: current?.fetchedAt }));
+    const result = await window.electronAPI
+      .getOpenRouterCredits(activeSettings)
+      .catch((error: unknown): OpenRouterCreditsResult => ({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Could not load OpenRouter credits.'
+      }));
+
+    if (settingsRef.current?.selectedProvider !== 'openrouter' && selectedProviderKind !== 'openrouter') return;
+    setOpenRouterCredits({ loading: false, result, fetchedAt: Date.now() });
+  }, [selectedProviderKind]);
+
+  useEffect(() => {
+    if (!shouldShowOpenRouterCredits) {
+      setOpenRouterCredits(null);
+      return;
+    }
+    void refreshOpenRouterCredits();
+  }, [shouldShowOpenRouterCredits, openRouterCreditsApiKey, refreshOpenRouterCredits]);
+
+  useEffect(() => {
+    if (!shouldShowOpenRouterCredits) {
+      openRouterCreditsRefreshAfterStreamRef.current = false;
+      return;
+    }
+    if (chatStreaming) {
+      openRouterCreditsRefreshAfterStreamRef.current = true;
+      return;
+    }
+    if (!openRouterCreditsRefreshAfterStreamRef.current) return;
+    openRouterCreditsRefreshAfterStreamRef.current = false;
+    void refreshOpenRouterCredits();
+  }, [chatStreaming, refreshOpenRouterCredits, shouldShowOpenRouterCredits]);
+
+  const openRouterCreditsDisplay =
+    shouldShowOpenRouterCredits && openRouterCredits
+      ? openRouterCredits.loading && !openRouterCredits.result
+        ? { label: 'Credits: ...', title: 'Loading OpenRouter credits.', loading: true }
+        : openRouterCredits.result?.ok
+          ? {
+              label: `Credits: ${formatOpenRouterCredits(openRouterCredits.result.remainingCredits)}`,
+              title: `Remaining OpenRouter credits: ${formatOpenRouterCredits(openRouterCredits.result.remainingCredits)}. Total: ${formatOpenRouterCredits(openRouterCredits.result.totalCredits)}. Used: ${formatOpenRouterCredits(openRouterCredits.result.totalUsage)}.`,
+              loading: openRouterCredits.loading
+            }
+          : {
+              label: 'Credits unavailable',
+              title: openRouterCredits.result?.error ?? 'Could not load OpenRouter credits.',
+              error: true,
+              loading: openRouterCredits.loading
+            }
+      : null;
   const sessionMode = activeWizard || activeNexus ? 'agent' : activeMediaOverrideKind ? 'talk' : (settings?.ui.sessionMode ?? 'agent');
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
   const wizardPromptDiff = wizardPromptApproval
@@ -5924,6 +6003,7 @@ export function App() {
             sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind)}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
+            openRouterCredits={openRouterCreditsDisplay}
             selectedProviderKind={selectedProviderKind}
             selectedProviderLabel={selectedProviderLabel}
             hasWorkspace={Boolean(workspaceRoot)}
