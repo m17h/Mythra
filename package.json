@@ -57,6 +57,21 @@
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": true
       }
+    },
+    "win": {
+      "icon": "build/app_icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "installerIcon": "build/app_icon.ico",
+      "uninstallerIcon": "build/app_icon.ico"
     }
   },
   "dependencies": {
