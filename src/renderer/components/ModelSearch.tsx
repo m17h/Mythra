@@ -123,14 +123,29 @@ export function ModelSearch({
     return () => document.removeEventListener('mousedown', handler);
   }, [portalDropdown]);
 
-  useLayoutEffect(() => {
-    if (!mounted || !portalDropdown || !inputRef.current) {
+  const updateDropdownPosition = useCallback(() => {
+    if (!portalDropdown || !inputRef.current) {
       setDropdownPos(null);
       return;
     }
     const rect = inputRef.current.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-  }, [mounted, portalDropdown]);
+  }, [portalDropdown]);
+
+  useLayoutEffect(() => {
+    if (!mounted || !portalDropdown) {
+      setDropdownPos(null);
+      return;
+    }
+    updateDropdownPosition();
+    const onReposition = () => updateDropdownPosition();
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [mounted, portalDropdown, updateDropdownPosition]);
 
   const baseList = sortModelsByFavorites(
     query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models,

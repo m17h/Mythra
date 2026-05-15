@@ -1259,6 +1259,7 @@ html[data-platform='darwin'] .app-shell {
 }
 
 .chat-list__item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1266,6 +1267,14 @@ html[data-platform='darwin'] .app-shell {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--transition-fast);
+}
+
+.chat-list__item[draggable='true'] {
+  cursor: grab;
+}
+
+.chat-list__item[draggable='true']:active {
+  cursor: grabbing;
 }
 
 .chat-list__item:hover {
@@ -1281,6 +1290,32 @@ html[data-platform='darwin'] .app-shell {
 
 .chat-list__item.is-active {
   background: var(--accent-subtle);
+}
+
+.chat-list__item.is-dragging {
+  opacity: 0.42;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.chat-list__item.is-drop-before::before,
+.chat-list__item.is-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent-light);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-light) 60%, transparent);
+  pointer-events: none;
+}
+
+.chat-list__item.is-drop-before::before {
+  top: -2px;
+}
+
+.chat-list__item.is-drop-after::after {
+  bottom: -2px;
 }
 
 .chat-list__item.is-pinned {
@@ -1542,6 +1577,15 @@ html[data-platform='darwin'] .app-shell {
   font-size: 0.62rem;
   font-weight: 750;
   line-height: 1.2;
+}
+
+.chat-list__override-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-light);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-light) 52%, transparent);
 }
 
 .chat-list__item--media-music .chat-list__media-badge {
@@ -3425,6 +3469,108 @@ details.chat-activity--collapsible {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.chat-compose__reasoning {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.chat-compose__reasoning:hover:not(:disabled),
+.chat-compose__reasoning.is-active {
+  color: var(--accent-light);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-compose__reasoning:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.chat-reasoning-popover {
+  position: fixed;
+  z-index: 99999;
+  width: min(260px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-strong) 96%, transparent);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 4px 6px rgba(0, 0, 0, 0.12),
+    0 14px 28px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chat-reasoning-popover {
+    animation: chat-context-meter-tip-in 0.14s ease-out;
+  }
+}
+
+.chat-reasoning-popover__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-reasoning-popover__header strong {
+  color: var(--text-0);
+  font-size: 0.82rem;
+}
+
+.chat-reasoning-popover__header span {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-reasoning-popover__options {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.chat-reasoning-popover__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-reasoning-popover__option:hover,
+.chat-reasoning-popover__option.is-active {
+  background: var(--accent-subtle);
+  color: var(--text-0);
+}
+
+.chat-reasoning-popover__option span {
+  font-weight: 650;
+  font-size: 0.8rem;
+}
+
+.chat-reasoning-popover__option small {
+  color: var(--text-2);
+  font-size: 0.68rem;
+  text-align: right;
 }
 
 .chat-context-meter {

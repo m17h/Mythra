@@ -43,15 +43,19 @@ const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 const requireFromWorkspaceService = createRequire(import.meta.url);
 const WIZARD_CORE_DOCS = [
-  ['soul.md', 'Soul'],
+  ['identity.md', 'Identity'],
+  ['personality.md', 'Personality'],
   ['tools.md', 'Tools'],
   ['memory.md', 'Memory'],
   ['corrections.md', 'Corrections']
 ] as const;
+const WIZARD_LEGACY_CORE_DOCS = [['soul.md', 'Soul (legacy)']] as const;
 
 const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
-  'soul.md': (name) =>
-    `# ${name}\n\nDescribe this Wizard's identity, tone, principles, strengths, boundaries, and working style here.\n`,
+  'identity.md': (name) =>
+    `# Identity\n\n- Name: ${name}\n- Role: Describe this Wizard's role, specialty, and purpose here.\n`,
+  'personality.md': () =>
+    `# Personality\n\nDescribe this Wizard's tone, principles, strengths, boundaries, and working style here.\n`,
   'tools.md': () =>
     `# Tools
 
@@ -61,11 +65,11 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
-- **Default core files** Mythra creates are only soul, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
+- **Default core files** Mythra creates are only identity, personality, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
 
 ## Example directions (optional)
 
-Users often dedicate a Wizard to: matching a **writing voice** (samples + soul); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
+Users often dedicate a Wizard to: matching a **writing voice** (samples + personality); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
 
 Describe your preferred stacks, scripts, test commands, and project conventions below.
 `,
@@ -75,12 +79,12 @@ Describe your preferred stacks, scripts, test commands, and project conventions 
     `# Corrections\n\nUser corrections, mistakes to avoid, and lessons learned.\n`
 };
 
-function soulMarkdownForWizard(name: string, personality?: string): string {
+function personalityMarkdownForWizard(personality?: string): string {
   const trimmed = personality?.trim();
   if (trimmed) {
-    return `# ${name}\n\n${trimmed}\n`;
+    return `# Personality\n\n${trimmed}\n`;
   }
-  return WIZARD_DEFAULT_CONTENT['soul.md'](name);
+  return WIZARD_DEFAULT_CONTENT['personality.md']('');
 }
 
 function memoryMarkdownForWizard(memory?: string): string {
@@ -343,6 +347,17 @@ const RASTER_IMAGE_EXT: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.avif': 'image/avif'
 };
+const AUDIO_EXT: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.webm': 'audio/webm'
+};
+const MAX_BINARY_TOOL_BYTES = 25 * 1024 * 1024;
 
 interface PdfExtractionResult {
   content: string;
@@ -728,8 +743,8 @@ export class WorkspaceService {
     for (const [file] of WIZARD_CORE_DOCS) {
       const target = join(root, file);
       const initialBody =
-        file === 'soul.md'
-          ? soulMarkdownForWizard(name, request.wizardPersonality)
+        file === 'personality.md'
+          ? personalityMarkdownForWizard(request.wizardPersonality)
           : file === 'memory.md'
             ? memoryMarkdownForWizard(request.wizardMemory)
             : WIZARD_DEFAULT_CONTENT[file](name);
@@ -802,8 +817,9 @@ export class WorkspaceService {
     const bucket: Array<{ path: string; type: WorkspaceNode['type'] }> = [];
     await walkFiles(resolved, resolved, bucket);
 
-    const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
-    const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
+    const displayCoreDocs = [...WIZARD_CORE_DOCS, ...WIZARD_LEGACY_CORE_DOCS] as const;
+    const coreMap = new Map(displayCoreDocs.map(([f, label]) => [f.toLowerCase(), label]));
+    const coreOrder = displayCoreDocs.map(([f]) => f.toLowerCase());
 
     const mdRelPaths = bucket
       .filter((x) => x.type === 'file' && /\.md$/i.test(x.path))
@@ -1170,6 +1186,48 @@ export class WorkspaceService {
     await stat(root);
     await walkFiles(resolve(root), resolve(root), files);
     return files;
+  }
+
+  async listRecentFiles(root: string, limit = 25): Promise<Array<{ path: string; bytes: number; modifiedAt: string }>> {
+    const resolvedRoot = resolve(root);
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const files = (await this.listFiles(resolvedRoot)).filter((entry) => entry.type === 'file');
+    const rows: Array<{ path: string; bytes: number; modifiedAt: string; mtimeMs: number }> = [];
+    for (const entry of files) {
+      try {
+        const full = await ensureInsideRoot(resolvedRoot, entry.path);
+        const st = await stat(full);
+        rows.push({
+          path: entry.path,
+          bytes: st.size,
+          modifiedAt: st.mtime.toISOString(),
+          mtimeMs: st.mtimeMs
+        });
+      } catch {
+        // ignore files that disappear while listing
+      }
+    }
+    return rows
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, boundedLimit)
+      .map(({ mtimeMs: _mtimeMs, ...row }) => row);
+  }
+
+  async readBinaryFile(root: string, target: string, allowOutsideWorkspace = false) {
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const st = await stat(safePath);
+    if (st.size > MAX_BINARY_TOOL_BYTES) {
+      throw new Error(`File is too large for this tool (max ${Math.round(MAX_BINARY_TOOL_BYTES / 1024 / 1024)} MB).`);
+    }
+    const ext = extname(safePath).toLowerCase();
+    const mimeType = RASTER_IMAGE_EXT[ext] ?? AUDIO_EXT[ext] ?? 'application/octet-stream';
+    const bytes = await readFile(safePath);
+    return {
+      path: safePath,
+      mimeType,
+      bytes,
+      dataBase64: bytes.toString('base64')
+    };
   }
 
   async getChanges(root: string): Promise<WorkspaceChanges> {

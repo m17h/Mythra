@@ -71,6 +71,7 @@ export class ChatStore {
           createdAt: chat.createdAt,
           updatedAt: chat.updatedAt,
           pinned: chat.pinned ?? false,
+          chatOrder: typeof chat.chatOrder === 'number' && Number.isFinite(chat.chatOrder) ? chat.chatOrder : null,
           modelOverride: chat.modelOverride ?? null,
           wizard: chat.wizard ?? null,
           wizardId: chat.wizardId ?? null,
@@ -86,6 +87,9 @@ export class ChatStore {
       const ap = a.pinned ? 1 : 0;
       const bp = b.pinned ? 1 : 0;
       if (ap !== bp) return bp - ap;
+      const aOrder = typeof a.chatOrder === 'number' && Number.isFinite(a.chatOrder) ? a.chatOrder : -a.updatedAt;
+      const bOrder = typeof b.chatOrder === 'number' && Number.isFinite(b.chatOrder) ? b.chatOrder : -b.updatedAt;
+      if (aOrder !== bOrder) return aOrder - bOrder;
       return b.updatedAt - a.updatedAt;
     });
   }

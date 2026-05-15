@@ -104,7 +104,7 @@ const pages = [
     body:
       'A Wizard is a named AI with its own model, private local workspace, system prompt, and Markdown memory documents.',
     points: [
-      'Each Wizard gets documents like soul.md, tools.md, memory.md, and corrections.md.',
+      'Each Wizard gets documents like identity.md, personality.md, tools.md, memory.md, and corrections.md.',
       'Those documents are injected into Wizard chats automatically.',
       'A Wizard can have multiple sessions while keeping the same identity and memory files.'
     ],

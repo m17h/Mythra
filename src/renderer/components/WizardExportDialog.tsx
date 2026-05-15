@@ -4,7 +4,7 @@ import type { SavedChatMeta } from '@shared/types';
 
 const dialogTransition = { duration: 0.18, ease: 'easeOut' as const };
 
-const CORE_MD_NAMES = ['soul.md', 'tools.md', 'memory.md', 'corrections.md'];
+const CORE_MD_NAMES = ['identity.md', 'personality.md', 'tools.md', 'memory.md', 'corrections.md', 'soul.md'];
 
 function basename(path: string): string {
   const s = path.replace(/\\/g, '/');

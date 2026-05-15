@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { AppUpdatesInfoDialog } from './components/AppUpdatesInfoDialog';
@@ -38,6 +38,7 @@ import {
   type NexusSetupRequest,
   type OpenFile,
   type OpenRouterCreditsResult,
+  type OpenRouterReasoningEffort,
   type ProviderKind,
   type ReleaseNotesCache,
   type SessionMode,
@@ -87,7 +88,7 @@ const replaceWizardNameText = (text: string, previousName: string, nextName: str
   return text.replace(new RegExp(escapeRegExp(trimmedPrevious), 'g'), nextName);
 };
 
-const renameWizardSoulMarkdown = (text: string, previousName: string, nextName: string) => {
+const renameWizardIdentityMarkdown = (text: string, previousName: string, nextName: string) => {
   const trimmedPrevious = previousName.trim();
   if (!trimmedPrevious || trimmedPrevious === nextName) return text;
   const headingPattern = new RegExp(`^(#\\s*)${escapeRegExp(trimmedPrevious)}(\\s*)$`, 'm');
@@ -305,6 +306,12 @@ const sessionTitle = (messages: ChatMessage[], fallback = 'New session') => {
   return text.length > 42 ? `${text.slice(0, 42)}...` : text || fallback;
 };
 
+const resolveSessionTitle = (messages: ChatMessage[], titleOverride: string | null | undefined, fallback = 'New session') => {
+  const t = titleOverride?.trim();
+  if (t) return t;
+  return sessionTitle(messages, fallback);
+};
+
 const buildWizardSystemPrompt = (wizard: WizardProfile) => {
   const outsideOn = Boolean(wizard.allowOutsideWorkspace);
   const pathRules = outsideOn
@@ -317,7 +324,7 @@ Mythra Wizard runtime:
 - You are currently associated with your private Wizard workspace: ${wizard.workspaceRoot}
 ${pathRules}
 - At the start of every message in a session, Mythra injects the current contents of every \`.md\` file in your workspace (below your system prompt). Core docs are listed first; read or re-read specific files with tools if the user edits them mid-chat.
-- When asked about your identity, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
+- When asked about your identity, personality, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
 - Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
 };
 
@@ -338,7 +345,7 @@ Mythra Nexus runtime:
 - You are the leader Wizard for Nexus project "${nexus.name}".
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, strengths, memory, and corrections.
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, personality, strengths, memory, and corrections.
 - The team is: ${teamNames.join(', ')}.
 ${collab}- Start by making a concise plan. Delegate tasks to specific Wizards by name when useful, and explain why.
 - **Leader coordination:** Assign owners by name and file/path scope where helpful. When work must pause until another Wizard finishes something, say clearly **WAITING ON [Wizard]:** reason so teammates idle correctly or pick alternate tasks you assign. When independent tracks can proceed safely (different files / non-overlapping scope), say **PARALLEL OK** for those tracks.
@@ -389,7 +396,7 @@ Mythra Nexus runtime:
 - Your Nexus role is: ${role === 'leader' ? 'leader' : 'team member'}.
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, strengths, memory, and corrections.
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, personality, strengths, memory, and corrections.
 - The team is: ${teamNames.join(', ')}.
 ${role === 'leader' ? modeLeader : modeMember}
 - Answer as yourself, in first person, and focus on the user's latest request.
@@ -874,6 +881,10 @@ export function App() {
   const [normalChatDeleteTarget, setNormalChatDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [draggingNormalChatId, setDraggingNormalChatId] = useState<string | null>(null);
+  const [normalChatDropTarget, setNormalChatDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
+  const [draggingWizardId, setDraggingWizardId] = useState<string | null>(null);
+  const [wizardDropTarget, setWizardDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
   const [wizardRenamePrompt, setWizardRenamePrompt] = useState<{
     wizardId: string;
     previous: WizardProfile;
@@ -1106,7 +1117,10 @@ export function App() {
       if (!disk) return;
       await window.electronAPI.saveChat({
         ...disk,
-        title: resolveChatTitle(msgs, disk.titleOverride),
+        title:
+          disk.kind === 'wizard-session' || disk.kind === 'nexus-session'
+            ? resolveSessionTitle(msgs, disk.titleOverride)
+            : resolveChatTitle(msgs, disk.titleOverride),
         messages: msgs,
         timeline: tl,
         updatedAt: Date.now()
@@ -1384,7 +1398,7 @@ export function App() {
         kind,
         title:
           kind === 'wizard-session' || kind === 'nexus-session'
-            ? sessionTitle(msgs, nameOverride ?? undefined)
+            ? resolveSessionTitle(msgs, nameOverride)
             : resolveChatTitle(msgs, nameOverride),
         titleOverride: nameOverride == null || nameOverride === '' ? null : nameOverride.trim() || null,
         messages: msgs,
@@ -1392,6 +1406,12 @@ export function App() {
         createdAt,
         updatedAt: now,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
+        chatOrder:
+          typeof disk?.chatOrder === 'number'
+            ? disk.chatOrder
+            : typeof existing?.chatOrder === 'number'
+              ? existing.chatOrder
+              : null,
         modelOverride:
           disk?.modelOverride ??
           existing?.modelOverride ??
@@ -2127,6 +2147,27 @@ export function App() {
     setSettings(saved);
   };
 
+  const handleOpenRouterReasoningEffortChange = useCallback(
+    (effort: OpenRouterReasoningEffort) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const next: AppSettings = {
+        ...current,
+        providers: {
+          ...current.providers,
+          openrouter: {
+            ...current.providers.openrouter,
+            reasoningEffort: effort
+          }
+        }
+      };
+      settingsRef.current = next;
+      setSettings(next);
+      void persistSettingsToDisk(next);
+    },
+    []
+  );
+
   const SETTINGS_AUTOSAVE_MS = 450;
   const WIZARD_AUTOSAVE_MS = 450;
   const NEXUS_AUTOSAVE_MS = 450;
@@ -2556,6 +2597,7 @@ export function App() {
       createdAt: now,
       updatedAt: now,
       pinned: false,
+      chatOrder: null,
       modelOverride: override
     };
     await window.electronAPI.saveChat(chat);
@@ -3286,14 +3328,16 @@ export function App() {
         if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, profile.workspaceRoot)) {
           await activateWorkspace(profile.workspaceRoot);
         }
-        try {
-          const soul = await window.electronAPI.openFile(profile.workspaceRoot, 'soul.md');
-          const nextSoul = renameWizardSoulMarkdown(soul.content, previousName, nextName);
-          if (nextSoul !== soul.content) {
-            await window.electronAPI.saveFile(profile.workspaceRoot, 'soul.md', nextSoul);
+        for (const identityDoc of ['identity.md', 'soul.md']) {
+          try {
+            const current = await window.electronAPI.openFile(profile.workspaceRoot, identityDoc);
+            const nextContent = renameWizardIdentityMarkdown(current.content, previousName, nextName);
+            if (nextContent !== current.content) {
+              await window.electronAPI.saveFile(profile.workspaceRoot, identityDoc, nextContent);
+            }
+          } catch {
+            /* Identity docs can be missing in imported/custom workspaces; the display rename still succeeds. */
           }
-        } catch {
-          /* soul.md can be missing in imported/custom workspaces; the display rename still succeeds. */
         }
         try {
           profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
@@ -3315,7 +3359,7 @@ export function App() {
       wizardDraftRef.current = profile;
       setSettingsStatus(
         mode === 'everywhere'
-          ? 'Wizard name updated across settings, workspace folder, system prompt, and soul.md.'
+          ? 'Wizard name updated across settings, workspace folder, system prompt, and workspace identity docs.'
           : 'Wizard display name updated in settings only.'
       );
       closeWizardRenamePrompt(true);
@@ -3512,11 +3556,199 @@ export function App() {
       e.stopPropagation();
       const full = await window.electronAPI.loadChat(id);
       if (!full) return;
-      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, updatedAt: Date.now() });
+      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, chatOrder: null, updatedAt: Date.now() });
       await refreshChatList();
     },
     [refreshChatList]
   );
+
+  const canReorderNormalChats = useCallback(
+    (sourceId: string | null, targetId: string) => {
+      if (!sourceId || sourceId === targetId) return false;
+      const source = normalChatList.find((chat) => chat.id === sourceId);
+      const target = normalChatList.find((chat) => chat.id === targetId);
+      return Boolean(source && target && Boolean(source.pinned) === Boolean(target.pinned));
+    },
+    [normalChatList]
+  );
+
+  const reorderNormalChats = useCallback(
+    async (sourceId: string, targetId: string, position: 'before' | 'after') => {
+      if (!canReorderNormalChats(sourceId, targetId)) return;
+      const source = normalChatList.find((chat) => chat.id === sourceId);
+      if (!source) return;
+      const pinnedGroup = Boolean(source.pinned);
+      const group = normalChatList.filter((chat) => Boolean(chat.pinned) === pinnedGroup);
+      const fromIndex = group.findIndex((chat) => chat.id === sourceId);
+      if (fromIndex < 0) return;
+
+      const nextGroup = [...group];
+      const [moved] = nextGroup.splice(fromIndex, 1);
+      if (!moved) return;
+      const targetIndex = nextGroup.findIndex((chat) => chat.id === targetId);
+      if (targetIndex < 0) return;
+      nextGroup.splice(position === 'after' ? targetIndex + 1 : targetIndex, 0, moved);
+      if (nextGroup.every((chat, index) => chat.id === group[index]?.id)) return;
+      const orderById = new Map(nextGroup.map((chat, index) => [chat.id, index]));
+      setChatList((current) =>
+        current.map((chat) =>
+          orderById.has(chat.id)
+            ? {
+                ...chat,
+                chatOrder: orderById.get(chat.id) ?? null
+              }
+            : chat
+        )
+      );
+
+      await Promise.all(
+        nextGroup.map(async (chat, index) => {
+          const full = await window.electronAPI.loadChat(chat.id);
+          if (!full) return;
+          await window.electronAPI.saveChat({ ...full, chatOrder: index, updatedAt: full.updatedAt });
+        })
+      );
+      await refreshChatList();
+    },
+    [canReorderNormalChats, normalChatList, refreshChatList]
+  );
+
+  const handleNormalChatDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
+    setDraggingNormalChatId(id);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    const dragImage = document.createElement('div');
+    dragImage.style.position = 'fixed';
+    dragImage.style.top = '-1000px';
+    dragImage.style.left = '-1000px';
+    dragImage.style.width = '1px';
+    dragImage.style.height = '1px';
+    dragImage.style.opacity = '0';
+    document.body.appendChild(dragImage);
+    event.dataTransfer.setDragImage(dragImage, 0, 0);
+    window.requestAnimationFrame(() => dragImage.remove());
+  };
+
+  const handleNormalChatDragOver = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    if (!canReorderNormalChats(draggingNormalChatId, targetId)) {
+      setNormalChatDropTarget((current) => (current?.id === targetId ? null : current));
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+    setNormalChatDropTarget({ id: targetId, position });
+  };
+
+  const handleNormalChatDrop = async (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault();
+    const sourceId = draggingNormalChatId ?? event.dataTransfer.getData('text/plain');
+    const position = normalChatDropTarget?.id === targetId ? normalChatDropTarget.position : 'before';
+    setDraggingNormalChatId(null);
+    setNormalChatDropTarget(null);
+    if (!sourceId) return;
+    await reorderNormalChats(sourceId, targetId, position);
+  };
+
+  const clearNormalChatDragState = () => {
+    setDraggingNormalChatId(null);
+    setNormalChatDropTarget(null);
+  };
+
+  const canReorderWizards = useCallback(
+    (sourceId: string | null, targetId: string) => {
+      if (!sourceId || sourceId === targetId) return false;
+      const source = wizardChatList.find((chat) => chat.id === sourceId);
+      const target = wizardChatList.find((chat) => chat.id === targetId);
+      return Boolean(source && target && Boolean(source.pinned) === Boolean(target.pinned));
+    },
+    [wizardChatList]
+  );
+
+  const reorderWizards = useCallback(
+    async (sourceId: string, targetId: string, position: 'before' | 'after') => {
+      if (!canReorderWizards(sourceId, targetId)) return;
+      const source = wizardChatList.find((chat) => chat.id === sourceId);
+      if (!source) return;
+      const pinnedGroup = Boolean(source.pinned);
+      const group = wizardChatList.filter((chat) => Boolean(chat.pinned) === pinnedGroup);
+      const fromIndex = group.findIndex((chat) => chat.id === sourceId);
+      if (fromIndex < 0) return;
+
+      const nextGroup = [...group];
+      const [moved] = nextGroup.splice(fromIndex, 1);
+      if (!moved) return;
+      const targetIndex = nextGroup.findIndex((chat) => chat.id === targetId);
+      if (targetIndex < 0) return;
+      nextGroup.splice(position === 'after' ? targetIndex + 1 : targetIndex, 0, moved);
+      if (nextGroup.every((chat, index) => chat.id === group[index]?.id)) return;
+      const orderById = new Map(nextGroup.map((chat, index) => [chat.id, index]));
+      setChatList((current) =>
+        current.map((chat) =>
+          orderById.has(chat.id)
+            ? {
+                ...chat,
+                chatOrder: orderById.get(chat.id) ?? null
+              }
+            : chat
+        )
+      );
+
+      await Promise.all(
+        nextGroup.map(async (chat, index) => {
+          const full = await window.electronAPI.loadChat(chat.id);
+          if (!full) return;
+          await window.electronAPI.saveChat({ ...full, chatOrder: index, updatedAt: full.updatedAt });
+        })
+      );
+      await refreshChatList();
+    },
+    [canReorderWizards, refreshChatList, wizardChatList]
+  );
+
+  const handleWizardDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
+    setDraggingWizardId(id);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    const dragImage = document.createElement('div');
+    dragImage.style.position = 'fixed';
+    dragImage.style.top = '-1000px';
+    dragImage.style.left = '-1000px';
+    dragImage.style.width = '1px';
+    dragImage.style.height = '1px';
+    dragImage.style.opacity = '0';
+    document.body.appendChild(dragImage);
+    event.dataTransfer.setDragImage(dragImage, 0, 0);
+    window.requestAnimationFrame(() => dragImage.remove());
+  };
+
+  const handleWizardDragOver = (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    if (!canReorderWizards(draggingWizardId, targetId)) {
+      setWizardDropTarget((current) => (current?.id === targetId ? null : current));
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+    setWizardDropTarget({ id: targetId, position });
+  };
+
+  const handleWizardDrop = async (event: DragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault();
+    const sourceId = draggingWizardId ?? event.dataTransfer.getData('text/plain');
+    const position = wizardDropTarget?.id === targetId ? wizardDropTarget.position : 'before';
+    setDraggingWizardId(null);
+    setWizardDropTarget(null);
+    if (!sourceId) return;
+    await reorderWizards(sourceId, targetId, position);
+  };
+
+  const clearWizardDragState = () => {
+    setDraggingWizardId(null);
+    setWizardDropTarget(null);
+  };
 
   const commitRenameChat = async (id: string, draft: string) => {
     if (skipNextRenameCommitRef.current) {
@@ -3582,10 +3814,11 @@ export function App() {
     await refreshChatList();
   };
 
-  const sendChat = async () => {
+  const sendChat = async (override?: { content?: string; attachments?: ChatAttachment[] }) => {
     const sendSettings = settingsRef.current;
-    const trimmedInput = chatInput.trim();
-    const attachmentsSnapshot = [...chatAttachments];
+    const overrideContent = override?.content;
+    const trimmedInput = (overrideContent ?? chatInput).trim();
+    const attachmentsSnapshot = override?.attachments ? [...override.attachments] : [...chatAttachments];
     if (!sendSettings || (trimmedInput.length === 0 && attachmentsSnapshot.length === 0)) {
       return;
     }
@@ -3618,8 +3851,10 @@ export function App() {
         showInFlightIfActive(snapshot);
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline);
       }
-      setChatInput('');
-      setChatAttachments([]);
+      if (!override) {
+        setChatInput('');
+        setChatAttachments([]);
+      }
       return;
     }
 
@@ -3796,8 +4031,10 @@ export function App() {
     ];
     setChatMessages([...nextHistory, ...assistantMessagesForTurn]);
     setChatTimeline(nextTimeline);
-    setChatInput('');
-    setChatAttachments([]);
+    if (!override) {
+      setChatInput('');
+      setChatAttachments([]);
+    }
     setChatStreaming(true);
     setActiveRequestId(requestId);
 
@@ -3823,6 +4060,7 @@ export function App() {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         pinned: false,
+        chatOrder: null,
         modelOverride: mo
       };
       await window.electronAPI.saveChat(chat);
@@ -4284,6 +4522,11 @@ export function App() {
       ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider
       : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? 'lmstudio';
   const selectedProviderLabel = providerLabel(selectedProviderKind);
+  const effectiveHeaderModelInfo = modelCatalogForLimit.find((model) => model.id === effectiveHeaderModelId);
+  const openRouterReasoningSupported = Boolean(
+    selectedProviderKind === 'openrouter' && effectiveHeaderModelInfo?.supportedParameters?.includes('reasoning')
+  );
+  const openRouterReasoningEffort = settings?.providers.openrouter.reasoningEffort ?? 'auto';
   const shouldShowOpenRouterCredits = Boolean(settings?.ui.showOpenRouterCredits && selectedProviderKind === 'openrouter');
   const openRouterCreditsApiKey = settings?.providers.openrouter.apiKey.trim() ?? '';
   const refreshOpenRouterCredits = useCallback(async () => {
@@ -4617,7 +4860,7 @@ export function App() {
               <p>
                 Rename <strong>{wizardRenamePrompt.previous.name}</strong> to{' '}
                 <strong>{wizardRenamePrompt.nextName}</strong>. Mythra can also rename the workspace folder and update
-                this Wizard&apos;s system prompt and <code>soul.md</code>.
+                this Wizard&apos;s system prompt and identity document.
               </p>
               <div className="app-dialog__actions">
                 <button className="btn btn--secondary" onClick={() => closeWizardRenamePrompt(false)} type="button">
@@ -5399,10 +5642,21 @@ export function App() {
                         {normalChatList.map((chat) => {
                           const mediaKind = mediaKindForOverride(chat.modelOverride);
                           const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
+                          const hasModelOverride = Boolean(chat.modelOverride?.model?.trim());
                           return (
                             <div
                               key={chat.id}
-                              className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ''}`}
+                              className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ''} ${draggingNormalChatId === chat.id ? 'is-dragging' : ''} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ''}`}
+                              draggable={editingTitleId !== chat.id}
+                              onDragEnd={clearNormalChatDragState}
+                              onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                                  setNormalChatDropTarget((current) => (current?.id === chat.id ? null : current));
+                                }
+                              }}
+                              onDragOver={(e) => handleNormalChatDragOver(e, chat.id)}
+                              onDragStart={(e) => handleNormalChatDragStart(e, chat.id)}
+                              onDrop={(e) => void handleNormalChatDrop(e, chat.id)}
                               onClick={() => loadChat(chat.id)}
                             >
                               {editingTitleId === chat.id ? (
@@ -5434,6 +5688,12 @@ export function App() {
                                       <span className="chat-list__media-badge" title={mediaBadge.label}>
                                         {mediaBadge.shortLabel}
                                       </span>
+                                    ) : hasModelOverride ? (
+                                      <span
+                                        aria-label="Model override enabled"
+                                        className="chat-list__override-dot"
+                                        title="Model override enabled"
+                                      />
                                     ) : null}
                                     <div className="chat-list__title">{chat.title}</div>
                                   </div>
@@ -5704,7 +5964,17 @@ export function App() {
                           <div className="wizard-group" key={chat.id}>
                             <div
                               aria-expanded={expandedWizardIds.has(chat.id)}
-                              className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''}`}
+                              className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${draggingWizardId === chat.id ? 'is-dragging' : ''} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ''}`}
+                              draggable
+                              onDragEnd={clearWizardDragState}
+                              onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                                  setWizardDropTarget((current) => (current?.id === chat.id ? null : current));
+                                }
+                              }}
+                              onDragOver={(e) => handleWizardDragOver(e, chat.id)}
+                              onDragStart={(e) => handleWizardDragStart(e, chat.id)}
+                              onDrop={(e) => void handleWizardDrop(e, chat.id)}
                               onClick={() => {
                                 void handleWizardSidebarRowActivate(chat);
                               }}
@@ -5993,6 +6263,7 @@ export function App() {
             onInputChange={setChatInput}
             onRemoveAttachment={(id) => setChatAttachments((c) => c.filter((a) => a.id !== id))}
             onSend={sendChat}
+            onSubmitQuizAnswers={(answersText) => void sendChat({ content: answersText })}
             onStop={stopChat}
             modelCatalogSettled={Boolean(settings) && modelCatalogSettled}
             providerConnected={providerConnected}
@@ -6003,6 +6274,9 @@ export function App() {
             sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind)}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
+            openRouterReasoningEffort={openRouterReasoningEffort}
+            openRouterReasoningSupported={openRouterReasoningSupported}
+            onOpenRouterReasoningEffortChange={handleOpenRouterReasoningEffortChange}
             openRouterCredits={openRouterCreditsDisplay}
             selectedProviderKind={selectedProviderKind}
             selectedProviderLabel={selectedProviderLabel}

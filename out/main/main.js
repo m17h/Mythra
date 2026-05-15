@@ -77,6 +77,7 @@ class ChatStore {
           createdAt: chat.createdAt,
           updatedAt: chat.updatedAt,
           pinned: chat.pinned ?? false,
+          chatOrder: typeof chat.chatOrder === "number" && Number.isFinite(chat.chatOrder) ? chat.chatOrder : null,
           modelOverride: chat.modelOverride ?? null,
           wizard: chat.wizard ?? null,
           wizardId: chat.wizardId ?? null,
@@ -90,6 +91,9 @@ class ChatStore {
       const ap = a.pinned ? 1 : 0;
       const bp = b.pinned ? 1 : 0;
       if (ap !== bp) return bp - ap;
+      const aOrder = typeof a.chatOrder === "number" && Number.isFinite(a.chatOrder) ? a.chatOrder : -a.updatedAt;
+      const bOrder = typeof b.chatOrder === "number" && Number.isFinite(b.chatOrder) ? b.chatOrder : -b.updatedAt;
+      if (aOrder !== bOrder) return aOrder - bOrder;
       return b.updatedAt - a.updatedAt;
     });
   }
@@ -1171,6 +1175,8 @@ function formatToolActivityStart(toolName, rawArguments, settings) {
     return `Using ${humanFallback(toolName)}`;
   }
   switch (toolName) {
+    case "get_current_time":
+      return "Checking local time";
     case "web_search": {
       const q = truncateSnippet(ss(args.query), 100);
       if (!q) return "Searching the web";
@@ -1179,6 +1185,12 @@ function formatToolActivityStart(toolName, rawArguments, settings) {
     }
     case "read_file":
       return `Reading ${displayFile(args.path)}`;
+    case "summarize_file":
+      return `Summarizing ${displayFile(args.path)}`;
+    case "describe_image":
+      return `Inspecting ${displayFile(args.path)}`;
+    case "transcribe_audio":
+      return `Transcribing ${displayFile(args.path)}`;
     case "write_file":
       return `Writing ${displayFile(args.path)}`;
     case "replace_in_file":
@@ -1196,6 +1208,24 @@ function formatToolActivityStart(toolName, rawArguments, settings) {
       return `Deleting ${displayFile(args.path)}`;
     case "list_files":
       return "Listing workspace files";
+    case "list_recent_files":
+      return "Listing recent files";
+    case "search_chat_history": {
+      const q = truncateSnippet(ss(args.query), 80);
+      return q ? `Searching chat history for "${q}"` : "Searching chat history";
+    }
+    case "read_chat_messages":
+      return ss(args.chat_id) ? "Reading saved chat messages" : "Reading current chat messages";
+    case "get_app_settings_summary":
+      return "Reading app settings summary";
+    case "estimate_model_cost":
+      return "Estimating model cost";
+    case "rename_current_chat": {
+      const title = truncateSnippet(ss(args.title), 64);
+      return title ? `Renaming chat to “${title}”` : "Renaming chat";
+    }
+    case "create_wizard_memory":
+      return "Saving Wizard memory";
     case "search_symbols": {
       const q = truncateSnippet(ss(args.query), 80);
       return q ? `Searching code for "${q}"` : "Searching project code";
@@ -1248,10 +1278,18 @@ function formatToolActivityDone(toolName, rawArguments) {
     return `Finished (${humanFallback(toolName)})`;
   }
   switch (toolName) {
+    case "get_current_time":
+      return "Loaded local time";
     case "web_search":
       return "Search finished";
     case "read_file":
       return `Read ${displayFile(args.path)}`;
+    case "summarize_file":
+      return `Summarized ${displayFile(args.path)}`;
+    case "describe_image":
+      return `Inspected ${displayFile(args.path)}`;
+    case "transcribe_audio":
+      return `Transcribed ${displayFile(args.path)}`;
     case "write_file":
       return `Wrote ${displayFile(args.path)}`;
     case "replace_in_file":
@@ -1266,6 +1304,20 @@ function formatToolActivityDone(toolName, rawArguments) {
       return `Deleted ${displayFile(args.path)}`;
     case "list_files":
       return "Listed files";
+    case "list_recent_files":
+      return "Listed recent files";
+    case "search_chat_history":
+      return "Chat history search finished";
+    case "read_chat_messages":
+      return "Chat messages loaded";
+    case "get_app_settings_summary":
+      return "App settings loaded";
+    case "estimate_model_cost":
+      return "Cost estimate ready";
+    case "rename_current_chat":
+      return "Chat renamed";
+    case "create_wizard_memory":
+      return "Wizard memory saved";
     case "search_symbols":
       return "Code search finished";
     case "get_file_outline":
@@ -1342,16 +1394,35 @@ const createClient = (settings, kind = settings.selectedProvider) => {
     dangerouslyAllowBrowser: false
   });
 };
+const openRouterReasoningPayload = (settings, kind = settings.selectedProvider) => {
+  if (kind !== "openrouter") return {};
+  const effort = settings.providers.openrouter.reasoningEffort ?? "auto";
+  if (effort === "auto") return {};
+  return { reasoning: { effort } };
+};
+const withOpenRouterReasoning = (settings, kind, body) => ({ ...body, ...openRouterReasoningPayload(settings, kind) });
 const mapModelEntry = (entry) => {
   const raw = entry;
   const inputModalities = Array.isArray(raw.architecture?.input_modalities) ? raw.architecture.input_modalities.filter((modality) => typeof modality === "string") : void 0;
   const outputModalities = Array.isArray(raw.architecture?.output_modalities) ? raw.architecture.output_modalities.filter((modality) => typeof modality === "string") : void 0;
+  const supportedParameters = Array.isArray(raw.supported_parameters) ? raw.supported_parameters.filter((parameter) => typeof parameter === "string") : void 0;
   return {
     id: String(entry.id ?? ""),
     contextLength: typeof raw.context_length === "number" ? raw.context_length : void 0,
     ownedBy: typeof entry.owned_by === "string" ? entry.owned_by : void 0,
     inputModalities,
-    outputModalities
+    outputModalities,
+    supportedParameters,
+    pricing: raw.pricing ? {
+      prompt: typeof raw.pricing.prompt === "string" ? raw.pricing.prompt : void 0,
+      completion: typeof raw.pricing.completion === "string" ? raw.pricing.completion : void 0,
+      request: typeof raw.pricing.request === "string" ? raw.pricing.request : void 0,
+      image: typeof raw.pricing.image === "string" ? raw.pricing.image : void 0,
+      webSearch: typeof raw.pricing.web_search === "string" ? raw.pricing.web_search : void 0,
+      internalReasoning: typeof raw.pricing.internal_reasoning === "string" ? raw.pricing.internal_reasoning : void 0,
+      inputCacheRead: typeof raw.pricing.input_cache_read === "string" ? raw.pricing.input_cache_read : void 0,
+      inputCacheWrite: typeof raw.pricing.input_cache_write === "string" ? raw.pricing.input_cache_write : void 0
+    } : void 0
   };
 };
 const mapOllamaModelEntry = (entry) => ({
@@ -1379,6 +1450,98 @@ const MEDIA_GENERATION_SYSTEM_PROMPTS = {
 };
 function mythraRuntimeVersionLine() {
   return `Mythra app version: ${app.getVersion()}. If the user asks what version of Mythra you are running inside, answer with this version.`;
+}
+function utcOffsetLabel(offsetMinutes) {
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+  const minutes = String(abs % 60).padStart(2, "0");
+  return `${sign}${hours}:${minutes}`;
+}
+function localIsoWithOffset(date) {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const parts = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ];
+  const time = [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0")
+  ];
+  return `${parts.join("-")}T${time.join(":")}${utcOffsetLabel(offsetMinutes)}`;
+}
+function currentLocalTimePayload() {
+  const now = /* @__PURE__ */ new Date();
+  const resolvedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timeZone = resolvedTimeZone || "local";
+  const timeZoneOption = resolvedTimeZone ? { timeZone: resolvedTimeZone } : {};
+  const offsetMinutes = -now.getTimezoneOffset();
+  return {
+    ok: true,
+    source: "local_machine_clock",
+    epochMs: now.getTime(),
+    isoUtc: now.toISOString(),
+    localIso: localIsoWithOffset(now),
+    timeZone,
+    utcOffset: utcOffsetLabel(offsetMinutes),
+    utcOffsetMinutes: offsetMinutes,
+    localDate: now.toLocaleDateString(void 0, {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      ...timeZoneOption
+    }),
+    localTime: now.toLocaleTimeString(void 0, {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+      ...timeZoneOption
+    }),
+    weekday: now.toLocaleDateString(void 0, { weekday: "long", ...timeZoneOption })
+  };
+}
+function roughTokenCount(text) {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+function messageTextForSearch(message) {
+  const attachmentText = (message.attachments ?? []).map((attachment) => `[attachment:${attachment.mimeType}:${attachment.name}]`).join(" ");
+  return `${message.content ?? ""} ${attachmentText}`.trim();
+}
+function chatMessagesText(chat) {
+  return chat.messages.map(messageTextForSearch).join("\n");
+}
+function chatPreview(chat, max = 260) {
+  const text = chatMessagesText(chat).replace(/\s+/g, " ").trim();
+  return truncate(text, max);
+}
+function chatKindLabel(chat) {
+  switch (chat.kind ?? "normal") {
+    case "wizard-session":
+      return "wizard session";
+    case "nexus-session":
+      return "nexus session";
+    case "wizard":
+      return "wizard profile";
+    case "nexus":
+      return "nexus project";
+    default:
+      return "normal chat";
+  }
+}
+function safeChatToolLimit(value, fallback, max) {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : fallback;
+}
+function formatUsd(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value === 0) return "$0.00";
+  if (value < 1e-4) return `$${value.toFixed(8)}`;
+  if (value < 0.01) return `$${value.toFixed(6)}`;
+  return `$${value.toFixed(4)}`;
 }
 const GENERATED_MEDIA_DIR$1 = "generated-media";
 const MEDIA_CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -1452,8 +1615,31 @@ const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot rea
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): For full custom colors call set_custom_theme with an explicit palette from (${SEMANTIC_CUSTOM_THEME_PALETTE_IDS.join(", ")}) and mode light or dark when brightness matters—do not rely only on the description string for routing (e.g. user asks for **red** → palette **red**, not pink). For targeted recolors ("sidebar only", exact hex), use merge_custom_theme_tokens with slots or whitelisted CSS variables. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result. **Mystic chat background:** When Settings → chat background is **Mythic**, artwork tracks the UI theme. For **Custom** app themes, **light** custom uses the **ice** Mystic image and **dark** custom uses the **neon** Mystic image; the UI layers **--chat-thread-bg** and bubble-related tokens (**--chat-assistant-bg**, **--chat-user-bg**, **--thinking-bg**) on top so the conversation area tints to match the palette. Prefer this coordinated look—after set_custom_theme you may call merge_custom_theme_tokens on **chatThread** / **assistantMessage** / **userMessage** with rgba washes of the accent if the user wants a stronger match.`;
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
-const mythraProductFeaturesInstruction = "Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In normal Chats mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons for media chats. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there so Mythra can render and save the generated media locally in that chat. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.";
+const mythraCurrentTimeInstruction = "Current time/date: If the user asks for the current time, date, weekday, timezone, today/tomorrow/yesterday, deadlines, schedules, logs “from today”, or anything that depends on the local clock, call get_current_time first. Use its local machine time as authoritative; do not guess from model training data.";
+const mythraAppToolInstruction = [
+  "Mythra app tools: use search_chat_history when the user asks about prior conversations, asks where something was discussed, or needs context from another saved Chat/Wizard/Nexus session; use read_chat_messages when you need exact turns from the current chat or a specific saved chat returned by search. Use these instead of claiming you cannot access saved chat history.",
+  "Use get_app_settings_summary when the user asks what provider/model/mode/tools/version/workspace state Mythra is using, what features are currently enabled, or what this app can do in the current context. Mention the Mythra version from the runtime line when asked. Use estimate_model_cost before unusually large OpenRouter requests or whenever the user asks about pricing/cost.",
+  'Use get_current_time for any time/date/week/day/deadline question. In Agent/Wizard/Nexus sessions with a workspace, use list_recent_files to orient around recently changed files, summarize_file for long documents/code/PDFs instead of manually reading huge files, describe_image for local image files, and transcribe_audio for local audio files. read_file can extract PDF text, automatically OCR low/no-text pages, and OCR requested page ranges; summarize_file is better for broad "what is this file about?" requests.',
+  "Use rename_current_chat when the user asks to rename the current Chat/Wizard/Nexus session or when a concise title would clearly help organization. In Wizard sessions, call create_wizard_memory proactively when the user states a durable preference, correction, identity fact, project fact, workflow rule, or reusable lesson that should persist across future sessions."
+].join(" ");
+const mythraProductFeaturesInstruction = [
+  "Mythra product knowledge (describe accurately when users ask how Mythra works, what you can do, where something is, or what the app is for; do **not** say Mythra has no Wizards, no Nexus, no media chats, no file tools, no PDF tools, no chat history search, or no local-time access): Mythra is a desktop AI workspace for normal chat, Agent work on local files, media generation chats, persistent Wizards, and multi-Wizard Nexus projects.",
+  'If the user asks "what can you do for me?", give a useful overview tailored to the active mode and mention relevant UI locations. In Chat mode, you can converse, search saved chat history, read prior chat messages, check local time/date, answer with safe colored text tags when requested, estimate OpenRouter model cost, and explain Mythra settings/features. Tell them Agent mode is needed for local file edits, shell commands, PDF/file inspection, image/audio inspection, and workspace operations.',
+  "Main UI map: the left sidebar has **New**, **Open workspace**, **Open last workspace**, sometimes **Clear workspace**, and tabs for **CHATS**, **WIZARDS**, and **FILES**. The middle is the chat/thread area. The right Inspector has **EDITOR**, **CHANGES**, and **SETTINGS** tabs. The top chat header has the only normal Chat/Agent mode switch, active model name, Web toggle, connection status, and OpenRouter credits when enabled. The bottom message bar has image attach, OpenRouter reasoning lightbulb when supported, context meter, terminal button, and send/stop controls.",
+  "Chats UI: **New** opens choices for a normal chat, Wizard, or Nexus project, and clicking elsewhere closes that menu. Normal chats can be renamed, deleted with confirmation, pinned to the top, and reordered by dragging within their pinned or unpinned group; pinned chats stay above unpinned chats. Chats with a per-chat model override show a visual indicator before opening, and media chats show Music/Video/Image badges in the sidebar.",
+  "Providers and model controls: Mythra supports OpenRouter cloud models, LM Studio local/server models, and Ollama local models. The active model name in the header opens the OpenRouter model page when available. OpenRouter models can show remaining credits in the chat header when enabled in Settings, and some OpenRouter models expose reasoning levels through the lightbulb next to the image-attach button.",
+  "Media chats: in normal **CHATS** mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there. Mythra stores generated media locally inside that chat; users can play/view it in the chat, save it out, and deleting the chat deletes its local generated media. Generated images can open in a separate full-size viewer.",
+  "Files, PDFs, and terminal: in Agent/Wizard/Nexus sessions with a workspace, Mythra can list/search/read files, read PDFs with embedded text plus selective OCR page ranges, summarize long files and PDFs, inspect local images/audio, edit files with approval controls, run tests/commands, show git diffs, and list recent files. The **FILES** tab shows the active workspace files; in Wizard files, clicking the workspace header opens that Wizard folder in Finder/Explorer. The terminal button is in the message bar and requires an open workspace.",
+  "Wizards UI and behavior: the **WIZARDS** tab lists saved Wizards. Wizards can be pinned to the top and reordered by dragging within pinned or unpinned groups; pinned Wizards stay above unpinned Wizards. Each Wizard has its own local workspace folder, model, system prompt in Inspector → Settings → Wizard, and five default core Markdown files: identity.md, personality.md, tools.md, memory.md, corrections.md. Legacy Wizards may still have soul.md. Mythra injects every `.md` file in a Wizard workspace into each Wizard message. Wizard sessions can be renamed, can rename the Wizard/profile/workspace with approval, can create durable memories, and can be exported/imported as `.mythwiz` bundles.",
+  "Good Wizard examples to suggest when useful: a writing-style or brand-voice assistant; a complex note system (PARA/Zettelkasten/second brain); a project or coding-stack specialist; meeting/research/journal workflows with dated notes; a creative persona or role-play character with a lore bible. Mythra does **not** create todo.md by default; users or Wizards can add extra `.md` guides/tasks if wanted.",
+  "Nexus UI and behavior: the Wizards area has a **Wizards / Nexus** switch. New → Nexus creates a shared project workspace for two or more Wizards; the user picks one parent folder and Mythra creates a named project folder. Nexus projects can be pinned. Each member keeps private identity/personality/memory docs, while Nexus has a leader Wizard, mission text, relay mode, parallel mode, team/leader approval options, and a shared project workspace for file tools.",
+  "Settings UI exact order in the right Inspector **SETTINGS** tab: **App Updates**, **Connection**, **System Prompt**, **Web Search**, collapsible **Theme**, **Tool Access**, then **Agent Autonomy** at the bottom. Do not tell users Session mode is under Theme; it is controlled from the Chat/Agent switch in the chat header or from the inline switch you can embed when appropriate.",
+  "Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Connection has provider, OpenRouter credits toggle, API key/base URL, model selector, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search has provider plus Tavily/Brave keys. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode, Continue until done, and Auto Step Limit.",
+  "Full access mode location: if a user asks where to turn on Full access mode, say: open the right Inspector → SETTINGS, scroll to the bottom, find **Agent Autonomy**, then toggle **Full access mode**. It is not inside Theme and not one of the Tool Access checkboxes. Explain that Full access lets AI write/delete files and run commands without per-action approval.",
+  "Message formatting: Mythra supports safe colored text tags in assistant output, so when users ask for green/orange/red/etc. text, use the supported `[color=... tone=...]...[/color]` syntax rather than HTML. Mythra also supports interactive multiple-choice quiz blocks when users ask to be quizzed. Thinking content appears in collapsible Thinking blocks while capable models stream reasoning."
+].join(" ");
 const mythraColoredTextInstruction = "Colored text: Mythra supports safe color tags in assistant markdown when the user asks for colored text or when a short label/status genuinely benefits from color. Syntax: `[color=green tone=normal]text[/color]`. Supported colors: red, orange, yellow, green, blue, purple, pink, gray, plus aliases danger, warning, success, info, muted. Supported tones: light, normal, dark. Do not use raw HTML, CSS, hex colors, or unsupported color names; otherwise write normal markdown. Use colored text sparingly unless the user specifically requests a whole section, quiz, or list in a color.";
+const mythraQuizEmbedInstruction = 'Interactive quizzes: when the user asks for a multiple-choice quiz, quiz them, practice questions, or selectable answers, emit a `mythra-quiz` fenced JSON block so Mythra renders clickable answer bubbles. Format exactly: ```mythra-quiz\\n{"title":"Optional title","questions":[{"question":"Question text","choices":["Answer A","Answer B","Answer C","Answer D"]}]}\\n```. Use plain strings only, 2-8 choices per question, and do not include the correct answers in the JSON or visible text unless the user explicitly asks for an answer key. After the user selects one answer for every question, Mythra automatically sends their numbered answers back to you; then grade/explain them.';
 const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
@@ -1598,10 +1784,10 @@ function agentModeSystemPromptInstructions(settings, runtime) {
       `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global LLM provider preset in Settings.`,
       "To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. Mythra opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.",
       "`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global LLM provider** preset in Settings—do not confuse the two.",
-      "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). Mythra also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit soul.md and adjust `set_wizard_system_prompt` so identity text matches.",
+      "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). Mythra also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit identity.md and adjust `set_wizard_system_prompt` so identity text matches. For legacy Wizards, update soul.md if that is where identity still lives.",
       "Non-Wizard Tool access lines elsewhere in this prompt still apply to files, workspace search, and commands; Wizard prompt edits bypass the “AI can change system prompt” toggle.",
-      "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[Mythra model routing`, `[Mythra] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on soul.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
-      "Personality and durable memory belong in soul.md and memory.md. When the user revises how they want you to behave or what to remember, update those files with `write_file` so they stay authoritative.",
+      "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[Mythra model routing`, `[Mythra] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on identity.md or personality.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
+      "Identity belongs in identity.md, personality belongs in personality.md, and durable memory belongs in memory.md. For legacy Wizards, soul.md may still contain identity/personality. When the user revises who you are, how you should behave, or what to remember, update the relevant files with `write_file` so they stay authoritative.",
       "The app already appends a “Mythra Wizard runtime” reminder at send time; you usually should not duplicate long runtime explanations inside `system_prompt` unless the user explicitly asks."
     ];
   }
@@ -1611,7 +1797,7 @@ function agentModeSystemPromptInstructions(settings, runtime) {
   ];
 }
 class ModelService {
-  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, persistWizardDisplayName, requestWizardPromptApproval2, requestToolApprovalUi) {
+  constructor(workspaceService2, commandService2, applyAppTheme2, getAppThemeState2, mergeCustomThemeTokens2, setCustomTheme2, persistAppSettings, persistWizardSystemPrompt, persistWizardDisplayName, requestWizardPromptApproval2, requestToolApprovalUi, listSavedChats, loadSavedChat, persistChatTitle) {
     this.workspaceService = workspaceService2;
     this.commandService = commandService2;
     this.applyAppTheme = applyAppTheme2;
@@ -1623,6 +1809,9 @@ class ModelService {
     this.persistWizardDisplayName = persistWizardDisplayName;
     this.requestWizardPromptApproval = requestWizardPromptApproval2;
     this.requestToolApprovalUi = requestToolApprovalUi;
+    this.listSavedChats = listSavedChats;
+    this.loadSavedChat = loadSavedChat;
+    this.persistChatTitle = persistChatTitle;
   }
   workspaceService;
   commandService;
@@ -1635,6 +1824,9 @@ class ModelService {
   persistWizardDisplayName;
   requestWizardPromptApproval;
   requestToolApprovalUi;
+  listSavedChats;
+  loadSavedChat;
+  persistChatTitle;
   activeRequests = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind, options) {
     const kind = providerKind ?? settings.selectedProvider;
@@ -1717,7 +1909,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         } else if (runtime.mediaGenerationKind === "video") {
           await this.runVideoGeneration(window, requestId, settings, provider.model, lastUserPrompt(messages), controller, runtime.conversationId);
         } else {
-          await this.runTalkStream(client, window, requestId, provider.model, apiMessages, controller);
+          await this.runTalkStream(client, window, requestId, settings, provider.model, apiMessages, controller);
         }
         return;
       }
@@ -1726,14 +1918,14 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
         const stream = await client.chat.completions.create(
-          {
+          withOpenRouterReasoning(settings, settings.selectedProvider, {
             model: provider.model,
             messages: apiMessages,
             tools: toolDefinitions.length > 0 ? toolDefinitions : void 0,
             tool_choice: toolDefinitions.length > 0 ? "auto" : void 0,
             stream: true,
             stream_options: { include_usage: true }
-          },
+          }),
           {
             signal: streamDeadlineSignal
           }
@@ -1834,7 +2026,8 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
               settings,
               runtime,
               toolCall,
-              parsedArgs.args
+              parsedArgs.args,
+              messages
             );
             this.assertNotStopped(requestId);
             apiMessages.push({
@@ -1889,7 +2082,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       this.activeRequests.delete(requestId);
     }
   }
-  async runTalkStream(client, window, requestId, model, apiMessages, controller) {
+  async runTalkStream(client, window, requestId, settings, model, apiMessages, controller) {
     const finish = (done) => {
       window.webContents.send("chat:done", done);
       this.activeRequests.delete(requestId);
@@ -1897,7 +2090,12 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
     try {
       const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const stream = await client.chat.completions.create(
-        { model, messages: apiMessages, stream: true, stream_options: { include_usage: true } },
+        withOpenRouterReasoning(settings, settings.selectedProvider, {
+          model,
+          messages: apiMessages,
+          stream: true,
+          stream_options: { include_usage: true }
+        }),
         { signal: streamSignal }
       );
       let assembled = "";
@@ -1938,7 +2136,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       if (sawTool) {
         finish({
           requestId,
-          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.",
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, then use Open Workspace to mount a folder if you need the project, and try again.",
           usage: lastStreamUsage
         });
         return;
@@ -1955,7 +2153,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         throw err;
       }
       const completion = await client.chat.completions.create(
-        { model, messages: apiMessages },
+        withOpenRouterReasoning(settings, settings.selectedProvider, { model, messages: apiMessages }),
         { signal: mergeStreamDeadline(controller, resolveStreamChatWallMs()) }
       );
       this.assertNotStopped(requestId);
@@ -1967,7 +2165,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       if (assistantMessage.tool_calls?.length) {
         finish({
           requestId,
-          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, or in Settings under Theme → Session mode—then use Open Workspace to mount a folder if you need the project, and try again.",
+          content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, then use Open Workspace to mount a folder if you need the project, and try again.",
           usage: fallbackUsage
         });
         return;
@@ -2388,8 +2586,210 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       }
     };
   }
+  buildCurrentTimeTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_current_time",
+        description: "Return the current date and time from the user’s local machine clock, including local timezone, UTC timestamp, weekday, and UTC offset. Call this whenever the answer depends on current time/date.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildSearchChatHistoryTool() {
+    return {
+      type: "function",
+      function: {
+        name: "search_chat_history",
+        description: "Search saved Mythra chats, Wizard sessions, and Nexus sessions by title and message text. Use when the user asks about previous conversations, asks where something was discussed, or needs context from another saved chat. Returns matching chat ids and snippets; call read_chat_messages for exact turns.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Text to search for in chat titles and messages." },
+            limit: { type: "number", description: "Maximum matches to return. Default 8, max 25." }
+          },
+          required: ["query"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildReadChatMessagesTool() {
+    return {
+      type: "function",
+      function: {
+        name: "read_chat_messages",
+        description: "Read exact messages from the current chat or a saved chat id returned by search_chat_history. Use for conversation continuity, summaries, or when the user asks what was said before. If chat_id is omitted, reads the current visible chat history for this request.",
+        parameters: {
+          type: "object",
+          properties: {
+            chat_id: { type: "string", description: "Optional saved chat id. Omit to read the current chat." },
+            limit: { type: "number", description: "Number of most recent messages to return. Default 30, max 120." }
+          },
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildGetAppSettingsSummaryTool() {
+    return {
+      type: "function",
+      function: {
+        name: "get_app_settings_summary",
+        description: "Return a safe summary of Mythra app state and UI locations: version, active provider/model, session mode, web toggle, Tool Access toggles, Agent Autonomy toggles, active workspace, Wizard/Nexus context, OpenRouter credits display preference, and the current Settings section order. Never returns API keys.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildEstimateModelCostTool() {
+    return {
+      type: "function",
+      function: {
+        name: "estimate_model_cost",
+        description: "Estimate OpenRouter model cost from current model pricing. Use when the user asks about cost/pricing or before very large requests. If token counts are omitted, Mythra estimates input tokens from the current chat and uses a default output estimate.",
+        parameters: {
+          type: "object",
+          properties: {
+            model: { type: "string", description: "Optional OpenRouter model id. Defaults to the active model." },
+            input_tokens: { type: "number", description: "Estimated input tokens. Omit to estimate from current chat messages." },
+            output_tokens: { type: "number", description: "Estimated output tokens. Defaults to 1000." }
+          },
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildRenameCurrentChatTool() {
+    return {
+      type: "function",
+      function: {
+        name: "rename_current_chat",
+        description: "Rename the current saved Mythra chat/session in the sidebar. Useful for Wizard and Nexus sessions after you understand the topic. Keep titles short and descriptive. Requires the current thread to be saved.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "New sidebar title for the current chat/session." }
+          },
+          required: ["title"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildCreateWizardMemoryTool() {
+    return {
+      type: "function",
+      function: {
+        name: "create_wizard_memory",
+        description: "Append a durable memory entry to this Wizard’s memory.md. Use proactively when the user states a stable preference, correction, identity fact, project fact, workflow rule, or reusable lesson that should persist across future Wizard sessions. Do not store one-off temporary details.",
+        parameters: {
+          type: "object",
+          properties: {
+            memory: { type: "string", description: "Short durable fact or lesson to remember." },
+            category: { type: "string", description: "Optional category such as preference, correction, project, identity, workflow." }
+          },
+          required: ["memory"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildListRecentFilesTool(toolPathPropDesc) {
+    return {
+      type: "function",
+      function: {
+        name: "list_recent_files",
+        description: "List recently modified files in the active workspace. Use to orient yourself before project work, find likely files the user just changed, or decide what to read next. Respects the same workspace scope as list_files.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum recent files. Default 25, max 100." },
+            path_hint: { type: "string", description: `Optional path or folder hint to mention in your reasoning; listing still uses workspace scope. ${toolPathPropDesc}` }
+          },
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildSummarizeFileTool(toolPathPropDesc) {
+    return {
+      type: "function",
+      function: {
+        name: "summarize_file",
+        description: "Summarize a workspace file internally, including long text/code files and PDFs. Prefer this over manually reading huge files when the user asks for a summary, explanation, key points, risks, or structure. For PDFs, use page range and OCR options like read_file.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: toolPathPropDesc },
+            focus: { type: "string", description: "Optional focus for the summary, e.g. “security risks”, “main argument”, or “API surface”." },
+            pdf_start_page: { type: "number", description: "PDF-only. 1-based page number to start from." },
+            pdf_page_count: { type: "number", description: "PDF-only. Number of pages to summarize." },
+            pdf_ocr: {
+              type: "string",
+              enum: ["auto", "on", "off"],
+              description: "PDF-only. Same behavior as read_file: auto, on, or off."
+            }
+          },
+          required: ["path"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildDescribeImageTool(toolPathPropDesc) {
+    return {
+      type: "function",
+      function: {
+        name: "describe_image",
+        description: "Inspect and describe a local workspace image file using the active model. Use when the user asks what an image contains, wants visual QA, or needs text/objects/layout described. Requires an image-capable provider/model.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: toolPathPropDesc },
+            question: { type: "string", description: "Optional specific question about the image." }
+          },
+          required: ["path"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
+  buildTranscribeAudioTool(toolPathPropDesc) {
+    return {
+      type: "function",
+      function: {
+        name: "transcribe_audio",
+        description: "Transcribe a local workspace audio file using the active model/provider. Use for voice notes, meeting recordings, generated songs, or audio files the user asks you to understand. Requires an audio-input capable model/provider.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: toolPathPropDesc },
+            prompt: { type: "string", description: "Optional context or transcription instructions." }
+          },
+          required: ["path"],
+          additionalProperties: false
+        }
+      }
+    };
+  }
   buildToolDefinitions(settings, runtime) {
     const tools = [];
+    if (runtime.mediaGenerationKind) {
+      return tools;
+    }
+    tools.push(this.buildCurrentTimeTool());
+    tools.push(this.buildSearchChatHistoryTool());
+    tools.push(this.buildReadChatMessagesTool());
+    tools.push(this.buildGetAppSettingsSummaryTool());
+    tools.push(this.buildEstimateModelCostTool());
     if (settings.ui.webSearch) {
       tools.push(this.buildWebSearchTool());
     }
@@ -2403,6 +2803,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     tools.push(this.buildGetToolAccessTool());
     tools.push(this.buildGetSystemPromptTool());
     tools.push(this.buildRevertAppThemeTool());
+    tools.push(this.buildRenameCurrentChatTool());
     if (settings.tools.allowModelSystemPrompt) {
       tools.push({
         type: "function",
@@ -2425,6 +2826,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     }
     if (runtime.wizardId) {
       tools.push(this.buildGetWizardSystemPromptTool());
+      tools.push(this.buildCreateWizardMemoryTool());
       tools.push({
         type: "function",
         function: {
@@ -2447,7 +2849,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         type: "function",
         function: {
           name: "set_wizard_display_name",
-          description: "Change this Wizard’s **display name** in Mythra (sidebar list, chat subtitle, Inspector Wizard settings header). Does not edit soul.md or the stored system prompt—after renaming here, update soul.md (identity heading/text) and use `set_wizard_system_prompt` if your instructions still mention the old name so everything stays consistent.",
+          description: "Change this Wizard’s **display name** in Mythra (sidebar list, chat subtitle, Inspector Wizard settings header). Does not edit identity.md, personality.md, legacy soul.md, or the stored system prompt—after renaming here, update identity.md (or soul.md for legacy Wizards) and use `set_wizard_system_prompt` if your instructions still mention the old name so everything stays consistent.",
           parameters: {
             type: "object",
             properties: {
@@ -2475,6 +2877,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     const renameFileToolDesc = wizardOutsideOn ? "Move or rename a local file or folder; from/to paths follow write_file rules." : wizardOutsideOff ? "Move or rename inside this Wizard workspace unless the user enables **Allow paths outside workspace**." : "Move or rename a file or folder inside the current workspace.";
     const deletePathToolDesc = wizardOutsideOn ? "Delete a local file or folder; path follows write_file rules." : wizardOutsideOff ? "Delete inside this Wizard workspace unless **Allow paths outside workspace** is enabled." : "Delete a file or folder inside the current workspace.";
     if (settings.tools.workspaceSearch) {
+      tools.push(this.buildListRecentFilesTool(toolPathPropDesc));
       tools.push({
         type: "function",
         function: {
@@ -2489,6 +2892,9 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       });
     }
     if (settings.tools.fileRead) {
+      tools.push(this.buildSummarizeFileTool(toolPathPropDesc));
+      tools.push(this.buildDescribeImageTool(toolPathPropDesc));
+      tools.push(this.buildTranscribeAudioTool(toolPathPropDesc));
       tools.push({
         type: "function",
         function: {
@@ -2733,17 +3139,20 @@ ${text}` : "The model did not return an image file. Try again or choose another 
   }
   async buildSessionContext(settings, runtime) {
     if (settings.ui.sessionMode === "talk") {
-      const toolLine = settings.ui.webSearch ? 'Chat mode: the `web_search` tool is available for public web lookup while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Chat mode: you have no tools until the user turns on "Web" in the chat header (then only `web_search` is available). You cannot read/write local files, search the workspace, or run shell commands.';
+      const toolLine = settings.ui.webSearch ? 'Chat mode: `get_current_time`, `search_chat_history`, `read_chat_messages`, `get_app_settings_summary`, `estimate_model_cost`, and `web_search` are available while "Web" is enabled in the chat header. You have no read/write for local files, workspace listing, media-file inspection, or shell—even if a folder shows in the UI (ignore it for local work).' : 'Chat mode: `get_current_time`, `search_chat_history`, `read_chat_messages`, `get_app_settings_summary`, and `estimate_model_cost` are available. `web_search` is unavailable until the user turns on "Web" in the chat header. You cannot read/write local files, search the workspace, inspect media files, or run shell commands.';
       return this.threadPreamble(runtime) + [
-        '[Mythra model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window, or Session mode under Theme in Settings—either place works.]',
+        '[Mythra model routing — Chat mode. This is a second system message; it is not shown in the user’s chat transcript. Do not tell the user about "hidden" or internal prompts; describe behavior in plain terms. If they need Agent (files, shell, workspace tools), tell them they can switch using the Chat/Agent control at the top of the chat window. Do not send them to Theme for session mode.]',
         mythraRuntimeVersionLine(),
         sessionModeUiStateLine(settings.ui.sessionMode),
         toolLine,
+        mythraCurrentTimeInstruction,
         webHeaderUiStateLine(settings.ui.webSearch),
         ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
-        "For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.",
+        "For editing files, running commands, or searching the open project, they must be in Agent mode. Tell them to use the Chat/Agent control at the top of the chat window, then open a workspace from the left sidebar if needed.",
+        mythraAppToolInstruction,
         mythraProductFeaturesInstruction,
         mythraColoredTextInstruction,
+        mythraQuizEmbedInstruction,
         mythraSessionModeEmbedInstruction,
         mythraWebSearchEmbedInstruction,
         mythraThemeInChatModeInstruction,
@@ -2761,13 +3170,16 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         mythraRuntimeVersionLine(),
         sessionModeUiStateLine(settings.ui.sessionMode),
         "No workspace folder is open. You cannot use file or shell tools on disk until the user opens one from the sidebar. You can still answer generally.",
-        "If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat, or Session mode under Theme in Settings.",
+        "If they only want casual chat without tools, they can switch to Chat mode with the Chat/Agent control at the top of the chat.",
         mythraSessionModeEmbedInstruction,
         mythraWebSearchEmbedInstruction,
         mythraSetAppThemeAgentInstruction,
         mythraToolAccessReadInstruction,
+        mythraAppToolInstruction,
         mythraProductFeaturesInstruction,
         mythraColoredTextInstruction,
+        mythraQuizEmbedInstruction,
+        mythraCurrentTimeInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
@@ -2784,14 +3196,17 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       "get_tool_access",
       "get_system_prompt",
       "revert_app_theme",
+      "search_chat_history, read_chat_messages, get_app_settings_summary, estimate_model_cost",
+      "rename_current_chat",
+      "get_current_time",
       settings.ui.webSearch ? "web_search" : null,
-      settings.tools.workspaceSearch ? "list_files" : null,
+      settings.tools.workspaceSearch ? "list_files, list_recent_files" : null,
       settings.tools.workspaceSearch ? "search_symbols, get_file_outline" : null,
-      settings.tools.fileRead ? "read_file" : null,
+      settings.tools.fileRead ? "read_file, summarize_file, describe_image, transcribe_audio" : null,
       settings.tools.fileWrite ? "apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path" : null,
       settings.tools.commandDeck ? "get_git_diff, run_tests, run_command" : null,
       settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null,
-      runtime.wizardId ? "get_wizard_system_prompt, set_wizard_system_prompt, set_wizard_display_name" : null
+      runtime.wizardId ? "get_wizard_system_prompt, set_wizard_system_prompt, set_wizard_display_name, create_wizard_memory" : null
     ].filter(Boolean).join(", ");
     return [
       "[Mythra model routing — Agent mode. The user does not see this system message. Do not tell the user about “internal” or “hidden” prompts.]",
@@ -2799,14 +3214,17 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       sessionModeUiStateLine(settings.ui.sessionMode),
       "Converse like a normal assistant: friendly, direct, and human. Do not act like a project manager or ask for a “task”, “autonomous objective”, or “objective in todo” unless the user is clearly scoping a multi-step build.",
       "Agent mode only means: when the user wants something that requires the repo, files, or the shell, you *may* use the tools below. For greetings, chit-chat, and general Q&A, answer normally and use zero tools unless reading a file is genuinely required to help.",
-      "If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat or under Theme → Session mode in Settings.",
+      "If the user wants to use only Chat mode (no file/shell tools), they can switch with the Chat/Agent control at the top of the chat.",
       mythraSessionModeEmbedInstruction,
       mythraWebSearchEmbedInstruction,
       webHeaderUiStateLine(settings.ui.webSearch),
       mythraSetAppThemeAgentInstruction,
       mythraToolAccessReadInstruction,
+      mythraAppToolInstruction,
       mythraProductFeaturesInstruction,
       mythraColoredTextInstruction,
+      mythraQuizEmbedInstruction,
+      mythraCurrentTimeInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
       mythraCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
@@ -2822,8 +3240,230 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       visibleFiles || "[workspace appears empty]"
     ].join("\n");
   }
-  async executeToolCall(window, requestId, settings, runtime, toolCall, args) {
+  async executeToolCall(window, requestId, settings, runtime, toolCall, args, currentMessages) {
     const workspaceRoot = runtime.workspaceRoot;
+    if (toolCall.function.name === "get_current_time") {
+      return JSON.stringify(currentLocalTimePayload(), null, 2);
+    }
+    if (toolCall.function.name === "search_chat_history") {
+      if (!this.listSavedChats || !this.loadSavedChat) {
+        throw new Error("Chat history tools are not available in this build.");
+      }
+      const query = String(args.query ?? "").trim();
+      if (!query) {
+        throw new Error("search_chat_history requires a non-empty query.");
+      }
+      const limit = safeChatToolLimit(args.limit, 8, 25);
+      const q = query.toLowerCase();
+      const metas = await this.listSavedChats();
+      const matches = [];
+      for (const meta of metas) {
+        const chat = await this.loadSavedChat(meta.id);
+        if (!chat) continue;
+        const haystack = `${chat.title} ${chat.titleOverride ?? ""} ${chatMessagesText(chat)}`.toLowerCase();
+        const titleHit = `${chat.title} ${chat.titleOverride ?? ""}`.toLowerCase().includes(q);
+        const bodyHit = haystack.includes(q);
+        if (!titleHit && !bodyHit) continue;
+        matches.push({
+          chat_id: chat.id,
+          title: chat.title,
+          kind: chatKindLabel(chat),
+          updatedAt: chat.updatedAt,
+          score: (titleHit ? 2 : 0) + (bodyHit ? 1 : 0),
+          snippet: chatPreview(chat)
+        });
+      }
+      matches.sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt);
+      return JSON.stringify(
+        {
+          ok: true,
+          query,
+          count: matches.length,
+          results: matches.slice(0, limit)
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "read_chat_messages") {
+      if (!this.loadSavedChat && args.chat_id) {
+        throw new Error("Chat history tools are not available in this build.");
+      }
+      const chatId = String(args.chat_id ?? "").trim();
+      const limit = safeChatToolLimit(args.limit, 30, 120);
+      const chat = chatId ? await this.loadSavedChat?.(chatId) : null;
+      if (chatId && !chat) {
+        throw new Error(`Saved chat not found: ${chatId}`);
+      }
+      const sourceMessages = chat ? chat.messages : currentMessages;
+      const returned = sourceMessages.slice(-limit).map((message) => ({
+        id: message.id,
+        role: message.role,
+        assistantDisplayName: message.assistantDisplayName,
+        content: truncate(message.content ?? "", 6e3),
+        attachments: (message.attachments ?? []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          filePath: attachment.filePath ?? null
+        }))
+      }));
+      return JSON.stringify(
+        {
+          ok: true,
+          chat_id: chat?.id ?? runtime.conversationId ?? null,
+          title: chat?.title ?? "Current chat",
+          kind: chat ? chatKindLabel(chat) : "current request",
+          total_messages: sourceMessages.length,
+          returned_messages: returned.length,
+          messages: returned
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "get_app_settings_summary") {
+      const provider = settings.providers[settings.selectedProvider];
+      return JSON.stringify(
+        {
+          ok: true,
+          mythraVersion: app.getVersion(),
+          selectedProvider: settings.selectedProvider,
+          selectedModel: provider.model || null,
+          sessionMode: settings.ui.sessionMode,
+          webSearchEnabled: settings.ui.webSearch,
+          showOpenRouterCredits: settings.ui.showOpenRouterCredits,
+          workspace: runtime.workspaceRoot ? {
+            root: runtime.workspaceRoot,
+            activeFile: runtime.activeFilePath ?? null
+          } : null,
+          wizard: runtime.wizardId ? {
+            id: runtime.wizardId,
+            name: runtime.wizardName ?? null,
+            fullAccess: Boolean(runtime.wizardFullAccess),
+            allowOutsideWorkspace: Boolean(runtime.wizardAllowOutsideWorkspace)
+          } : null,
+          nexus: runtime.nexusLeaderName ? {
+            leaderName: runtime.nexusLeaderName,
+            teamFullAccess: Boolean(runtime.nexusTeamFullAccess),
+            leaderApprovesTools: Boolean(runtime.nexusLeaderApprovesTools)
+          } : null,
+          toolAccess: {
+            fileRead: settings.tools.fileRead,
+            fileWrite: settings.tools.fileWrite,
+            workspaceSearch: settings.tools.workspaceSearch,
+            commandDeck: settings.tools.commandDeck,
+            allowModelSystemPrompt: settings.tools.allowModelSystemPrompt
+          },
+          agentAutonomy: {
+            fullAccessMode: settings.agent.fullAccess,
+            continueUntilDone: settings.agent.autoContinue,
+            autoStepLimit: settings.agent.maxAutoSteps
+          },
+          settingsUi: {
+            exactOrder: [
+              "App Updates",
+              "Connection",
+              "System Prompt",
+              "Web Search",
+              "Theme",
+              "Tool Access",
+              "Agent Autonomy"
+            ],
+            sessionModeLocation: "Chat/Agent control at the top of the chat window",
+            fullAccessModeLocation: "Inspector → SETTINGS → scroll to bottom → Agent Autonomy → Full access mode",
+            toolAccessLocation: "Inspector → SETTINGS → Tool Access",
+            themeLocation: "Inspector → SETTINGS → Theme"
+          }
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "estimate_model_cost") {
+      const model = String(args.model ?? settings.providers[settings.selectedProvider].model ?? "").trim();
+      if (!model) {
+        throw new Error("estimate_model_cost requires an active model or a model argument.");
+      }
+      if (settings.selectedProvider !== "openrouter" && !String(args.model ?? "").includes("/")) {
+        return JSON.stringify(
+          {
+            ok: false,
+            provider: settings.selectedProvider,
+            model,
+            message: "Native pricing is only available for OpenRouter models."
+          },
+          null,
+          2
+        );
+      }
+      const inputArg = Number(args.input_tokens);
+      const outputArg = Number(args.output_tokens);
+      const inputTokens = Number.isFinite(inputArg) ? Math.max(0, Math.floor(inputArg)) : roughTokenCount(currentMessages.map((message) => message.content ?? "").join("\n"));
+      const outputTokens = Number.isFinite(outputArg) ? Math.max(0, Math.floor(outputArg)) : 1e3;
+      const models = await this.listModels(settings, "openrouter");
+      const modelInfo = models.find((item) => item.id === model);
+      const pricing = modelInfo?.pricing;
+      const promptRate = Number(pricing?.prompt ?? NaN);
+      const completionRate = Number(pricing?.completion ?? NaN);
+      const requestRate = Number(pricing?.request ?? 0);
+      if (!pricing || !Number.isFinite(promptRate) || !Number.isFinite(completionRate)) {
+        return JSON.stringify(
+          {
+            ok: false,
+            provider: "openrouter",
+            model,
+            message: "OpenRouter did not return prompt/completion pricing for this model."
+          },
+          null,
+          2
+        );
+      }
+      const inputCost = inputTokens * promptRate;
+      const outputCost = outputTokens * completionRate;
+      const total = inputCost + outputCost + (Number.isFinite(requestRate) ? requestRate : 0);
+      return JSON.stringify(
+        {
+          ok: true,
+          provider: "openrouter",
+          model,
+          inputTokens,
+          outputTokens,
+          ratesUsdPerToken: pricing,
+          inputCostUsd: inputCost,
+          outputCostUsd: outputCost,
+          requestCostUsd: Number.isFinite(requestRate) ? requestRate : 0,
+          estimatedTotalUsd: total,
+          display: formatUsd(total),
+          note: "Estimate only. Actual OpenRouter billing may include provider-specific native token counts, cache, image, reasoning, or web-search charges."
+        },
+        null,
+        2
+      );
+    }
+    if (toolCall.function.name === "rename_current_chat") {
+      if (settings.ui.sessionMode === "talk") {
+        throw new Error(
+          "rename_current_chat is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
+        );
+      }
+      if (!this.persistChatTitle) {
+        throw new Error("Chat rename is not available in this build.");
+      }
+      const chatId = runtime.conversationId?.trim();
+      if (!chatId) {
+        throw new Error("rename_current_chat requires a saved current chat id.");
+      }
+      const title = String(args.title ?? "").replace(/[\u0000-\u001f]/g, "").trim();
+      if (!title) {
+        throw new Error("rename_current_chat requires a non-empty title.");
+      }
+      if (title.length > 120) {
+        throw new Error("Chat title is too long (max 120 characters).");
+      }
+      await this.persistChatTitle(chatId, title);
+      return JSON.stringify({ ok: true, chat_id: chatId, title, message: "Current chat title updated." }, null, 2);
+    }
     if (toolCall.function.name === "web_search") {
       if (!settings.ui.webSearch) {
         throw new Error("Web search is turned off. Enable the Web toggle in the chat header to search online.");
@@ -2837,7 +3477,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "set_app_theme") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "set_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "set_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!this.applyAppTheme) {
@@ -2854,7 +3494,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "merge_custom_theme_tokens") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "merge_custom_theme_tokens is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "merge_custom_theme_tokens is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!this.mergeCustomThemeTokens) {
@@ -2867,7 +3507,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "set_custom_theme") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "set_custom_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "set_custom_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!this.setCustomTheme) {
@@ -2880,7 +3520,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "get_app_theme") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "get_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "get_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!this.getAppThemeState) {
@@ -2891,7 +3531,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "get_tool_access") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "get_tool_access is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "get_tool_access is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       return JSON.stringify(
@@ -2919,7 +3559,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "get_wizard_system_prompt") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "get_wizard_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "get_wizard_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!runtime.wizardId) {
@@ -2944,7 +3584,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "get_system_prompt") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "get_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "get_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       const kind = settings.selectedProvider;
@@ -2976,7 +3616,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "revert_app_theme") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "revert_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "revert_app_theme is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!this.applyAppTheme || !this.getAppThemeState) {
@@ -3000,7 +3640,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     if (toolCall.function.name === "set_system_prompt") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "set_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "set_system_prompt is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!settings.tools.allowModelSystemPrompt) {
@@ -3075,7 +3715,7 @@ ${truncate(system_prompt, 900)}`
       const leaked = wizardPromptLooksLikeInjectedRouting(system_prompt);
       if (leaked) {
         throw new Error(
-          `set_wizard_system_prompt contained pasted Mythra routing text (${leaked}). Put only this Wizard’s authored instructions—use read_file on soul.md or workspace docs for facts, then edit minimally. Remove any blocks matching hidden Agent routing (e.g. lines beginning with “[Mythra model routing” or “[Mythra] Thread id”).`
+          `set_wizard_system_prompt contained pasted Mythra routing text (${leaked}). Put only this Wizard’s authored instructions—use read_file on identity.md, personality.md, memory.md, or workspace docs for facts, then edit minimally. Remove any blocks matching hidden Agent routing (e.g. lines beginning with “[Mythra model routing” or “[Mythra] Thread id”).`
         );
       }
       const before = runtime.wizardSystemPrompt ?? "";
@@ -3113,7 +3753,7 @@ ${truncate(system_prompt, 900)}`
     if (toolCall.function.name === "set_wizard_display_name") {
       if (settings.ui.sessionMode === "talk") {
         throw new Error(
-          "set_wizard_display_name is only available in Agent mode. Ask the user to switch with the Chat/Agent control or Session mode in Settings, then try again."
+          "set_wizard_display_name is only available in Agent mode. Ask the user to switch with the Chat/Agent control at the top of the chat window, then try again."
         );
       }
       if (!runtime.wizardId) {
@@ -3144,7 +3784,7 @@ ${truncate(system_prompt, 900)}`
           ok: true,
           wizardId: runtime.wizardId,
           display_name,
-          message: "Wizard display name saved for the sidebar and Wizard settings. Mythra renames the workspace folder when needed so it matches your name. Update soul.md and call set_wizard_system_prompt if needed so your identity text matches."
+          message: "Wizard display name saved for the sidebar and Wizard settings. Mythra renames the workspace folder when needed so it matches your name. Update identity.md (or legacy soul.md) and call set_wizard_system_prompt if needed so your identity text matches."
         },
         null,
         2
@@ -3155,6 +3795,171 @@ ${truncate(system_prompt, 900)}`
     }
     const wizardAllowOutside = Boolean(runtime.wizardAllowOutsideWorkspace);
     switch (toolCall.function.name) {
+      case "create_wizard_memory": {
+        if (!runtime.wizardId) {
+          throw new Error("create_wizard_memory is only available inside a Wizard session.");
+        }
+        if (!settings.tools.fileWrite) {
+          throw new Error("create_wizard_memory requires Write files to be enabled in Tool access.");
+        }
+        const memory = String(args.memory ?? "").replace(/[\u0000-\u001f]/g, " ").trim();
+        const category = String(args.category ?? "").replace(/[\u0000-\u001f]/g, " ").trim();
+        if (!memory) {
+          throw new Error("create_wizard_memory requires a non-empty memory.");
+        }
+        if (memory.length > 2e3) {
+          throw new Error("Memory entry is too long (max 2,000 characters).");
+        }
+        let before = "# Memory\n\n";
+        try {
+          const existing = await this.workspaceService.openFile(workspaceRoot, "memory.md", false);
+          before = existing.content || before;
+        } catch {
+          before = "# Memory\n\n";
+        }
+        const timestamp = currentLocalTimePayload().localIso;
+        const label = category ? ` [${category.slice(0, 80)}]` : "";
+        const entry = `
+
+- ${timestamp}${label}: ${memory}
+`;
+        const after = `${before.trimEnd()}${entry}`;
+        await this.requestApprovalIfNeeded(
+          window,
+          requestId,
+          settings,
+          runtime,
+          "Approve Wizard memory update",
+          `The Wizard wants to append a durable memory to memory.md:
+${memory}`,
+          { before, after }
+        );
+        const file = await this.workspaceService.saveFile(workspaceRoot, "memory.md", after, false);
+        window.webContents.send("workspace:changed", { root: workspaceRoot, fileWritten: file.path });
+        return JSON.stringify(
+          {
+            ok: true,
+            path: relative(workspaceRoot, file.path),
+            memory,
+            message: "Wizard memory saved to memory.md."
+          },
+          null,
+          2
+        );
+      }
+      case "list_recent_files": {
+        if (!settings.tools.workspaceSearch) {
+          throw new Error("The list_recent_files tool is disabled in settings.");
+        }
+        const limit = safeChatToolLimit(args.limit, 25, 100);
+        const files = await this.workspaceService.listRecentFiles(workspaceRoot, limit);
+        return JSON.stringify({ ok: true, workspaceRoot, count: files.length, files }, null, 2);
+      }
+      case "summarize_file": {
+        if (!settings.tools.fileRead) {
+          throw new Error("The summarize_file tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        if (!path) {
+          throw new Error("summarize_file requires a path.");
+        }
+        const pdfStartPage = Number(args.pdf_start_page);
+        const pdfPageCount = Number(args.pdf_page_count);
+        const rawPdfOcr = String(args.pdf_ocr ?? "auto");
+        const pdfOcr = rawPdfOcr === "on" || rawPdfOcr === "off" ? rawPdfOcr : "auto";
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside, {
+          pdf: {
+            startPage: Number.isFinite(pdfStartPage) ? pdfStartPage : void 0,
+            pageCount: Number.isFinite(pdfPageCount) ? pdfPageCount : void 0,
+            ocr: pdfOcr
+          }
+        });
+        if (file.imagePreview) {
+          throw new Error("summarize_file cannot summarize image bytes. Use describe_image for image files.");
+        }
+        const focus = String(args.focus ?? "").trim();
+        const signal = this.activeRequests.get(requestId)?.controller.signal;
+        const summary = await this.summarizeContentWithModel(settings, relative(workspaceRoot, file.path), file.content, focus, signal);
+        return JSON.stringify(
+          {
+            ok: true,
+            path: relative(workspaceRoot, file.path),
+            kind: file.readOnlyReason?.toLowerCase().includes("pdf") ? "pdf" : "text",
+            readOnly: Boolean(file.readOnly),
+            note: file.readOnlyReason,
+            focus: focus || null,
+            summary
+          },
+          null,
+          2
+        );
+      }
+      case "describe_image": {
+        if (!settings.tools.fileRead) {
+          throw new Error("The describe_image tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        if (!path) {
+          throw new Error("describe_image requires a path.");
+        }
+        const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
+        if (!file.imagePreview) {
+          throw new Error("describe_image requires a supported image file path.");
+        }
+        const question = String(args.question ?? "").trim();
+        const signal = this.activeRequests.get(requestId)?.controller.signal;
+        const description = await this.describeImageWithModel(
+          settings,
+          relative(workspaceRoot, file.path),
+          file.imagePreview.dataUrl,
+          question,
+          signal
+        );
+        return JSON.stringify(
+          {
+            ok: true,
+            path: relative(workspaceRoot, file.path),
+            mimeType: file.imagePreview.mimeType,
+            question: question || null,
+            description
+          },
+          null,
+          2
+        );
+      }
+      case "transcribe_audio": {
+        if (!settings.tools.fileRead) {
+          throw new Error("The transcribe_audio tool is disabled in settings.");
+        }
+        const path = String(args.path ?? "");
+        if (!path) {
+          throw new Error("transcribe_audio requires a path.");
+        }
+        const audio = await this.workspaceService.readBinaryFile(workspaceRoot, path, wizardAllowOutside);
+        if (!audio.mimeType.startsWith("audio/")) {
+          throw new Error(`transcribe_audio requires an audio file. Detected ${audio.mimeType}.`);
+        }
+        const prompt = String(args.prompt ?? "").trim();
+        const signal = this.activeRequests.get(requestId)?.controller.signal;
+        const transcript = await this.transcribeAudioWithModel(
+          settings,
+          relative(workspaceRoot, audio.path),
+          audio.mimeType,
+          audio.dataBase64,
+          prompt,
+          signal
+        );
+        return JSON.stringify(
+          {
+            ok: true,
+            path: relative(workspaceRoot, audio.path),
+            mimeType: audio.mimeType,
+            transcript
+          },
+          null,
+          2
+        );
+      }
       case "list_files": {
         if (!settings.tools.workspaceSearch) {
           throw new Error("The list_files tool is disabled in settings.");
@@ -3526,6 +4331,139 @@ ${workspaceRoot}`
     } catch {
     }
   }
+  async summarizeContentWithModel(settings, path, content, focus, signal) {
+    const provider = settings.providers[settings.selectedProvider];
+    if (!provider.model) {
+      throw new Error("Select a model before summarizing files.");
+    }
+    const client = createClient(settings);
+    const chunkSize = 16e3;
+    const maxChunks = 8;
+    const chunks = [];
+    for (let i = 0; i < content.length && chunks.length < maxChunks; i += chunkSize) {
+      chunks.push(content.slice(i, i + chunkSize));
+    }
+    const truncatedForSummary = content.length > chunkSize * maxChunks;
+    const chunkSummaries = [];
+    for (let i = 0; i < chunks.length; i += 1) {
+      const completion = await client.chat.completions.create(
+        withOpenRouterReasoning(settings, settings.selectedProvider, {
+          model: provider.model,
+          messages: [
+            {
+              role: "system",
+              content: "Summarize this file chunk accurately and compactly. Preserve names, decisions, risks, TODOs, APIs, and notable details. Do not invent."
+            },
+            {
+              role: "user",
+              content: [
+                `File: ${path}`,
+                `Chunk: ${i + 1} of ${chunks.length}${truncatedForSummary ? " (file truncated for summary budget)" : ""}`,
+                focus ? `Focus: ${focus}` : "",
+                "",
+                chunks[i]
+              ].filter(Boolean).join("\n")
+            }
+          ],
+          max_tokens: 900
+        }),
+        signal ? { signal } : void 0
+      );
+      chunkSummaries.push(contentToString(completion.choices[0]?.message?.content ?? "").trim());
+    }
+    if (chunkSummaries.length <= 1) {
+      return chunkSummaries[0] || "No summary could be produced.";
+    }
+    const final = await client.chat.completions.create(
+      withOpenRouterReasoning(settings, settings.selectedProvider, {
+        model: provider.model,
+        messages: [
+          {
+            role: "system",
+            content: "Combine chunk summaries into one clear file summary. Include overall purpose, important details, risks/open questions, and anything matching the user focus. Do not invent."
+          },
+          {
+            role: "user",
+            content: [
+              `File: ${path}`,
+              focus ? `Focus: ${focus}` : "",
+              truncatedForSummary ? "Note: very long file; only the first bounded chunks were summarized." : "",
+              "",
+              chunkSummaries.map((summary, index) => `--- Chunk ${index + 1} summary ---
+${summary}`).join("\n\n")
+            ].filter(Boolean).join("\n")
+          }
+        ],
+        max_tokens: 1400
+      }),
+      signal ? { signal } : void 0
+    );
+    return contentToString(final.choices[0]?.message?.content ?? "").trim() || chunkSummaries.join("\n\n");
+  }
+  async describeImageWithModel(settings, path, dataUrl, question, signal) {
+    const provider = settings.providers[settings.selectedProvider];
+    if (!provider.model) {
+      throw new Error("Select a model before describing images.");
+    }
+    const client = createClient(settings);
+    const completion = await client.chat.completions.create(
+      withOpenRouterReasoning(settings, settings.selectedProvider, {
+        model: provider.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: question || `Describe this image from ${path}. Include visible text, objects, layout, and anything important for the user's likely task.`
+              },
+              {
+                type: "image_url",
+                image_url: { url: dataUrl, detail: "high" }
+              }
+            ]
+          }
+        ],
+        max_tokens: 1200
+      }),
+      signal ? { signal } : void 0
+    );
+    return contentToString(completion.choices[0]?.message?.content ?? "").trim();
+  }
+  async transcribeAudioWithModel(settings, path, mimeType, dataBase64, prompt, signal) {
+    const provider = settings.providers[settings.selectedProvider];
+    if (!provider.model) {
+      throw new Error("Select a model before transcribing audio.");
+    }
+    const format = mimeType.includes("wav") ? "wav" : mimeType.includes("webm") ? "webm" : "mp3";
+    const client = createClient(settings);
+    const completion = await client.chat.completions.create(
+      withOpenRouterReasoning(settings, settings.selectedProvider, {
+        model: provider.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: prompt || `Transcribe this audio file from ${path}. Return the transcript and note any unclear sections.`
+              },
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: dataBase64,
+                  format
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 2e3
+      }),
+      signal ? { signal } : void 0
+    );
+    return contentToString(completion.choices[0]?.message?.content ?? "").trim();
+  }
   effectiveFullAccess(settings, runtime) {
     if (runtime.nexusTeamFullAccess) {
       return true;
@@ -3561,7 +4499,7 @@ ${truncate(textDiff.after, 6e3)}`;
     const approvalSignal = mergeLeaderApprovalDeadline(signal, resolveLeaderApprovalWallMs());
     try {
       const completion = await client.chat.completions.create(
-        {
+        withOpenRouterReasoning(settings, kind, {
           model,
           messages: [
             {
@@ -3582,7 +4520,7 @@ ${body}`
           ],
           max_tokens: 16,
           temperature: 0
-        },
+        }),
         approvalSignal ? { signal: approvalSignal } : signal ? { signal } : void 0
       );
       const raw = contentToString(completion.choices[0]?.message?.content ?? "").trim().toUpperCase();
@@ -3654,7 +4592,8 @@ const defaultSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: "Mythra",
-      appUrl: "https://example.local"
+      appUrl: "https://example.local",
+      reasoningEffort: "auto"
     },
     openrouter: {
       kind: "openrouter",
@@ -3665,7 +4604,8 @@ const defaultSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: "Mythra",
-      appUrl: "https://example.local"
+      appUrl: "https://example.local",
+      reasoningEffort: "auto"
     },
     ollama: {
       kind: "ollama",
@@ -3676,7 +4616,8 @@ const defaultSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: "Mythra",
-      appUrl: "https://example.local"
+      appUrl: "https://example.local",
+      reasoningEffort: "auto"
     }
   },
   search: {
@@ -3728,6 +4669,10 @@ function mysticVariantForTheme(themeId, customThemeLight) {
 function isChatThreadBackgroundPresetId(value) {
   return value === "mystic";
 }
+const OPENROUTER_REASONING_EFFORTS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh"];
+function normalizeReasoningEffort(v, fallback) {
+  return OPENROUTER_REASONING_EFFORTS.includes(v) ? v : fallback ?? "auto";
+}
 function isSavedPromptPresetList(v) {
   return Array.isArray(v) && v.every(
     (x) => x != null && typeof x === "object" && typeof x.id === "string" && typeof x.name === "string" && typeof x.prompt === "string" && typeof x.updatedAt === "number"
@@ -3751,7 +4696,8 @@ function normalizeProviderProfile(defaults, saved) {
       activePromptPresetId: activePromptPresetId2,
       promptPresets: raw.promptPresets,
       appName: typeof base.appName === "string" ? base.appName : defaults.appName,
-      appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl
+      appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
+      reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
     };
   }
   const promptPresets = isSavedPromptPresetList(raw.customPromptPresets) ? raw.customPromptPresets : [];
@@ -3772,7 +4718,8 @@ function normalizeProviderProfile(defaults, saved) {
     activePromptPresetId,
     promptPresets,
     appName: typeof base.appName === "string" ? base.appName : defaults.appName,
-    appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl
+    appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
+    reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
   };
 }
 const SETTINGS_FILE = "mythra-settings.json";
@@ -4172,15 +5119,22 @@ const MAX_MYTHWIZ_TOTAL_CHARS = 25 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 const requireFromWorkspaceService = createRequire(import.meta.url);
 const WIZARD_CORE_DOCS = [
-  ["soul.md", "Soul"],
+  ["identity.md", "Identity"],
+  ["personality.md", "Personality"],
   ["tools.md", "Tools"],
   ["memory.md", "Memory"],
   ["corrections.md", "Corrections"]
 ];
+const WIZARD_LEGACY_CORE_DOCS = [["soul.md", "Soul (legacy)"]];
 const WIZARD_DEFAULT_CONTENT = {
-  "soul.md": (name) => `# ${name}
+  "identity.md": (name) => `# Identity
 
-Describe this Wizard's identity, tone, principles, strengths, boundaries, and working style here.
+- Name: ${name}
+- Role: Describe this Wizard's role, specialty, and purpose here.
+`,
+  "personality.md": () => `# Personality
+
+Describe this Wizard's tone, principles, strengths, boundaries, and working style here.
 `,
   "tools.md": () => `# Tools
 
@@ -4190,11 +5144,11 @@ Describe this Wizard's identity, tone, principles, strengths, boundaries, and wo
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
-- **Default core files** Mythra creates are only soul, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
+- **Default core files** Mythra creates are only identity, personality, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
 
 ## Example directions (optional)
 
-Users often dedicate a Wizard to: matching a **writing voice** (samples + soul); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
+Users often dedicate a Wizard to: matching a **writing voice** (samples + personality); a **note system** (linked markdown in this folder); **one codebase or stack** (conventions here); or **research / meetings** (dated notes you maintain).
 
 Describe your preferred stacks, scripts, test commands, and project conventions below.
 `,
@@ -4207,15 +5161,15 @@ Durable notes this Wizard should remember across sessions.
 User corrections, mistakes to avoid, and lessons learned.
 `
 };
-function soulMarkdownForWizard(name, personality) {
+function personalityMarkdownForWizard(personality) {
   const trimmed = personality?.trim();
   if (trimmed) {
-    return `# ${name}
+    return `# Personality
 
 ${trimmed}
 `;
   }
-  return WIZARD_DEFAULT_CONTENT["soul.md"](name);
+  return WIZARD_DEFAULT_CONTENT["personality.md"]("");
 }
 function memoryMarkdownForWizard(memory) {
   const trimmed = memory?.trim();
@@ -4422,6 +5376,17 @@ const RASTER_IMAGE_EXT = {
   ".ico": "image/x-icon",
   ".avif": "image/avif"
 };
+const AUDIO_EXT = {
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".webm": "audio/webm"
+};
+const MAX_BINARY_TOOL_BYTES = 25 * 1024 * 1024;
 function patchPdfCanvasContext(context) {
   for (const methodName of ["clip", "fill", "stroke"]) {
     const original = context[methodName].bind(context);
@@ -4719,7 +5684,7 @@ class WorkspaceService {
     await mkdir(root, { recursive: true });
     for (const [file] of WIZARD_CORE_DOCS) {
       const target = join$1(root, file);
-      const initialBody = file === "soul.md" ? soulMarkdownForWizard(name, request.wizardPersonality) : file === "memory.md" ? memoryMarkdownForWizard(request.wizardMemory) : WIZARD_DEFAULT_CONTENT[file](name);
+      const initialBody = file === "personality.md" ? personalityMarkdownForWizard(request.wizardPersonality) : file === "memory.md" ? memoryMarkdownForWizard(request.wizardMemory) : WIZARD_DEFAULT_CONTENT[file](name);
       try {
         await writeFile(target, initialBody, { encoding: "utf8", flag: "wx" });
       } catch (error) {
@@ -4783,8 +5748,9 @@ class WorkspaceService {
     }
     const bucket = [];
     await walkFiles(resolved, resolved, bucket);
-    const coreMap = new Map(WIZARD_CORE_DOCS.map(([f, label]) => [f.toLowerCase(), label]));
-    const coreOrder = WIZARD_CORE_DOCS.map(([f]) => f.toLowerCase());
+    const displayCoreDocs = [...WIZARD_CORE_DOCS, ...WIZARD_LEGACY_CORE_DOCS];
+    const coreMap = new Map(displayCoreDocs.map(([f, label]) => [f.toLowerCase(), label]));
+    const coreOrder = displayCoreDocs.map(([f]) => f.toLowerCase());
     const mdRelPaths = bucket.filter((x) => x.type === "file" && /\.md$/i.test(x.path)).map((x) => x.path.replace(/\\/g, "/"));
     mdRelPaths.sort((a, b) => {
       const ba = basename(a).toLowerCase();
@@ -5089,6 +6055,42 @@ class WorkspaceService {
     await stat(root);
     await walkFiles(resolve(root), resolve(root), files);
     return files;
+  }
+  async listRecentFiles(root, limit = 25) {
+    const resolvedRoot = resolve(root);
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const files = (await this.listFiles(resolvedRoot)).filter((entry) => entry.type === "file");
+    const rows = [];
+    for (const entry of files) {
+      try {
+        const full = await ensureInsideRoot(resolvedRoot, entry.path);
+        const st = await stat(full);
+        rows.push({
+          path: entry.path,
+          bytes: st.size,
+          modifiedAt: st.mtime.toISOString(),
+          mtimeMs: st.mtimeMs
+        });
+      } catch {
+      }
+    }
+    return rows.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, boundedLimit).map(({ mtimeMs: _mtimeMs, ...row }) => row);
+  }
+  async readBinaryFile(root, target, allowOutsideWorkspace = false) {
+    const safePath = await resolveWorkspaceTarget(root, target, allowOutsideWorkspace);
+    const st = await stat(safePath);
+    if (st.size > MAX_BINARY_TOOL_BYTES) {
+      throw new Error(`File is too large for this tool (max ${Math.round(MAX_BINARY_TOOL_BYTES / 1024 / 1024)} MB).`);
+    }
+    const ext = extname(safePath).toLowerCase();
+    const mimeType = RASTER_IMAGE_EXT[ext] ?? AUDIO_EXT[ext] ?? "application/octet-stream";
+    const bytes = await readFile(safePath);
+    return {
+      path: safePath,
+      mimeType,
+      bytes,
+      dataBase64: bytes.toString("base64")
+    };
   }
   async getChanges(root) {
     const cwd = resolve(root);
@@ -5684,7 +6686,22 @@ const modelService = new ModelService(
     return wizard;
   },
   requestWizardPromptApproval,
-  requestToolApproval
+  requestToolApproval,
+  () => chatStore.listChats(),
+  (id) => chatStore.loadChat(id),
+  async (id, title) => {
+    const chat = await chatStore.loadChat(id);
+    if (!chat) {
+      throw new Error("Current chat was not found.");
+    }
+    await chatStore.saveChat({
+      ...chat,
+      title,
+      titleOverride: title,
+      updatedAt: Date.now()
+    });
+    mainWindow?.webContents.send("chats:updated");
+  }
 );
 const assertActiveWorkspace = (root) => {
   if (!root) {

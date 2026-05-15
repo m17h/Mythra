@@ -48,6 +48,8 @@ export function formatToolActivityStart(toolName: string, rawArguments: string |
   }
 
   switch (toolName) {
+    case 'get_current_time':
+      return 'Checking local time';
     case 'web_search': {
       const q = truncateSnippet(ss(args.query), 100);
       if (!q) return 'Searching the web';
@@ -56,6 +58,12 @@ export function formatToolActivityStart(toolName: string, rawArguments: string |
     }
     case 'read_file':
       return `Reading ${displayFile(args.path)}`;
+    case 'summarize_file':
+      return `Summarizing ${displayFile(args.path)}`;
+    case 'describe_image':
+      return `Inspecting ${displayFile(args.path)}`;
+    case 'transcribe_audio':
+      return `Transcribing ${displayFile(args.path)}`;
     case 'write_file':
       return `Writing ${displayFile(args.path)}`;
     case 'replace_in_file':
@@ -73,6 +81,24 @@ export function formatToolActivityStart(toolName: string, rawArguments: string |
       return `Deleting ${displayFile(args.path)}`;
     case 'list_files':
       return 'Listing workspace files';
+    case 'list_recent_files':
+      return 'Listing recent files';
+    case 'search_chat_history': {
+      const q = truncateSnippet(ss(args.query), 80);
+      return q ? `Searching chat history for "${q}"` : 'Searching chat history';
+    }
+    case 'read_chat_messages':
+      return ss(args.chat_id) ? 'Reading saved chat messages' : 'Reading current chat messages';
+    case 'get_app_settings_summary':
+      return 'Reading app settings summary';
+    case 'estimate_model_cost':
+      return 'Estimating model cost';
+    case 'rename_current_chat': {
+      const title = truncateSnippet(ss(args.title), 64);
+      return title ? `Renaming chat to “${title}”` : 'Renaming chat';
+    }
+    case 'create_wizard_memory':
+      return 'Saving Wizard memory';
     case 'search_symbols': {
       const q = truncateSnippet(ss(args.query), 80);
       return q ? `Searching code for "${q}"` : 'Searching project code';
@@ -128,10 +154,18 @@ export function formatToolActivityDone(toolName: string, rawArguments: string | 
   }
 
   switch (toolName) {
+    case 'get_current_time':
+      return 'Loaded local time';
     case 'web_search':
       return 'Search finished';
     case 'read_file':
       return `Read ${displayFile(args.path)}`;
+    case 'summarize_file':
+      return `Summarized ${displayFile(args.path)}`;
+    case 'describe_image':
+      return `Inspected ${displayFile(args.path)}`;
+    case 'transcribe_audio':
+      return `Transcribed ${displayFile(args.path)}`;
     case 'write_file':
       return `Wrote ${displayFile(args.path)}`;
     case 'replace_in_file':
@@ -146,6 +180,20 @@ export function formatToolActivityDone(toolName: string, rawArguments: string | 
       return `Deleted ${displayFile(args.path)}`;
     case 'list_files':
       return 'Listed files';
+    case 'list_recent_files':
+      return 'Listed recent files';
+    case 'search_chat_history':
+      return 'Chat history search finished';
+    case 'read_chat_messages':
+      return 'Chat messages loaded';
+    case 'get_app_settings_summary':
+      return 'App settings loaded';
+    case 'estimate_model_cost':
+      return 'Cost estimate ready';
+    case 'rename_current_chat':
+      return 'Chat renamed';
+    case 'create_wizard_memory':
+      return 'Wizard memory saved';
     case 'search_symbols':
       return 'Code search finished';
     case 'get_file_outline':

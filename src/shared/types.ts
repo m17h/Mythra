@@ -3,6 +3,8 @@ import type { ChatThreadBackgroundPresetId } from './chat-thread-backgrounds';
 
 export type ProviderKind = 'lmstudio' | 'openrouter' | 'ollama';
 
+export type OpenRouterReasoningEffort = 'auto' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
 /** Per saved chat: route API calls through this provider + model instead of app Settings. */
 export interface ChatModelOverride {
   provider: ProviderKind;
@@ -105,7 +107,7 @@ export interface WizardSetupRequest {
   /** @deprecated Parent folder should be set explicitly; when true and no workspaceRoot, Desktop is used as parent. */
   createOnDesktop?: boolean;
   customDocuments?: string[];
-  /** Optional onboarding text merged into soul.md (identity, tone, boundaries). */
+  /** Optional onboarding text merged into personality.md (tone, boundaries, working style). */
   wizardPersonality?: string;
   /** Optional onboarding text merged into memory.md (durable facts to remember). */
   wizardMemory?: string;
@@ -191,6 +193,8 @@ export interface ProviderProfile {
   promptPresets: SavedPromptPreset[];
   appName: string;
   appUrl: string;
+  /** OpenRouter-only. `auto` omits the reasoning parameter so the model/provider default applies. */
+  reasoningEffort?: OpenRouterReasoningEffort;
 }
 
 export interface ToolPermissions {
@@ -304,6 +308,17 @@ export interface ModelInfo {
   ownedBy?: string;
   inputModalities?: string[];
   outputModalities?: string[];
+  supportedParameters?: string[];
+  pricing?: {
+    prompt?: string;
+    completion?: string;
+    request?: string;
+    image?: string;
+    webSearch?: string;
+    internalReasoning?: string;
+    inputCacheRead?: string;
+    inputCacheWrite?: string;
+  };
 }
 
 export interface ModelListOptions {
@@ -507,6 +522,8 @@ export interface SavedChat {
   updatedAt: number;
   /** Shown at the top of the chat list when true. */
   pinned?: boolean;
+  /** Manual sidebar order for reorderable sidebar groups. Lower values appear first within pinned/unpinned groups. */
+  chatOrder?: number | null;
   /**
    * When set, `streamChat` uses this provider + model for this thread (API keys/base URLs still come from Settings).
    * Omitted or `null` = use the app’s selected provider and model from Settings.
@@ -526,6 +543,7 @@ export interface SavedChatMeta {
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
+  chatOrder?: number | null;
   modelOverride?: ChatModelOverride | null;
   wizard?: WizardProfile | null;
   wizardId?: string | null;
@@ -545,7 +563,8 @@ export const defaultSettings: AppSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: 'Mythra',
-      appUrl: 'https://example.local'
+      appUrl: 'https://example.local',
+      reasoningEffort: 'auto'
     },
     openrouter: {
       kind: 'openrouter',
@@ -556,7 +575,8 @@ export const defaultSettings: AppSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: 'Mythra',
-      appUrl: 'https://example.local'
+      appUrl: 'https://example.local',
+      reasoningEffort: 'auto'
     },
     ollama: {
       kind: 'ollama',
@@ -567,7 +587,8 @@ export const defaultSettings: AppSettings = {
       activePromptPresetId: null,
       promptPresets: [],
       appName: 'Mythra',
-      appUrl: 'https://example.local'
+      appUrl: 'https://example.local',
+      reasoningEffort: 'auto'
     }
   },
   search: {

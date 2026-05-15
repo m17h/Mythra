@@ -36,21 +36,22 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
 const WIZARD_SETUP_DEFAULT_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 
 const ONBOARDING_SYSTEM_TAIL =
-  '\n\nSoul.md and memory.md were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n';
+  '\n\nThe personality.md and memory.md files were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n';
 
 const defaultPrompt = (name: string) => `You are ${name || 'this Wizard'}, a persistent Mythra Wizard.
 
 Use your private workspace as your long-term home base:
-- soul.md defines your identity, style, values, and boundaries.
+- identity.md defines your name, role, specialty, and purpose.
+- personality.md defines your tone, style, values, boundaries, and working preferences.
 - tools.md defines tool preferences, workflows, and project conventions.
 - memory.md stores durable facts the user wants you to remember.
 - corrections.md stores mistakes, corrections, and lessons learned.
-- Mythra only seeds those four core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
+- Mythra only seeds those five core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
 - File paths default to your workspace folder only; enable **Allow paths outside workspace** in Inspector → Wizard settings if cross-folder reads/writes are needed (local disks only).
 
 Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
 
-Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in soul.md and extra markdown.
+Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in identity.md, personality.md, and extra markdown.
 
 At the start of every message in a Wizard chat, Mythra injects every Markdown (.md) file from your workspace into context (core docs first). Keep extra guides or notes as additional .md files if you want them always loaded.`;
 
@@ -399,7 +400,8 @@ export function WizardSetupModal({
                 <div className="wizard-setup__docs">
                   <span>Core documents created automatically</span>
                   <div>
-                    <code>soul.md</code>
+                    <code>identity.md</code>
+                    <code>personality.md</code>
                     <code>tools.md</code>
                     <code>memory.md</code>
                     <code>corrections.md</code>
@@ -411,8 +413,8 @@ export function WizardSetupModal({
                 <h3>Personality &amp; memory</h3>
                 <p>
                   Describe how this Wizard should behave and what it should remember long-term. Your answers seed{' '}
-                  <code>soul.md</code> and <code>memory.md</code> in its workspace. You can refine them anytime in the editor or
-                  ask the Wizard to update them in chat (Agent mode).
+                  <code>personality.md</code> and <code>memory.md</code> in its workspace. You can refine them anytime in the
+                  editor or ask the Wizard to update them in chat (Agent mode).
                 </p>
 
                 <div className="wizard-setup__grid">

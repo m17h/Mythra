@@ -7,6 +7,7 @@ import type {
   ChatCompletionTokenUsage,
   ChatMessage,
   ChatTimelineEntry,
+  OpenRouterReasoningEffort,
   ProviderKind,
   SessionMode
 } from '@shared/types';
@@ -21,6 +22,20 @@ import { ChatMarkdown } from './ChatMarkdown';
 
 /** How close to the true bottom counts as “pinned” for auto-follow while the model streams. */
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+
+const reasoningEffortOptions: Array<{ value: OpenRouterReasoningEffort; label: string; hint: string }> = [
+  { value: 'auto', label: 'Auto', hint: 'Use the model default' },
+  { value: 'none', label: 'Off', hint: 'Disable reasoning' },
+  { value: 'minimal', label: 'Minimal', hint: 'Small reasoning budget' },
+  { value: 'low', label: 'Low', hint: 'Light reasoning' },
+  { value: 'medium', label: 'Medium', hint: 'Balanced reasoning' },
+  { value: 'high', label: 'High', hint: 'Deeper reasoning' },
+  { value: 'xhigh', label: 'XHigh', hint: 'Maximum reasoning' }
+];
+
+function reasoningEffortLabel(value: OpenRouterReasoningEffort): string {
+  return reasoningEffortOptions.find((option) => option.value === value)?.label ?? 'Auto';
+}
 
 function NexusRelayProgressBar(props: { wizardName: string; segmentStartedAt: number }) {
   const [, setTick] = useState(0);
@@ -263,6 +278,144 @@ function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
   );
 }
 
+function OpenRouterReasoningButton({
+  effort,
+  model,
+  supported,
+  disabled,
+  onChange
+}: {
+  effort: OpenRouterReasoningEffort;
+  model: string;
+  supported: boolean;
+  disabled: boolean;
+  onChange: (effort: OpenRouterReasoningEffort) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState({ top: 0, left: 0 });
+  const currentLabel = reasoningEffortLabel(effort);
+  const unavailable = disabled || !supported;
+
+  const updateAnchor = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+
+  const toggleOpen = useCallback(() => {
+    if (unavailable) return;
+    updateAnchor();
+    setOpen((value) => !value);
+  }, [unavailable, updateAnchor]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onReposition = () => updateAnchor();
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [open, updateAnchor]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (triggerRef.current?.contains(target) || popoverRef.current?.contains(target))) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
+
+  const popover =
+    open &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <div
+        ref={popoverRef}
+        className="chat-reasoning-popover"
+        role="menu"
+        style={{
+          left: anchor.left,
+          top: anchor.top - 8,
+          transform: 'translate(-50%, -100%)'
+        }}
+      >
+        <div className="chat-reasoning-popover__header">
+          <strong>Reasoning</strong>
+          <span>{model}</span>
+        </div>
+        <div className="chat-reasoning-popover__options">
+          {reasoningEffortOptions.map((option) => (
+            <button
+              className={`chat-reasoning-popover__option ${effort === option.value ? 'is-active' : ''}`}
+              key={option.value}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              role="menuitemradio"
+              aria-checked={effort === option.value}
+              type="button"
+            >
+              <span>{option.label}</span>
+              <small>{option.hint}</small>
+            </button>
+          ))}
+        </div>
+      </div>,
+      document.body
+    );
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        aria-expanded={open}
+        aria-label={`OpenRouter reasoning: ${currentLabel}`}
+        className={`chat-compose__reasoning ${effort !== 'auto' ? 'is-active' : ''}`}
+        disabled={unavailable}
+        onClick={toggleOpen}
+        title={
+          supported
+            ? `OpenRouter reasoning: ${currentLabel}`
+            : 'This OpenRouter model does not advertise reasoning controls'
+        }
+        type="button"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path d="M9 18h6M10 22h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path
+            d="M8.2 14.5c-1.4-1.1-2.2-2.7-2.2-4.5a6 6 0 1112 0c0 1.8-.8 3.4-2.2 4.5-.7.6-.8 1.3-.8 2H9c0-.7-.1-1.4-.8-2z"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      </button>
+      {popover}
+    </>
+  );
+}
+
 function CopyMessageIcon({ copied }: { copied: boolean }) {
   if (copied) {
     return (
@@ -300,6 +453,9 @@ interface ChatPanelProps {
   selectedProviderLabel: string;
   selectedProviderKind: ProviderKind;
   selectedModel: string;
+  openRouterReasoningEffort: OpenRouterReasoningEffort;
+  openRouterReasoningSupported: boolean;
+  onOpenRouterReasoningEffortChange: (effort: OpenRouterReasoningEffort) => void;
   openRouterCredits?: HeaderCreditsDisplay | null;
   sessionMode: SessionMode;
   isWizard?: boolean;
@@ -320,6 +476,7 @@ interface ChatPanelProps {
   /** Nexus relay only: allow Send during streaming (queues user turns for the next teammate). */
   nexusRelayQueueDuringStream?: boolean;
   onSend: () => void;
+  onSubmitQuizAnswers: (answersText: string) => void;
   onStop: () => void;
   /** Messages in the active thread (for rough context estimate). */
   chatMessages: ChatMessage[];
@@ -573,6 +730,9 @@ export function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  openRouterReasoningEffort,
+  openRouterReasoningSupported,
+  onOpenRouterReasoningEffortChange,
   openRouterCredits,
   sessionMode,
   isWizard = false,
@@ -587,6 +747,7 @@ export function ChatPanel({
   onAttachImages,
   onRemoveAttachment,
   onSend,
+  onSubmitQuizAnswers,
   onStop,
   chatMessages,
   contextLimit,
@@ -1027,7 +1188,9 @@ export function ChatPanel({
                   {message.role === 'assistant' ? (
                     <AssistantMessageContent
                       onSessionModeToggle={onSessionModeToggle}
+                      onSubmitQuizAnswers={onSubmitQuizAnswers}
                       onWebSearchChange={onWebSearchChange}
+                      quizSubmitDisabled={message.status === 'streaming'}
                       sessionMode={sessionMode}
                       sessionModeToggleDisabled={sessionModeToggleDisabled}
                       text={message.content}
@@ -1197,12 +1360,12 @@ export function ChatPanel({
       <AnimatePresence initial={false}>
         {terminalOpen && (
           <motion.div
+            className="chat-terminal-overlay"
             key="inline-terminal"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
+            initial={{ opacity: 0, y: 10, scale: 0.99 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.99 }}
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-            style={{ overflow: 'hidden' }}
           >
             <div className="chat-terminal">
               <div className="chat-terminal__header">
@@ -1301,6 +1464,15 @@ export function ChatPanel({
               type="file"
             />
           </label>
+          {selectedProviderKind === 'openrouter' ? (
+            <OpenRouterReasoningButton
+              disabled={isStreaming}
+              effort={openRouterReasoningEffort}
+              model={selectedModel || 'No model selected'}
+              onChange={onOpenRouterReasoningEffortChange}
+              supported={openRouterReasoningSupported}
+            />
+          ) : null}
           <textarea
             ref={textareaRef}
             className="chat-compose__input"

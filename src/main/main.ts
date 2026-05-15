@@ -553,7 +553,22 @@ const modelService = new ModelService(
     return wizard;
   },
   requestWizardPromptApproval,
-  requestToolApproval
+  requestToolApproval,
+  () => chatStore.listChats(),
+  (id) => chatStore.loadChat(id),
+  async (id, title) => {
+    const chat = await chatStore.loadChat(id);
+    if (!chat) {
+      throw new Error('Current chat was not found.');
+    }
+    await chatStore.saveChat({
+      ...chat,
+      title,
+      titleOverride: title,
+      updatedAt: Date.now()
+    });
+    mainWindow?.webContents.send('chats:updated');
+  }
 );
 
 const assertActiveWorkspace = (root: string | undefined) => {

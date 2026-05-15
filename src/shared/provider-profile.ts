@@ -1,4 +1,12 @@
-import type { ProviderKind, ProviderProfile, SavedPromptPreset } from './types';
+import type { OpenRouterReasoningEffort, ProviderKind, ProviderProfile, SavedPromptPreset } from './types';
+
+const OPENROUTER_REASONING_EFFORTS: OpenRouterReasoningEffort[] = ['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+function normalizeReasoningEffort(v: unknown, fallback: OpenRouterReasoningEffort | undefined): OpenRouterReasoningEffort {
+  return OPENROUTER_REASONING_EFFORTS.includes(v as OpenRouterReasoningEffort)
+    ? (v as OpenRouterReasoningEffort)
+    : fallback ?? 'auto';
+}
 
 function isSavedPromptPresetList(v: unknown): v is SavedPromptPreset[] {
   return (
@@ -40,7 +48,8 @@ export function normalizeProviderProfile(
       activePromptPresetId,
       promptPresets: raw.promptPresets as SavedPromptPreset[],
       appName: typeof base.appName === 'string' ? base.appName : defaults.appName,
-      appUrl: typeof base.appUrl === 'string' ? base.appUrl : defaults.appUrl
+      appUrl: typeof base.appUrl === 'string' ? base.appUrl : defaults.appUrl,
+      reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
     };
   }
 
@@ -66,6 +75,7 @@ export function normalizeProviderProfile(
     activePromptPresetId,
     promptPresets,
     appName: typeof base.appName === 'string' ? base.appName : defaults.appName,
-    appUrl: typeof base.appUrl === 'string' ? base.appUrl : defaults.appUrl
+    appUrl: typeof base.appUrl === 'string' ? base.appUrl : defaults.appUrl,
+    reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
   };
 }

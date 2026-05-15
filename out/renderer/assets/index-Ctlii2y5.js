@@ -33572,6 +33572,18 @@ function AssistantMessageContent({
   }) });
 }
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+const reasoningEffortOptions = [
+  { value: "auto", label: "Auto", hint: "Use the model default" },
+  { value: "none", label: "Off", hint: "Disable reasoning" },
+  { value: "minimal", label: "Minimal", hint: "Small reasoning budget" },
+  { value: "low", label: "Low", hint: "Light reasoning" },
+  { value: "medium", label: "Medium", hint: "Balanced reasoning" },
+  { value: "high", label: "High", hint: "Deeper reasoning" },
+  { value: "xhigh", label: "XHigh", hint: "Maximum reasoning" }
+];
+function reasoningEffortLabel(value) {
+  return reasoningEffortOptions.find((option) => option.value === value)?.label ?? "Auto";
+}
 function NexusRelayProgressBar(props) {
   const [, setTick] = reactExports.useState(0);
   reactExports.useEffect(() => {
@@ -33777,6 +33789,131 @@ function ChatContextMeter({ used, limit }) {
               strokeLinecap: "round",
               strokeWidth: "2",
               transform: "rotate(-90 11 11)"
+            }
+          )
+        ] })
+      }
+    ),
+    popover
+  ] });
+}
+function OpenRouterReasoningButton({
+  effort,
+  model,
+  supported,
+  disabled,
+  onChange
+}) {
+  const triggerRef = reactExports.useRef(null);
+  const popoverRef = reactExports.useRef(null);
+  const [open, setOpen] = reactExports.useState(false);
+  const [anchor, setAnchor] = reactExports.useState({ top: 0, left: 0 });
+  const currentLabel = reasoningEffortLabel(effort);
+  const unavailable = disabled || !supported;
+  const updateAnchor = reactExports.useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+  const toggleOpen = reactExports.useCallback(() => {
+    if (unavailable) return;
+    updateAnchor();
+    setOpen((value) => !value);
+  }, [unavailable, updateAnchor]);
+  reactExports.useLayoutEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onReposition = () => updateAnchor();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [open, updateAnchor]);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event) => {
+      const target = event.target;
+      if (target && (triggerRef.current?.contains(target) || popoverRef.current?.contains(target))) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+  const popover = open && typeof document !== "undefined" && reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        ref: popoverRef,
+        className: "chat-reasoning-popover",
+        role: "menu",
+        style: {
+          left: anchor.left,
+          top: anchor.top - 8,
+          transform: "translate(-50%, -100%)"
+        },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-reasoning-popover__header", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Reasoning" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: model })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-reasoning-popover__options", children: reasoningEffortOptions.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: `chat-reasoning-popover__option ${effort === option.value ? "is-active" : ""}`,
+              onClick: () => {
+                onChange(option.value);
+                setOpen(false);
+              },
+              role: "menuitemradio",
+              "aria-checked": effort === option.value,
+              type: "button",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: option.label }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: option.hint })
+              ]
+            },
+            option.value
+          )) })
+        ]
+      }
+    ),
+    document.body
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        ref: triggerRef,
+        "aria-expanded": open,
+        "aria-label": `OpenRouter reasoning: ${currentLabel}`,
+        className: `chat-compose__reasoning ${effort !== "auto" ? "is-active" : ""}`,
+        disabled: unavailable,
+        onClick: toggleOpen,
+        title: supported ? `OpenRouter reasoning: ${currentLabel}` : "This OpenRouter model does not advertise reasoning controls",
+        type: "button",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18h6M10 22h4", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "path",
+            {
+              d: "M8.2 14.5c-1.4-1.1-2.2-2.7-2.2-4.5a6 6 0 1112 0c0 1.8-.8 3.4-2.2 4.5-.7.6-.8 1.3-.8 2H9c0-.7-.1-1.4-.8-2z",
+              stroke: "currentColor",
+              strokeLinecap: "round",
+              strokeLinejoin: "round",
+              strokeWidth: "1.8"
             }
           )
         ] })
@@ -34007,6 +34144,9 @@ function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  openRouterReasoningEffort,
+  openRouterReasoningSupported,
+  onOpenRouterReasoningEffortChange,
   openRouterCredits,
   sessionMode,
   isWizard = false,
@@ -34636,6 +34776,16 @@ function ChatPanel({
               }
             )
           ] }),
+          selectedProviderKind === "openrouter" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            OpenRouterReasoningButton,
+            {
+              disabled: isStreaming,
+              effort: openRouterReasoningEffort,
+              model: selectedModel || "No model selected",
+              onChange: onOpenRouterReasoningEffortChange,
+              supported: openRouterReasoningSupported
+            }
+          ) : null,
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "textarea",
             {
@@ -38847,6 +38997,11 @@ const sessionTitle = (messages, fallback = "New session") => {
   const text2 = first.content.trim();
   return text2.length > 42 ? `${text2.slice(0, 42)}...` : text2 || fallback;
 };
+const resolveSessionTitle = (messages, titleOverride, fallback = "New session") => {
+  const t = titleOverride?.trim();
+  if (t) return t;
+  return sessionTitle(messages, fallback);
+};
 const buildWizardSystemPrompt = (wizard) => {
   const outsideOn = Boolean(wizard.allowOutsideWorkspace);
   const pathRules = outsideOn ? `- Path-based file tools may read/write/delete/rename/outline targets outside this folder using ../ or absolute local paths when needed (cloud-sync folders stay blocked). list_files, workspace search, apply_patch, git diff, and shell commands still run only under: ${wizard.workspaceRoot}` : `- Path-based file tools stay inside your workspace folder (${wizard.workspaceRoot}) unless the user enables **Allow paths outside workspace** in Inspector → Wizard settings. If they ask you to edit or read arbitrary paths or another Wizard’s folder, explain this limit and tell them they can turn that setting on—or copy files here, export/import a bundle, switch Wizards, or paste content.`;
@@ -39257,6 +39412,10 @@ function App() {
   const [normalChatDeleteTarget, setNormalChatDeleteTarget] = reactExports.useState(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = reactExports.useState(null);
+  const [draggingNormalChatId, setDraggingNormalChatId] = reactExports.useState(null);
+  const [normalChatDropTarget, setNormalChatDropTarget] = reactExports.useState(null);
+  const [draggingWizardId, setDraggingWizardId] = reactExports.useState(null);
+  const [wizardDropTarget, setWizardDropTarget] = reactExports.useState(null);
   const [wizardRenamePrompt, setWizardRenamePrompt] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
   const [wizardPromptApproval, setWizardPromptApproval] = reactExports.useState(null);
@@ -39455,7 +39614,7 @@ function App() {
       if (!disk) return;
       await window.electronAPI.saveChat({
         ...disk,
-        title: resolveChatTitle(msgs, disk.titleOverride),
+        title: disk.kind === "wizard-session" || disk.kind === "nexus-session" ? resolveSessionTitle(msgs, disk.titleOverride) : resolveChatTitle(msgs, disk.titleOverride),
         messages: msgs,
         timeline: tl,
         updatedAt: Date.now()
@@ -39670,13 +39829,14 @@ function App() {
       const chat = {
         id: id2,
         kind,
-        title: kind === "wizard-session" || kind === "nexus-session" ? sessionTitle(msgs, nameOverride ?? void 0) : resolveChatTitle(msgs, nameOverride),
+        title: kind === "wizard-session" || kind === "nexus-session" ? resolveSessionTitle(msgs, nameOverride) : resolveChatTitle(msgs, nameOverride),
         titleOverride: nameOverride == null || nameOverride === "" ? null : nameOverride.trim() || null,
         messages: msgs,
         timeline: tl,
         createdAt,
         updatedAt: now2,
         pinned: disk?.pinned ?? existing?.pinned ?? false,
+        chatOrder: typeof disk?.chatOrder === "number" ? disk.chatOrder : typeof existing?.chatOrder === "number" ? existing.chatOrder : null,
         modelOverride: disk?.modelOverride ?? existing?.modelOverride ?? (targetId ? null : newChatModelOverrideRef.current ?? null),
         wizard,
         wizardId,
@@ -40323,6 +40483,26 @@ function App() {
     const saved = await window.electronAPI.saveSettings(next);
     setSettings(saved);
   };
+  const handleOpenRouterReasoningEffortChange = reactExports.useCallback(
+    (effort) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const next = {
+        ...current,
+        providers: {
+          ...current.providers,
+          openrouter: {
+            ...current.providers.openrouter,
+            reasoningEffort: effort
+          }
+        }
+      };
+      settingsRef.current = next;
+      setSettings(next);
+      void persistSettingsToDisk(next);
+    },
+    []
+  );
   const SETTINGS_AUTOSAVE_MS = 450;
   const WIZARD_AUTOSAVE_MS = 450;
   const NEXUS_AUTOSAVE_MS = 450;
@@ -40726,6 +40906,7 @@ function App() {
       createdAt: now2,
       updatedAt: now2,
       pinned: false,
+      chatOrder: null,
       modelOverride: override
     };
     await window.electronAPI.saveChat(chat);
@@ -41558,11 +41739,179 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       e.stopPropagation();
       const full = await window.electronAPI.loadChat(id2);
       if (!full) return;
-      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, updatedAt: Date.now() });
+      await window.electronAPI.saveChat({ ...full, pinned: !full.pinned, chatOrder: null, updatedAt: Date.now() });
       await refreshChatList();
     },
     [refreshChatList]
   );
+  const canReorderNormalChats = reactExports.useCallback(
+    (sourceId, targetId) => {
+      if (!sourceId || sourceId === targetId) return false;
+      const source = normalChatList.find((chat) => chat.id === sourceId);
+      const target = normalChatList.find((chat) => chat.id === targetId);
+      return Boolean(source && target && Boolean(source.pinned) === Boolean(target.pinned));
+    },
+    [normalChatList]
+  );
+  const reorderNormalChats = reactExports.useCallback(
+    async (sourceId, targetId, position2) => {
+      if (!canReorderNormalChats(sourceId, targetId)) return;
+      const source = normalChatList.find((chat) => chat.id === sourceId);
+      if (!source) return;
+      const pinnedGroup = Boolean(source.pinned);
+      const group = normalChatList.filter((chat) => Boolean(chat.pinned) === pinnedGroup);
+      const fromIndex = group.findIndex((chat) => chat.id === sourceId);
+      if (fromIndex < 0) return;
+      const nextGroup = [...group];
+      const [moved] = nextGroup.splice(fromIndex, 1);
+      if (!moved) return;
+      const targetIndex = nextGroup.findIndex((chat) => chat.id === targetId);
+      if (targetIndex < 0) return;
+      nextGroup.splice(position2 === "after" ? targetIndex + 1 : targetIndex, 0, moved);
+      if (nextGroup.every((chat, index2) => chat.id === group[index2]?.id)) return;
+      const orderById = new Map(nextGroup.map((chat, index2) => [chat.id, index2]));
+      setChatList(
+        (current) => current.map(
+          (chat) => orderById.has(chat.id) ? {
+            ...chat,
+            chatOrder: orderById.get(chat.id) ?? null
+          } : chat
+        )
+      );
+      await Promise.all(
+        nextGroup.map(async (chat, index2) => {
+          const full = await window.electronAPI.loadChat(chat.id);
+          if (!full) return;
+          await window.electronAPI.saveChat({ ...full, chatOrder: index2, updatedAt: full.updatedAt });
+        })
+      );
+      await refreshChatList();
+    },
+    [canReorderNormalChats, normalChatList, refreshChatList]
+  );
+  const handleNormalChatDragStart = (event, id2) => {
+    setDraggingNormalChatId(id2);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id2);
+    const dragImage = document.createElement("div");
+    dragImage.style.position = "fixed";
+    dragImage.style.top = "-1000px";
+    dragImage.style.left = "-1000px";
+    dragImage.style.width = "1px";
+    dragImage.style.height = "1px";
+    dragImage.style.opacity = "0";
+    document.body.appendChild(dragImage);
+    event.dataTransfer.setDragImage(dragImage, 0, 0);
+    window.requestAnimationFrame(() => dragImage.remove());
+  };
+  const handleNormalChatDragOver = (event, targetId) => {
+    if (!canReorderNormalChats(draggingNormalChatId, targetId)) {
+      setNormalChatDropTarget((current) => current?.id === targetId ? null : current);
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position2 = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    setNormalChatDropTarget({ id: targetId, position: position2 });
+  };
+  const handleNormalChatDrop = async (event, targetId) => {
+    event.preventDefault();
+    const sourceId = draggingNormalChatId ?? event.dataTransfer.getData("text/plain");
+    const position2 = normalChatDropTarget?.id === targetId ? normalChatDropTarget.position : "before";
+    setDraggingNormalChatId(null);
+    setNormalChatDropTarget(null);
+    if (!sourceId) return;
+    await reorderNormalChats(sourceId, targetId, position2);
+  };
+  const clearNormalChatDragState = () => {
+    setDraggingNormalChatId(null);
+    setNormalChatDropTarget(null);
+  };
+  const canReorderWizards = reactExports.useCallback(
+    (sourceId, targetId) => {
+      if (!sourceId || sourceId === targetId) return false;
+      const source = wizardChatList.find((chat) => chat.id === sourceId);
+      const target = wizardChatList.find((chat) => chat.id === targetId);
+      return Boolean(source && target && Boolean(source.pinned) === Boolean(target.pinned));
+    },
+    [wizardChatList]
+  );
+  const reorderWizards = reactExports.useCallback(
+    async (sourceId, targetId, position2) => {
+      if (!canReorderWizards(sourceId, targetId)) return;
+      const source = wizardChatList.find((chat) => chat.id === sourceId);
+      if (!source) return;
+      const pinnedGroup = Boolean(source.pinned);
+      const group = wizardChatList.filter((chat) => Boolean(chat.pinned) === pinnedGroup);
+      const fromIndex = group.findIndex((chat) => chat.id === sourceId);
+      if (fromIndex < 0) return;
+      const nextGroup = [...group];
+      const [moved] = nextGroup.splice(fromIndex, 1);
+      if (!moved) return;
+      const targetIndex = nextGroup.findIndex((chat) => chat.id === targetId);
+      if (targetIndex < 0) return;
+      nextGroup.splice(position2 === "after" ? targetIndex + 1 : targetIndex, 0, moved);
+      if (nextGroup.every((chat, index2) => chat.id === group[index2]?.id)) return;
+      const orderById = new Map(nextGroup.map((chat, index2) => [chat.id, index2]));
+      setChatList(
+        (current) => current.map(
+          (chat) => orderById.has(chat.id) ? {
+            ...chat,
+            chatOrder: orderById.get(chat.id) ?? null
+          } : chat
+        )
+      );
+      await Promise.all(
+        nextGroup.map(async (chat, index2) => {
+          const full = await window.electronAPI.loadChat(chat.id);
+          if (!full) return;
+          await window.electronAPI.saveChat({ ...full, chatOrder: index2, updatedAt: full.updatedAt });
+        })
+      );
+      await refreshChatList();
+    },
+    [canReorderWizards, refreshChatList, wizardChatList]
+  );
+  const handleWizardDragStart = (event, id2) => {
+    setDraggingWizardId(id2);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id2);
+    const dragImage = document.createElement("div");
+    dragImage.style.position = "fixed";
+    dragImage.style.top = "-1000px";
+    dragImage.style.left = "-1000px";
+    dragImage.style.width = "1px";
+    dragImage.style.height = "1px";
+    dragImage.style.opacity = "0";
+    document.body.appendChild(dragImage);
+    event.dataTransfer.setDragImage(dragImage, 0, 0);
+    window.requestAnimationFrame(() => dragImage.remove());
+  };
+  const handleWizardDragOver = (event, targetId) => {
+    if (!canReorderWizards(draggingWizardId, targetId)) {
+      setWizardDropTarget((current) => current?.id === targetId ? null : current);
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position2 = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    setWizardDropTarget({ id: targetId, position: position2 });
+  };
+  const handleWizardDrop = async (event, targetId) => {
+    event.preventDefault();
+    const sourceId = draggingWizardId ?? event.dataTransfer.getData("text/plain");
+    const position2 = wizardDropTarget?.id === targetId ? wizardDropTarget.position : "before";
+    setDraggingWizardId(null);
+    setWizardDropTarget(null);
+    if (!sourceId) return;
+    await reorderWizards(sourceId, targetId, position2);
+  };
+  const clearWizardDragState = () => {
+    setDraggingWizardId(null);
+    setWizardDropTarget(null);
+  };
   const commitRenameChat = async (id2, draft) => {
     if (skipNextRenameCommitRef.current) {
       skipNextRenameCommitRef.current = false;
@@ -41807,6 +42156,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         createdAt: Date.now(),
         updatedAt: Date.now(),
         pinned: false,
+        chatOrder: null,
         modelOverride: mo
       };
       await window.electronAPI.saveChat(chat);
@@ -42196,6 +42546,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
   })();
   const selectedProviderKind = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? "lmstudio";
   const selectedProviderLabel = providerLabel(selectedProviderKind);
+  const effectiveHeaderModelInfo = modelCatalogForLimit.find((model) => model.id === effectiveHeaderModelId);
+  const openRouterReasoningSupported = Boolean(
+    selectedProviderKind === "openrouter" && effectiveHeaderModelInfo?.supportedParameters?.includes("reasoning")
+  );
+  const openRouterReasoningEffort = settings?.providers.openrouter.reasoningEffort ?? "auto";
   const shouldShowOpenRouterCredits = Boolean(settings?.ui.showOpenRouterCredits && selectedProviderKind === "openrouter");
   const openRouterCreditsApiKey = settings?.providers.openrouter.apiKey.trim() ?? "";
   const refreshOpenRouterCredits = reactExports.useCallback(async () => {
@@ -42945,9 +43300,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.4.1"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.5.0"}`, children: [
                   "v",
-                  "0.4.1"
+                  "0.5.0"
                 ] })
               ] })
             ] }),
@@ -43314,10 +43669,21 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   normalChatList.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No conversations yet. Start a new chat to begin." }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: normalChatList.map((chat) => {
                     const mediaKind = mediaKindForOverride(chat.modelOverride);
                     const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
+                    const hasModelOverride = Boolean(chat.modelOverride?.model?.trim());
                     return /* @__PURE__ */ jsxRuntimeExports.jsxs(
                       "div",
                       {
-                        className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ""}`,
+                        className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ""} ${draggingNormalChatId === chat.id ? "is-dragging" : ""} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ""}`,
+                        draggable: editingTitleId !== chat.id,
+                        onDragEnd: clearNormalChatDragState,
+                        onDragLeave: (e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget)) {
+                            setNormalChatDropTarget((current) => current?.id === chat.id ? null : current);
+                          }
+                        },
+                        onDragOver: (e) => handleNormalChatDragOver(e, chat.id),
+                        onDragStart: (e) => handleNormalChatDragStart(e, chat.id),
+                        onDrop: (e) => void handleNormalChatDrop(e, chat.id),
                         onClick: () => loadChat(chat.id),
                         children: [
                           editingTitleId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__content chat-list__content--editing", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -43343,7 +43709,14 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                             }
                           ) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
                             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title-row", children: [
-                              mediaBadge ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-list__media-badge", title: mediaBadge.label, children: mediaBadge.shortLabel }) : null,
+                              mediaBadge ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-list__media-badge", title: mediaBadge.label, children: mediaBadge.shortLabel }) : hasModelOverride ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "span",
+                                {
+                                  "aria-label": "Model override enabled",
+                                  className: "chat-list__override-dot",
+                                  title: "Model override enabled"
+                                }
+                              ) : null,
                               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title })
                             ] }),
                             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
@@ -43620,7 +43993,17 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                       "div",
                       {
                         "aria-expanded": expandedWizardIds.has(chat.id),
-                        className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""}`,
+                        className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${draggingWizardId === chat.id ? "is-dragging" : ""} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ""}`,
+                        draggable: true,
+                        onDragEnd: clearWizardDragState,
+                        onDragLeave: (e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget)) {
+                            setWizardDropTarget((current) => current?.id === chat.id ? null : current);
+                          }
+                        },
+                        onDragOver: (e) => handleWizardDragOver(e, chat.id),
+                        onDragStart: (e) => handleWizardDragStart(e, chat.id),
+                        onDrop: (e) => void handleWizardDrop(e, chat.id),
                         onClick: () => {
                           void handleWizardSidebarRowActivate(chat);
                         },
@@ -43920,6 +44303,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind),
               sessionMode,
               selectedModel: effectiveHeaderModelId,
+              openRouterReasoningEffort,
+              openRouterReasoningSupported,
+              onOpenRouterReasoningEffortChange: handleOpenRouterReasoningEffortChange,
               openRouterCredits: openRouterCreditsDisplay,
               selectedProviderKind,
               selectedProviderLabel,
@@ -44102,7 +44488,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.4.1",
+                        appVersion: "0.5.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,
