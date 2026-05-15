@@ -28,7 +28,8 @@ interface WizardSetupModalProps {
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
-  { value: 'openrouter', label: 'OpenRouter' }
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'ollama', label: 'Ollama' }
 ];
 
 /** Preferred default when creating a Wizard (OpenRouter catalog id: Gemini 3.1 Flash Lite Preview). */

@@ -479,7 +479,7 @@ function ToolActivityGroup({ items, onDetailsToggle }: { items: ActivityTimeline
 const THINKING_LAYOUT_MS = 240;
 
 /** `data-thinking-layout-lock-until` on `.chat-scroll` blocks ResizeObserver auto-clamp mid-animation (prevents jitter). */
-function ThinkingBlock({ reasoning }: { reasoning: string }) {
+function ThinkingBlock({ active, reasoning }: { active: boolean; reasoning: string }) {
   const [open, setOpen] = useState(false);
   const summaryRef = useRef<HTMLButtonElement>(null);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -527,7 +527,7 @@ function ThinkingBlock({ reasoning }: { reasoning: string }) {
   };
 
   return (
-    <div className={`chat-thinking ${open ? 'is-open' : ''}`}>
+    <div className={`chat-thinking ${open ? 'is-open' : ''}${active ? ' is-active' : ''}`}>
       <button
         ref={summaryRef}
         className="chat-thinking__summary"
@@ -537,7 +537,7 @@ function ThinkingBlock({ reasoning }: { reasoning: string }) {
         type="button"
       >
         <span className="chat-thinking__chevron" aria-hidden>&#x25B6;</span>
-        Thinking
+        <span className="chat-thinking__label">Thinking</span>
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -1004,7 +1004,7 @@ export function ChatPanel({
                 ) : null}
               </header>
               {message.role === 'assistant' && message.reasoning?.trim() ? (
-                <ThinkingBlock reasoning={message.reasoning.trim()} />
+                <ThinkingBlock active={message.status === 'streaming'} reasoning={message.reasoning.trim()} />
               ) : null}
               {message.attachments?.length ? (
                 <div className="chat-attachments">

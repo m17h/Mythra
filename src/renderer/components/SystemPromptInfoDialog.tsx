@@ -43,8 +43,8 @@ export function SystemPromptInfoDialog({ open, onClose }: SystemPromptInfoDialog
               <div className="app-dialog__section-title">Presets and Wizards</div>
               <p>
                 In <strong>Settings → System Prompt</strong>, the <strong>Preset</strong> menu saves named prompt
-                versions per <strong>provider</strong> (LM Studio or OpenRouter). Switch presets when you change projects
-                or want a different baseline without rewriting everything—<strong>Save as new…</strong> is an easy way to
+                versions per <strong>provider</strong> (LM Studio, OpenRouter, or Ollama). Switch presets when you change
+                projects or want a different baseline without rewriting everything—<strong>Save as new…</strong> is an easy way to
                 experiment while keeping a fallback.
               </p>
               <p>

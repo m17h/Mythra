@@ -12,6 +12,7 @@ const electronAPI = {
   getLastValidWorkspaceRoot: () => ipcRenderer.invoke("workspace:last-valid-root"),
   activateWorkspace: (root) => ipcRenderer.invoke("workspace:activate", root),
   getWorkspaceTree: (root) => ipcRenderer.invoke("workspace:tree", root),
+  openWorkspaceFolder: (root) => ipcRenderer.invoke("workspace:open-folder", root),
   detachWorkspace: () => ipcRenderer.invoke("workspace:detach"),
   openFile: (root, target) => ipcRenderer.invoke("workspace:open-file", root, target),
   saveFile: (root, target, content) => ipcRenderer.invoke("workspace:save-file", root, target, content),

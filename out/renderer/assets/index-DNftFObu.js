@@ -20475,7 +20475,7 @@ function applyChatModelOverride(settings, override) {
   };
 }
 function formatOverrideLabel(override, pathLabel2) {
-  const prov = override.provider === "openrouter" ? "OpenRouter" : "LM Studio";
+  const prov = override.provider === "openrouter" ? "OpenRouter" : override.provider === "ollama" ? "Ollama" : "LM Studio";
   return `${prov}: ${pathLabel2(override.model)}`;
 }
 var reactDomExports = requireReactDom();
@@ -33294,6 +33294,77 @@ function remarkGfm(options) {
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#].*)?$/i;
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(?:[?#].*)?$/i;
 const AUDIO_EXT_RE = /\.(mp3|wav|m4a|aac|flac|opus|oga|ogg|webm)(?:[?#].*)?$/i;
+const COLOR_TAG_PATTERN = String.raw`\[color=([a-z][a-z0-9_-]*)(?:\s+tone=(light|normal|dark))?\]([\s\S]*?)\[\/color\]`;
+const CHAT_COLOR_ALIASES = {
+  danger: "red",
+  error: "red",
+  warning: "orange",
+  success: "green",
+  info: "blue",
+  muted: "gray"
+};
+function normalizeChatColor(raw) {
+  const value = raw.trim().toLowerCase();
+  if (value in CHAT_COLOR_ALIASES) return CHAT_COLOR_ALIASES[value];
+  if (["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"].includes(value)) {
+    return value;
+  }
+  return null;
+}
+function normalizeChatColorTone(raw) {
+  const value = raw?.trim().toLowerCase();
+  return value === "light" || value === "dark" ? value : "normal";
+}
+function parseColorText(value) {
+  const nodes = [];
+  let lastIndex = 0;
+  const colorTagRe = new RegExp(COLOR_TAG_PATTERN, "gi");
+  for (let match = colorTagRe.exec(value); match; match = colorTagRe.exec(value)) {
+    if (match.index > lastIndex) {
+      nodes.push({ type: "text", value: value.slice(lastIndex, match.index) });
+    }
+    const color2 = normalizeChatColor(match[1]);
+    const tone = normalizeChatColorTone(match[2]);
+    const content2 = match[3] ?? "";
+    if (color2 && content2) {
+      nodes.push({
+        type: "chatColor",
+        data: {
+          hName: "span",
+          hProperties: {
+            className: ["chat-color-text", `chat-color-text--${color2}`, `chat-color-text--${tone}`]
+          }
+        },
+        children: parseColorText(content2)
+      });
+    } else if (content2) {
+      nodes.push({ type: "text", value: content2 });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) {
+    nodes.push({ type: "text", value: value.slice(lastIndex) });
+  }
+  return nodes.length ? nodes : [{ type: "text", value }];
+}
+function remarkChatColorText() {
+  return (tree) => {
+    const visit2 = (node2) => {
+      if (!node2.children) return;
+      const nextChildren = [];
+      for (const child of node2.children) {
+        if (child.type === "text" && typeof child.value === "string" && child.value.includes("[color=")) {
+          nextChildren.push(...parseColorText(child.value));
+        } else {
+          visit2(child);
+          nextChildren.push(child);
+        }
+      }
+      node2.children = nextChildren;
+    };
+    visit2(tree);
+  };
+}
 function mediaKindFromHref(rawHref) {
   if (typeof rawHref !== "string") return null;
   const href = rawHref.trim();
@@ -33342,7 +33413,7 @@ const markdownComponents = {
   table: ({ children, node: node2, ...rest }) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "table-wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("table", { ...rest, children }) })
 };
 function ChatMarkdown({ text: text2 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-markdown", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { components: markdownComponents, remarkPlugins: [remarkGfm, remarkBreaks], children: text2 }) });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-markdown", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { components: markdownComponents, remarkPlugins: [remarkGfm, remarkBreaks, remarkChatColorText], children: text2 }) });
 }
 function SessionModeMessageEmbed({ sessionMode, onSessionModeToggle, disabled }) {
   const isChat = sessionMode === "talk";
@@ -33858,7 +33929,7 @@ function ToolActivityGroup({ items, onDetailsToggle }) {
   );
 }
 const THINKING_LAYOUT_MS = 240;
-function ThinkingBlock({ reasoning }) {
+function ThinkingBlock({ active, reasoning }) {
   const [open, setOpen] = reactExports.useState(false);
   const summaryRef = reactExports.useRef(null);
   const settleTimerRef = reactExports.useRef(null);
@@ -33898,7 +33969,7 @@ function ThinkingBlock({ reasoning }) {
       }, THINKING_LAYOUT_MS + 40);
     }
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thinking ${open ? "is-open" : ""}`, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thinking ${open ? "is-open" : ""}${active ? " is-active" : ""}`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "button",
       {
@@ -33910,7 +33981,7 @@ function ThinkingBlock({ reasoning }) {
         type: "button",
         children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__chevron", "aria-hidden": true, children: "▶" }),
-          "Thinking"
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__label", children: "Thinking" })
         ]
       }
     ),
@@ -34282,7 +34353,7 @@ function ChatPanel({
                 }
               ) : null
             ] }),
-            message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { reasoning: message.reasoning.trim() }) : null,
+            message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { active: message.status === "streaming", reasoning: message.reasoning.trim() }) : null,
             message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att }, att.id)) }) : null,
             message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
               AssistantMessageContent,
@@ -35271,7 +35342,7 @@ function EditorPanel({ filePath, content: content2, imagePreview, readOnly, read
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "workspace-empty__eyebrow-suffix", children: "· Console" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Open a workspace, pick a file, then wire your model settings on the right." }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "This starter app already supports local folders, file editing, command streaming, theme switching, and live chat against LM Studio or OpenRouter." })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "This starter app already supports local folders, file editing, command streaming, theme switching, and live chat against LM Studio, OpenRouter, or Ollama." })
     ] });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "editor-panel", children: [
@@ -35583,7 +35654,7 @@ function ModelSearch({
 }
 const defaultSettings = {
   ui: {
-    favoriteModels: { lmstudio: [], openrouter: [] }
+    favoriteModels: { lmstudio: [], openrouter: [], ollama: [] }
   }
 };
 const themeCatalog = [
@@ -36053,7 +36124,8 @@ function PromptPresetMenu({ provider, onPatch }) {
 }
 const providerOptions$3 = [
   { value: "lmstudio", label: "LM Studio" },
-  { value: "openrouter", label: "OpenRouter" }
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "ollama", label: "Ollama" }
 ];
 const searchProviderOptions = [
   { value: "duckduckgo", label: "DuckDuckGo" },
@@ -36104,6 +36176,7 @@ function SettingsPanel({
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === "lmstudio";
   const isOpenRouter = settings.selectedProvider === "openrouter";
+  const isOllama = settings.selectedProvider === "ollama";
   const activeSearchProvider = settings.search.provider;
   const anyPremiumApiKeySaved = Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
   const activeThemeLabel = getThemeName(settings.ui.themeId);
@@ -36195,8 +36268,8 @@ function SettingsPanel({
             {
               className: "settings-info-button",
               type: "button",
-              "aria-label": "About OpenRouter, LM Studio, and Mythra",
-              title: "OpenRouter & LM Studio in Mythra",
+              "aria-label": "About OpenRouter, LM Studio, Ollama, and Mythra",
+              title: "OpenRouter, LM Studio, and Ollama in Mythra",
               onClick: onOpenConnectionHelp,
               children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
@@ -36217,11 +36290,11 @@ function SettingsPanel({
             }
           )
         ] }),
-        isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+        isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Base URL" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => updateProvider({ baseUrl: e.target.value }), value: provider.baseUrl })
         ] }) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+        isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Ollama uses its local server and does not need an API key." }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isOpenRouter ? "API Key" : "Server Key" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "input",
@@ -36266,9 +36339,10 @@ function SettingsPanel({
               }
             ) : /* @__PURE__ */ jsxRuntimeExports.jsx("select", { onChange: (e) => updateProvider({ model: e.target.value }), value: provider.model, children: /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Select model" }) })
           ] }),
-          isLmStudio ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
+          isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
         ] }),
-        isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." })
+        isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." }),
+        isOllama && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start Ollama and pull a model first." })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -36706,7 +36780,7 @@ function SystemPromptInfoDialog({ open, onClose }) {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Preset" }),
                 " menu saves named prompt versions per ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "provider" }),
-                " (LM Studio or OpenRouter). Switch presets when you change projects or want a different baseline without rewriting everything—",
+                " (LM Studio, OpenRouter, or Ollama). Switch presets when you change projects or want a different baseline without rewriting everything—",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Save as new…" }),
                 " is an easy way to experiment while keeping a fallback."
               ] }),
@@ -36854,7 +36928,8 @@ function ReleaseNotesDialog({ open, cache, loading, onClose, onRefresh }) {
 }
 const providerOptions$2 = [
   { value: "lmstudio", label: "LM Studio" },
-  { value: "openrouter", label: "OpenRouter" }
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "ollama", label: "Ollama" }
 ];
 function WizardSettingsPanel({
   wizard,
@@ -36862,6 +36937,7 @@ function WizardSettingsPanel({
   modelOptions,
   statusMessage,
   onChange,
+  onRenameRequest,
   onOpenDocument,
   onRefreshModels,
   onPresetPersist,
@@ -36869,9 +36945,24 @@ function WizardSettingsPanel({
   onOpenSystemPromptInfo
 }) {
   const [localModels, setLocalModels] = reactExports.useState(modelOptions);
+  const [nameDraft, setNameDraft] = reactExports.useState(wizard.name);
   reactExports.useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
+  reactExports.useEffect(() => {
+    setNameDraft(wizard.name);
+  }, [wizard.name]);
+  const commitNameDraft = async () => {
+    const next = nameDraft.trim();
+    if (!next || next === wizard.name) {
+      setNameDraft(wizard.name);
+      return;
+    }
+    const accepted = await onRenameRequest(next);
+    if (!accepted) {
+      setNameDraft(wizard.name);
+    }
+  };
   reactExports.useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -36900,7 +36991,23 @@ function WizardSettingsPanel({
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Identity" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Name" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => onChange({ ...wizard, name: e.target.value }), value: wizard.name })
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              onBlur: () => void commitNameDraft(),
+              onChange: (e) => setNameDraft(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+                if (e.key === "Escape") {
+                  setNameDraft(wizard.name);
+                  e.currentTarget.blur();
+                }
+              },
+              value: nameDraft
+            }
+          )
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Workspace" }),
@@ -37251,7 +37358,8 @@ function sanitizeWizardFolderSegment(name2) {
 }
 const providerOptions$1 = [
   { value: "lmstudio", label: "LM Studio" },
-  { value: "openrouter", label: "OpenRouter" }
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "ollama", label: "Ollama" }
 ];
 const WIZARD_SETUP_DEFAULT_MODEL_ID = "google/gemini-3.1-flash-lite-preview";
 const ONBOARDING_SYSTEM_TAIL = "\n\nSoul.md and memory.md were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n";
@@ -38128,9 +38236,9 @@ const pages = [
   {
     kicker: "Connection",
     title: "Choose where models come from",
-    body: "Mythra can talk to models through LM Studio or OpenRouter. You can change providers and models in Settings.",
+    body: "Mythra can talk to models through LM Studio, OpenRouter, or Ollama. You can change providers and models in Settings.",
     points: [
-      "LM Studio runs models on your own computer.",
+      "LM Studio and Ollama run models on your own computer.",
       "OpenRouter connects to hosted cloud models through one API key.",
       "The selected model controls how smart, fast, and expensive a response may be."
     ],
@@ -38538,6 +38646,21 @@ function sidebarBrandLogoSrc(themeId, customThemeTokens) {
   return logoNeonGrid;
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const replaceWizardNameText = (text2, previousName, nextName) => {
+  const trimmedPrevious = previousName.trim();
+  if (!trimmedPrevious || trimmedPrevious === nextName) return text2;
+  return text2.replace(new RegExp(escapeRegExp(trimmedPrevious), "g"), nextName);
+};
+const renameWizardSoulMarkdown = (text2, previousName, nextName) => {
+  const trimmedPrevious = previousName.trim();
+  if (!trimmedPrevious || trimmedPrevious === nextName) return text2;
+  const headingPattern = new RegExp(`^(#\\s*)${escapeRegExp(trimmedPrevious)}(\\s*)$`, "m");
+  if (headingPattern.test(text2)) {
+    return text2.replace(headingPattern, `$1${nextName}$2`);
+  }
+  return replaceWizardNameText(text2, trimmedPrevious, nextName);
+};
 const pathLabel = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 function workspaceRelativeDisplay(workspaceRoot, absolutePath) {
   const root2 = workspaceRoot.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -38643,7 +38766,7 @@ function workspaceAbsolutePathPrefixRemap(oldRoot, newRoot) {
 const isEmbeddingModel = (modelId) => /embed|embedding/i.test(modelId);
 const normalizeProviderBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
-  if (kind !== "lmstudio") return trimmed;
+  if (kind === "openrouter") return trimmed;
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 };
 const pickDefaultModel = (modelList, currentModel) => {
@@ -38656,11 +38779,14 @@ const looksLikeProviderTransportError = (raw) => {
   const m = raw.toLowerCase();
   return m.includes("econnrefused") || m.includes("econnreset") || m.includes("enotfound") || m.includes("enetunreach") || m.includes("etimedout") || m.includes("socket hang up") || m.includes("fetch failed") || m.includes("failed to fetch") || m.includes("network") && m.includes("error") || m.includes("load failed");
 };
-const LM_STUDIO_CATALOG_PROBE_MS = 35e3;
+const LOCAL_PROVIDER_CATALOG_PROBE_MS = 35e3;
 const providerOptions = [
   { value: "lmstudio", label: "LM Studio" },
-  { value: "openrouter", label: "OpenRouter" }
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "ollama", label: "Ollama" }
 ];
+const mediaProviderOptions = providerOptions.filter((option) => option.value !== "ollama");
+const providerLabel = (kind) => kind === "openrouter" ? "OpenRouter" : kind === "ollama" ? "Ollama" : "LM Studio";
 const needsSearchApiKeyNotice = (settings) => {
   if (settings.search.provider === "duckduckgo") return false;
   const hasAny = settings.search.tavilyApiKey.trim().length > 0 || settings.search.braveApiKey.trim().length > 0;
@@ -39091,6 +39217,7 @@ function App() {
   const [normalChatDeleteTarget, setNormalChatDeleteTarget] = reactExports.useState(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = reactExports.useState(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = reactExports.useState(null);
+  const [wizardRenamePrompt, setWizardRenamePrompt] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
   const [wizardPromptApproval, setWizardPromptApproval] = reactExports.useState(null);
   const [toolApprovalRequest, setToolApprovalRequest] = reactExports.useState(null);
@@ -39662,13 +39789,14 @@ function App() {
     };
   }, []);
   const openRouterKeyForEffect = settings?.selectedProvider === "openrouter" ? settings.providers.openrouter.apiKey : null;
-  const lmstudioBaseForCatalog = settings?.selectedProvider === "lmstudio" ? (settings.providers.lmstudio.baseUrl ?? "").trim() : null;
+  const localBaseForCatalog = settings?.selectedProvider === "lmstudio" ? (settings.providers.lmstudio.baseUrl ?? "").trim() : null;
+  const ollamaBaseForCatalog = settings?.selectedProvider === "ollama" ? (settings.providers.ollama.baseUrl ?? "").trim() : null;
   reactExports.useEffect(() => {
     if (!settings) return;
     void refreshModels(settings);
-  }, [settings?.selectedProvider, openRouterKeyForEffect, lmstudioBaseForCatalog]);
+  }, [settings?.selectedProvider, openRouterKeyForEffect, localBaseForCatalog, ollamaBaseForCatalog]);
   reactExports.useEffect(() => {
-    if (!settings || settings.selectedProvider !== "lmstudio") return;
+    if (!settings || settings.selectedProvider !== "lmstudio" && settings.selectedProvider !== "ollama") return;
     const poke = () => {
       void refreshModelsRef.current();
     };
@@ -39677,13 +39805,13 @@ function App() {
     };
     window.addEventListener("focus", poke);
     document.addEventListener("visibilitychange", onVisibility);
-    const intervalId = window.setInterval(poke, LM_STUDIO_CATALOG_PROBE_MS);
+    const intervalId = window.setInterval(poke, LOCAL_PROVIDER_CATALOG_PROBE_MS);
     return () => {
       window.removeEventListener("focus", poke);
       document.removeEventListener("visibilitychange", onVisibility);
       window.clearInterval(intervalId);
     };
-  }, [settings?.selectedProvider, lmstudioBaseForCatalog]);
+  }, [settings?.selectedProvider, localBaseForCatalog, ollamaBaseForCatalog]);
   reactExports.useEffect(() => {
     if (!settings) return;
     if (activeChatId) {
@@ -39865,7 +39993,7 @@ function App() {
         return;
       }
       const s = settingsRef.current;
-      if (s?.selectedProvider === "lmstudio" && looksLikeProviderTransportError(error)) {
+      if ((s?.selectedProvider === "lmstudio" || s?.selectedProvider === "ollama") && looksLikeProviderTransportError(error)) {
         void refreshModelsRef.current();
       }
       const snapshot = updateInFlightMessage(requestId, (m) => ({
@@ -40069,6 +40197,14 @@ function App() {
     setActiveFilePath(target);
     setInspectorTab("editor");
   };
+  const openWorkspaceFolder = async () => {
+    if (!workspaceRoot) return;
+    try {
+      await window.electronAPI.openWorkspaceFolder(workspaceRoot);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : "Workspace folder could not be opened.");
+    }
+  };
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer2 = buffers[activeFilePath];
@@ -40130,9 +40266,8 @@ function App() {
       if (modelList.length > 0) {
         setSettingsStatus(`Connected. ${modelList.length} models available. Active: ${defaultModel || "none"}.`);
       } else {
-        setSettingsStatus(
-          activeSettings.selectedProvider === "lmstudio" ? "Connected, but no models returned. Load a model in LM Studio first." : "Connected, but OpenRouter returned no models for this profile."
-        );
+        const emptyMessage = activeSettings.selectedProvider === "lmstudio" ? "Connected, but no models returned. Load a model in LM Studio first." : activeSettings.selectedProvider === "ollama" ? "Connected, but no models returned. Pull a model in Ollama first." : "Connected, but OpenRouter returned no models for this profile.";
+        setSettingsStatus(emptyMessage);
       }
     } catch (error) {
       setModels([]);
@@ -41097,35 +41232,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       if (!wizardId) return;
       const full = await window.electronAPI.loadChat(wizardId);
       if (!full || full.kind !== "wizard" || !full.wizard) return;
-      const previousDiskRoot = full.wizard.workspaceRoot;
-      const profileInput = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
-      let profile;
-      try {
-        profile = await window.electronAPI.syncWizardWorkspaceFolder(profileInput);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setSettingsStatus(msg);
-        return;
-      }
-      if (workspaceRootRef.current && pathsEqual(workspaceRootRef.current, previousDiskRoot) && profile.workspaceRoot !== previousDiskRoot) {
-        const mapPath = workspaceAbsolutePathPrefixRemap(previousDiskRoot, profile.workspaceRoot);
-        setWorkspaceRoot(profile.workspaceRoot);
-        setBuffers((current) => {
-          const next = {};
-          for (const [key, buf] of Object.entries(current)) {
-            const mappedKey = mapPath(key);
-            next[mappedKey] = { ...buf, path: mapPath(buf.path) };
-          }
-          return next;
-        });
-        setActiveFilePath((active) => active ? mapPath(active) : active);
-        try {
-          setWorkspaceTree(await window.electronAPI.getWorkspaceTree(profile.workspaceRoot));
-        } catch {
-          setWorkspaceTree([]);
-        }
-        void refreshWorkspaceChanges(profile.workspaceRoot);
-      }
+      const profile = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
       await window.electronAPI.saveChat({
         ...full,
         title: profile.name,
@@ -41137,8 +41244,111 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       await refreshChatList();
       setWizardDraft(profile);
     },
-    [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]
+    [activeWizardMeta?.id, refreshChatList]
   );
+  const requestWizardSettingsRename = reactExports.useCallback(
+    (nextName) => new Promise((resolve) => {
+      if (!activeWizardMeta?.id || !activeWizard) {
+        resolve(false);
+        return;
+      }
+      setWizardRenamePrompt({
+        wizardId: activeWizardMeta.id,
+        previous: activeWizard,
+        nextName,
+        resolve
+      });
+    }),
+    [activeWizard, activeWizardMeta?.id]
+  );
+  const closeWizardRenamePrompt = (accepted) => {
+    const target = wizardRenamePrompt;
+    setWizardRenamePrompt(null);
+    target?.resolve(accepted);
+  };
+  const remapActiveWizardWorkspaceRoot = async (previousRoot, nextRoot) => {
+    if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, previousRoot) || pathsEqual(previousRoot, nextRoot)) {
+      return;
+    }
+    const mapPath = workspaceAbsolutePathPrefixRemap(previousRoot, nextRoot);
+    setWorkspaceRoot(nextRoot);
+    setBuffers((current) => {
+      const next = {};
+      for (const [key, buf] of Object.entries(current)) {
+        const mappedKey = mapPath(key);
+        next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+      }
+      return next;
+    });
+    setActiveFilePath((active) => active ? mapPath(active) : active);
+    try {
+      setWorkspaceTree(await window.electronAPI.getWorkspaceTree(nextRoot));
+    } catch {
+      setWorkspaceTree([]);
+    }
+    void refreshWorkspaceChanges(nextRoot);
+  };
+  const saveWizardRenameFromSettings = async (mode) => {
+    const target = wizardRenamePrompt;
+    if (!target) return;
+    const nextName = target.nextName.trim();
+    if (!nextName) {
+      closeWizardRenamePrompt(false);
+      return;
+    }
+    const full = await window.electronAPI.loadChat(target.wizardId);
+    if (!full || full.kind !== "wizard" || !full.wizard) {
+      closeWizardRenamePrompt(false);
+      return;
+    }
+    const previousName = full.wizard.name;
+    const previousRoot = full.wizard.workspaceRoot;
+    let profile = { ...full.wizard, name: nextName };
+    try {
+      if (mode === "everywhere") {
+        profile = await window.electronAPI.syncWizardWorkspaceFolder(profile);
+        profile = {
+          ...profile,
+          systemPrompt: replaceWizardNameText(profile.systemPrompt, previousName, nextName)
+        };
+        await remapActiveWizardWorkspaceRoot(previousRoot, profile.workspaceRoot);
+        if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, profile.workspaceRoot)) {
+          await activateWorkspace(profile.workspaceRoot);
+        }
+        try {
+          const soul = await window.electronAPI.openFile(profile.workspaceRoot, "soul.md");
+          const nextSoul = renameWizardSoulMarkdown(soul.content, previousName, nextName);
+          if (nextSoul !== soul.content) {
+            await window.electronAPI.saveFile(profile.workspaceRoot, "soul.md", nextSoul);
+          }
+        } catch {
+        }
+        try {
+          profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
+        } catch {
+        }
+      }
+      await window.electronAPI.saveChat({
+        ...full,
+        title: nextName,
+        titleOverride: nextName,
+        updatedAt: Date.now(),
+        modelOverride: { provider: profile.provider, model: profile.model },
+        wizard: profile
+      });
+      await refreshChatList();
+      setWizardDraft(profile);
+      wizardDraftRef.current = profile;
+      setSettingsStatus(
+        mode === "everywhere" ? "Wizard name updated across settings, workspace folder, system prompt, and soul.md." : "Wizard display name updated in settings only."
+      );
+      closeWizardRenamePrompt(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSettingsStatus(msg);
+      closeWizardRenamePrompt(false);
+    }
+  };
   const handleWizardDraftChange = reactExports.useCallback(
     (next) => {
       setWizardDraft(next);
@@ -41945,7 +42155,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
   const selectedProviderKind = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? "lmstudio";
-  const selectedProviderLabel = selectedProviderKind === "openrouter" ? "OpenRouter" : "LM Studio";
+  const selectedProviderLabel = providerLabel(selectedProviderKind);
   const sessionMode = activeWizard || activeNexus ? "agent" : activeMediaOverrideKind ? "talk" : settings?.ui.sessionMode ?? "agent";
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
@@ -42012,7 +42222,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     AppSelect,
                     {
                       className: "app-select--compact",
-                      options: providerOptions,
+                      options: mediaProviderOptions,
                       onChange: (provider) => {
                         setMediaPickerProvider(provider);
                         setMediaPickerSelectedModel("");
@@ -42173,6 +42383,49 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         wizards: wizardChatList
       }
     ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: wizardRenamePrompt ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
+      {
+        animate: { opacity: 1 },
+        className: "app-dialog-backdrop app-dialog-backdrop--overlay-top",
+        exit: { opacity: 0 },
+        initial: { opacity: 0 },
+        onClick: () => closeWizardRenamePrompt(false),
+        role: "presentation",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.div,
+          {
+            animate: { opacity: 1, scale: 1, y: 0 },
+            "aria-modal": "true",
+            className: "app-dialog",
+            exit: { opacity: 0, scale: 0.98, y: 8 },
+            initial: { opacity: 0, scale: 0.98, y: 8 },
+            onClick: (e) => e.stopPropagation(),
+            role: "dialog",
+            transition: { duration: 0.18, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Wizard rename" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Apply this name everywhere?" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                "Rename ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizardRenamePrompt.previous.name }),
+                " to",
+                " ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizardRenamePrompt.nextName }),
+                ". Mythra can also rename the workspace folder and update this Wizard's system prompt and ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
+                "."
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => closeWizardRenamePrompt(false), type: "button", children: "Cancel" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => void saveWizardRenameFromSettings("name-only"), type: "button", children: "Name only" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: () => void saveWizardRenameFromSettings("everywhere"), type: "button", children: "Apply everywhere" })
+              ] })
+            ]
+          }
+        )
+      }
+    ) : null }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       AppConfirmDialog,
       {
@@ -42479,10 +42732,13 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Connection" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "connection-help-title", children: "Need help?" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { id: "connection-help-desc", children: [
-                "Mythra sends your chats to an LLM through either ",
+                "Mythra sends your chats to an LLM through ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "OpenRouter" }),
-                " (many cloud models, one API key) or ",
+                " (many cloud models, one API key),",
+                " ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "LM Studio" }),
+                ", or ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Ollama" }),
                 " (models running on your computer). Use the guide below for the option you prefer."
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__section", children: [
@@ -42514,6 +42770,18 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   " unless you changed it in LM Studio."
                 ] })
               ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__section", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__section-title", children: "Ollama" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+                  "Ollama runs local models through its background server. Install Ollama, pull a model, then choose",
+                  " ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Ollama" }),
+                  " in Mythra. The default base URL is",
+                  " ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "app-dialog__code", children: "http://127.0.0.1:11434/v1" }),
+                  ". Mythra uses the local model list from Ollama, so no cloud API key is required."
+                ] })
+              ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__links", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "a",
@@ -42540,6 +42808,20 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     },
                     rel: "noreferrer",
                     children: "LM Studio website"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, className: "app-dialog__links-sep", children: "·" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "a",
+                  {
+                    className: "app-dialog__link",
+                    href: "https://ollama.com/",
+                    onClick: (e) => {
+                      e.preventDefault();
+                      void window.electronAPI.openExternalUrl("https://ollama.com/");
+                    },
+                    rel: "noreferrer",
+                    children: "Ollama website"
                   }
                 )
               ] }),
@@ -42572,9 +42854,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.3.6"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.4.0"}`, children: [
                   "v",
-                  "0.3.6"
+                  "0.4.0"
                 ] })
               ] })
             ] }),
@@ -42873,7 +43155,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                     AppSelect,
                                     {
                                       className: "app-select--compact",
-                                      options: providerOptions,
+                                      options: activeMediaOverrideKind ? mediaProviderOptions : providerOptions,
                                       portalDropdown: true,
                                       onChange: async (p) => {
                                         setOverrideModelProvider(p);
@@ -43154,7 +43436,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                               /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
                               "New room"
                             ] }),
-                            sessions.map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                            sessions.map((session) => /* @__PURE__ */ jsxRuntimeExports.jsx(
                               "div",
                               {
                                 className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
@@ -43167,10 +43449,44 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                     void loadChat(session.id);
                                   }
                                 },
-                                children: [
+                                children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "input",
+                                  {
+                                    autoFocus: true,
+                                    className: "chat-list__title-input wizard-session-row__title-input",
+                                    onBlur: (e) => {
+                                      void commitRenameChat(session.id, e.target.value);
+                                    },
+                                    onChange: (e) => setEditingTitleDraft(e.target.value),
+                                    onClick: (e) => e.stopPropagation(),
+                                    onKeyDown: (e) => {
+                                      e.stopPropagation();
+                                      if (e.key === "Enter") {
+                                        e.currentTarget.blur();
+                                      } else if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        skipNextRenameCommitRef.current = true;
+                                        cancelRenameChat();
+                                      }
+                                    },
+                                    value: editingTitleDraft
+                                  }
+                                ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
                                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
                                   /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
                                     /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                      "button",
+                                      {
+                                        "aria-label": `Rename ${session.title}`,
+                                        className: "wizard-session-row__rename",
+                                        onClick: (e) => beginRenameChat(e, session.id, session.title),
+                                        onMouseDown: (e) => e.preventDefault(),
+                                        title: "Rename room",
+                                        type: "button",
+                                        children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
+                                      }
+                                    ),
                                     /* @__PURE__ */ jsxRuntimeExports.jsx(
                                       "button",
                                       {
@@ -43186,7 +43502,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                       }
                                     )
                                   ] })
-                                ]
+                                ] })
                               },
                               session.id
                             ))
@@ -43300,7 +43616,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                             /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
                             "New session"
                           ] }),
-                          (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                          (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsx(
                             "div",
                             {
                               className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
@@ -43313,10 +43629,44 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                   void loadChat(session.id);
                                 }
                               },
-                              children: [
+                              children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "input",
+                                {
+                                  autoFocus: true,
+                                  className: "chat-list__title-input wizard-session-row__title-input",
+                                  onBlur: (e) => {
+                                    void commitRenameChat(session.id, e.target.value);
+                                  },
+                                  onChange: (e) => setEditingTitleDraft(e.target.value),
+                                  onClick: (e) => e.stopPropagation(),
+                                  onKeyDown: (e) => {
+                                    e.stopPropagation();
+                                    if (e.key === "Enter") {
+                                      e.currentTarget.blur();
+                                    } else if (e.key === "Escape") {
+                                      e.preventDefault();
+                                      skipNextRenameCommitRef.current = true;
+                                      cancelRenameChat();
+                                    }
+                                  },
+                                  value: editingTitleDraft
+                                }
+                              ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
                                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
                                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
                                   /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "button",
+                                    {
+                                      "aria-label": `Rename ${session.title}`,
+                                      className: "wizard-session-row__rename",
+                                      onClick: (e) => beginRenameChat(e, session.id, session.title),
+                                      onMouseDown: (e) => e.preventDefault(),
+                                      title: "Rename session",
+                                      type: "button",
+                                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
+                                    }
+                                  ),
                                   /* @__PURE__ */ jsxRuntimeExports.jsx(
                                     "button",
                                     {
@@ -43332,7 +43682,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                     }
                                   )
                                 ] })
-                              ]
+                              ] })
                             },
                             session.id
                           ))
@@ -43363,10 +43713,20 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                 exit: { opacity: 0 },
                 transition: { duration: 0.15 },
                 children: workspaceRoot ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-meta", children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__value", children: pathLabel(workspaceRoot) }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__hint", children: workspaceRoot })
-                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "button",
+                    {
+                      "aria-label": `Open ${pathLabel(workspaceRoot)} in ${window.electronAPI.platform === "darwin" ? "Finder" : "file explorer"}`,
+                      className: "workspace-meta",
+                      onClick: openWorkspaceFolder,
+                      title: `Open ${workspaceRoot}`,
+                      type: "button",
+                      children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__value", children: pathLabel(workspaceRoot) }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__hint", children: workspaceRoot })
+                      ]
+                    }
+                  ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx(FileTree, { activePath: activeFilePath, nodes: workspaceTree, onOpen: openFile })
                 ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Open a workspace to browse and edit project files." }) })
               },
@@ -43626,6 +43986,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                         onOpenDocument: (path2) => void openFile(path2),
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onPresetPersist: persistAfterPresetAction,
+                        onRenameRequest: requestWizardSettingsRename,
                         onRefreshModels: refreshWizardModels,
                         onSettingsChangeForFavorites: handleSettingsPanelChange,
                         settings,
@@ -43649,7 +44010,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.3.6",
+                        appVersion: "0.4.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

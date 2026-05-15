@@ -40,6 +40,7 @@ import {
   type ChatMessage,
   type ModelListOptions,
   type SavedChat,
+  type ProviderKind,
   type ToolApprovalRequest,
   type WizardMythwizExportRequest,
   type WizardProfile,
@@ -603,7 +604,9 @@ const sanitizeRuntime = (runtime: {
     nexusLeaderApprovesTools:
       typeof runtime.nexusLeaderApprovesTools === 'boolean' ? runtime.nexusLeaderApprovesTools : undefined,
     nexusLeaderProvider:
-      runtime.nexusLeaderProvider === 'lmstudio' || runtime.nexusLeaderProvider === 'openrouter'
+      runtime.nexusLeaderProvider === 'lmstudio' ||
+      runtime.nexusLeaderProvider === 'openrouter' ||
+      runtime.nexusLeaderProvider === 'ollama'
         ? runtime.nexusLeaderProvider
         : undefined,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === 'string' ? runtime.nexusLeaderModel : undefined,
@@ -782,6 +785,13 @@ ipcMain.handle('workspace:activate', async (_event, root: string) => {
 ipcMain.handle('workspace:tree', async (_event, root: string) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
+});
+ipcMain.handle('workspace:open-folder', async (_event, root: string) => {
+  assertActiveWorkspace(root);
+  const error = await shell.openPath(resolve(root));
+  if (error) {
+    throw new Error(error);
+  }
 });
 ipcMain.handle('workspace:detach', async () => {
   workspaceWatch.stop();
@@ -1153,7 +1163,7 @@ ipcMain.handle('shell:open-external', async (_event, rawUrl: unknown) => {
   await shell.openExternal(parsed.href);
 });
 
-ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) =>
+ipcMain.handle('models:list', async (_event, settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) =>
   modelService.listModels(settings, providerKind, options)
 );
 

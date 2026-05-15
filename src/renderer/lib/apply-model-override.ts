@@ -23,6 +23,6 @@ export function applyChatModelOverride(
 }
 
 export function formatOverrideLabel(override: ChatModelOverride, pathLabel: (s: string) => string): string {
-  const prov = override.provider === 'openrouter' ? 'OpenRouter' : 'LM Studio';
+  const prov = override.provider === 'openrouter' ? 'OpenRouter' : override.provider === 'ollama' ? 'Ollama' : 'LM Studio';
   return `${prov}: ${pathLabel(override.model)}`;
 }

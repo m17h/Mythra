@@ -9,6 +9,7 @@ interface WizardSettingsPanelProps {
   modelOptions: ModelInfo[];
   statusMessage: string;
   onChange: (wizard: WizardProfile) => void;
+  onRenameRequest: (name: string) => Promise<boolean>;
   onOpenDocument: (path: string) => void;
   onRefreshModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
   /** Update + persist favorites (same mechanism as Connection → Model in Settings). */
@@ -20,7 +21,8 @@ interface WizardSettingsPanelProps {
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
-  { value: 'openrouter', label: 'OpenRouter' }
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'ollama', label: 'Ollama' }
 ];
 
 export function WizardSettingsPanel({
@@ -29,6 +31,7 @@ export function WizardSettingsPanel({
   modelOptions,
   statusMessage,
   onChange,
+  onRenameRequest,
   onOpenDocument,
   onRefreshModels,
   onPresetPersist,
@@ -36,10 +39,27 @@ export function WizardSettingsPanel({
   onOpenSystemPromptInfo
 }: WizardSettingsPanelProps) {
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
+  const [nameDraft, setNameDraft] = useState(wizard.name);
 
   useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
+
+  useEffect(() => {
+    setNameDraft(wizard.name);
+  }, [wizard.name]);
+
+  const commitNameDraft = async () => {
+    const next = nameDraft.trim();
+    if (!next || next === wizard.name) {
+      setNameDraft(wizard.name);
+      return;
+    }
+    const accepted = await onRenameRequest(next);
+    if (!accepted) {
+      setNameDraft(wizard.name);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +97,20 @@ export function WizardSettingsPanel({
           <h4 className="settings-section__title">Identity</h4>
           <label className="field">
             <span>Name</span>
-            <input onChange={(e) => onChange({ ...wizard, name: e.target.value })} value={wizard.name} />
+            <input
+              onBlur={() => void commitNameDraft()}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur();
+                }
+                if (e.key === 'Escape') {
+                  setNameDraft(wizard.name);
+                  e.currentTarget.blur();
+                }
+              }}
+              value={nameDraft}
+            />
           </label>
           <div className="field">
             <span>Workspace</span>

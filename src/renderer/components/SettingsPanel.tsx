@@ -24,7 +24,7 @@ interface SettingsPanelProps {
   /** Writes full settings to disk (used after custom preset add/save/rename/delete). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
   onRefreshModels: () => void;
-  /** Opens the in-app Connection guide (OpenRouter & LM Studio) from Settings. */
+  /** Opens the in-app Connection guide (OpenRouter, LM Studio, and Ollama) from Settings. */
   onOpenConnectionHelp?: () => void;
   /** Opens support/contact guidance for app updates. */
   onOpenAppUpdatesInfo?: () => void;
@@ -46,7 +46,8 @@ interface SettingsPanelProps {
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
-  { value: 'openrouter', label: 'OpenRouter' }
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'ollama', label: 'Ollama' }
 ];
 
 const searchProviderOptions: Array<{ value: SearchProvider; label: string }> = [
@@ -102,6 +103,7 @@ export function SettingsPanel({
   const provider = settings.providers[settings.selectedProvider];
   const isLmStudio = settings.selectedProvider === 'lmstudio';
   const isOpenRouter = settings.selectedProvider === 'openrouter';
+  const isOllama = settings.selectedProvider === 'ollama';
   const activeSearchProvider = settings.search.provider;
   const anyPremiumApiKeySaved =
     Boolean(settings.search.tavilyApiKey.trim()) || Boolean(settings.search.braveApiKey.trim());
@@ -220,8 +222,8 @@ export function SettingsPanel({
               <button
                 className="settings-info-button"
                 type="button"
-                aria-label="About OpenRouter, LM Studio, and Mythra"
-                title="OpenRouter & LM Studio in Mythra"
+                aria-label="About OpenRouter, LM Studio, Ollama, and Mythra"
+                title="OpenRouter, LM Studio, and Ollama in Mythra"
                 onClick={onOpenConnectionHelp}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -242,22 +244,26 @@ export function SettingsPanel({
             />
           </div>
 
-          {isLmStudio ? (
+          {isLmStudio || isOllama ? (
             <label className="field">
               <span>Base URL</span>
               <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
             </label>
           ) : null}
 
-          <label className="field">
-            <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
-            <input
-              onChange={(e) => updateProvider({ apiKey: e.target.value })}
-              placeholder={isOpenRouter ? 'sk-or-v1-...' : 'lm-studio'}
-              type="password"
-              value={provider.apiKey}
-            />
-          </label>
+          {isOllama ? (
+            <div className="inline-hint">Ollama uses its local server and does not need an API key.</div>
+          ) : (
+            <label className="field">
+              <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
+              <input
+                onChange={(e) => updateProvider({ apiKey: e.target.value })}
+                placeholder={isOpenRouter ? 'sk-or-v1-...' : 'lm-studio'}
+                type="password"
+                value={provider.apiKey}
+              />
+            </label>
+          )}
 
           <div className="field-row">
             <div className="field">
@@ -297,7 +303,7 @@ export function SettingsPanel({
                 </select>
               )}
             </div>
-            {isLmStudio ? (
+            {isLmStudio || isOllama ? (
               <button className="btn btn--secondary field-row__button" onClick={onRefreshModels} type="button">
                 Test + Refresh
               </button>
@@ -306,6 +312,9 @@ export function SettingsPanel({
 
           {isLmStudio && modelOptions.length === 0 && (
             <div className="inline-hint">No models loaded yet. Start the LM Studio server and load a model first.</div>
+          )}
+          {isOllama && modelOptions.length === 0 && (
+            <div className="inline-hint">No models loaded yet. Start Ollama and pull a model first.</div>
           )}
         </div>
 

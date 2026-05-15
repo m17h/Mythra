@@ -74,9 +74,9 @@ const pages = [
     kicker: 'Connection',
     title: 'Choose where models come from',
     body:
-      'Mythra can talk to models through LM Studio or OpenRouter. You can change providers and models in Settings.',
+      'Mythra can talk to models through LM Studio, OpenRouter, or Ollama. You can change providers and models in Settings.',
     points: [
-      'LM Studio runs models on your own computer.',
+      'LM Studio and Ollama run models on your own computer.',
       'OpenRouter connects to hosted cloud models through one API key.',
       'The selected model controls how smart, fast, and expensive a response may be.'
     ],

@@ -42,6 +42,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
     openrouter: normalizeProviderProfile(
       defaultSettings.providers.openrouter,
       saved?.providers?.openrouter as Partial<Record<string, unknown>> | undefined
+    ),
+    ollama: normalizeProviderProfile(
+      defaultSettings.providers.ollama,
+      saved?.providers?.ollama as Partial<Record<string, unknown>> | undefined
     )
   },
   search: normalizeMergedSearch(saved?.search),
@@ -78,6 +82,9 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       ],
       openrouter: [
         ...(saved?.ui?.favoriteModels?.openrouter ?? defaultSettings.ui.favoriteModels.openrouter)
+      ],
+      ollama: [
+        ...(saved?.ui?.favoriteModels?.ollama ?? defaultSettings.ui.favoriteModels.ollama)
       ]
     }
   }

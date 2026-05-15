@@ -53,6 +53,7 @@ const electronAPI = {
   activateWorkspace: (root: string) =>
     ipcRenderer.invoke('workspace:activate', root) as Promise<{ root: string; label: string; tree: WorkspaceNode[] }>,
   getWorkspaceTree: (root: string) => ipcRenderer.invoke('workspace:tree', root) as Promise<WorkspaceNode[]>,
+  openWorkspaceFolder: (root: string) => ipcRenderer.invoke('workspace:open-folder', root) as Promise<void>,
   detachWorkspace: () => ipcRenderer.invoke('workspace:detach') as Promise<void>,
   openFile: (root: string, target: string) =>
     ipcRenderer.invoke('workspace:open-file', root, target) as Promise<OpenFile>,
@@ -110,7 +111,7 @@ const electronAPI = {
     ipcRenderer.invoke('generated-media:save', dataUrl, fileName, filePath) as Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>,
   openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) =>
     ipcRenderer.invoke('generated-media:open-image', dataUrl, fileName, mimeType, filePath) as Promise<{ ok: boolean; error?: string }>,
-  listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) =>
+  listModels: (settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) =>
     ipcRenderer.invoke('models:list', settings, providerKind, options) as Promise<ModelInfo[]>,
   streamChat: (
     requestId: string,

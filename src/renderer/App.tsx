@@ -78,6 +78,23 @@ function sidebarBrandLogoSrc(
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const replaceWizardNameText = (text: string, previousName: string, nextName: string) => {
+  const trimmedPrevious = previousName.trim();
+  if (!trimmedPrevious || trimmedPrevious === nextName) return text;
+  return text.replace(new RegExp(escapeRegExp(trimmedPrevious), 'g'), nextName);
+};
+
+const renameWizardSoulMarkdown = (text: string, previousName: string, nextName: string) => {
+  const trimmedPrevious = previousName.trim();
+  if (!trimmedPrevious || trimmedPrevious === nextName) return text;
+  const headingPattern = new RegExp(`^(#\\s*)${escapeRegExp(trimmedPrevious)}(\\s*)$`, 'm');
+  if (headingPattern.test(text)) {
+    return text.replace(headingPattern, `$1${nextName}$2`);
+  }
+  return replaceWizardNameText(text, trimmedPrevious, nextName);
+};
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 
 /** POSIX relative path from workspace root when `absolutePath` is under it; otherwise basename. */
@@ -218,7 +235,7 @@ function workspaceAbsolutePathPrefixRemap(oldRoot: string, newRoot: string) {
 const isEmbeddingModel = (modelId: string) => /embed|embedding/i.test(modelId);
 const normalizeProviderBaseUrl = (kind: AppSettings['selectedProvider'], baseUrl: string) => {
   const trimmed = baseUrl.trim().replace(/\/$/, '');
-  if (kind !== 'lmstudio') return trimmed;
+  if (kind === 'openrouter') return trimmed;
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
 };
 const pickDefaultModel = (modelList: ModelInfo[], currentModel?: string) => {
@@ -245,12 +262,16 @@ const looksLikeProviderTransportError = (raw: string) => {
   );
 };
 
-const LM_STUDIO_CATALOG_PROBE_MS = 35_000;
+const LOCAL_PROVIDER_CATALOG_PROBE_MS = 35_000;
 
 const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'lmstudio', label: 'LM Studio' },
-  { value: 'openrouter', label: 'OpenRouter' }
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'ollama', label: 'Ollama' }
 ];
+const mediaProviderOptions = providerOptions.filter((option) => option.value !== 'ollama');
+const providerLabel = (kind: ProviderKind) =>
+  kind === 'openrouter' ? 'OpenRouter' : kind === 'ollama' ? 'Ollama' : 'LM Studio';
 const needsSearchApiKeyNotice = (settings: AppSettings) => {
   if (settings.search.provider === 'duckduckgo') return false;
   const hasAny =
@@ -839,6 +860,12 @@ export function App() {
   const [normalChatDeleteTarget, setNormalChatDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [wizardSessionDeleteTarget, setWizardSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
   const [nexusSessionDeleteTarget, setNexusSessionDeleteTarget] = useState<SavedChatMeta | null>(null);
+  const [wizardRenamePrompt, setWizardRenamePrompt] = useState<{
+    wizardId: string;
+    previous: WizardProfile;
+    nextName: string;
+    resolve: (accepted: boolean) => void;
+  } | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<{
     workspaceRoot: string;
     label: string;
@@ -1532,21 +1559,23 @@ export function App() {
   }, []);
 
   const openRouterKeyForEffect = settings?.selectedProvider === 'openrouter' ? settings.providers.openrouter.apiKey : null;
-  const lmstudioBaseForCatalog =
+  const localBaseForCatalog =
     settings?.selectedProvider === 'lmstudio' ? (settings.providers.lmstudio.baseUrl ?? '').trim() : null;
+  const ollamaBaseForCatalog =
+    settings?.selectedProvider === 'ollama' ? (settings.providers.ollama.baseUrl ?? '').trim() : null;
 
   useEffect(() => {
     if (!settings) return;
     void refreshModels(settings);
-  }, [settings?.selectedProvider, openRouterKeyForEffect, lmstudioBaseForCatalog]);
+  }, [settings?.selectedProvider, openRouterKeyForEffect, localBaseForCatalog, ollamaBaseForCatalog]);
 
   /**
-   * LM Studio has no long-lived connection — the UI “Connected” state comes from the last catalog fetch.
+   * Local providers have no long-lived connection — the UI “Connected” state comes from the last catalog fetch.
    * Re-probe on focus, when the window becomes visible, and on an interval so turning the server off updates the status
    * without switching providers.
    */
   useEffect(() => {
-    if (!settings || settings.selectedProvider !== 'lmstudio') return;
+    if (!settings || (settings.selectedProvider !== 'lmstudio' && settings.selectedProvider !== 'ollama')) return;
 
     const poke = () => {
       void refreshModelsRef.current();
@@ -1558,14 +1587,14 @@ export function App() {
 
     window.addEventListener('focus', poke);
     document.addEventListener('visibilitychange', onVisibility);
-    const intervalId = window.setInterval(poke, LM_STUDIO_CATALOG_PROBE_MS);
+    const intervalId = window.setInterval(poke, LOCAL_PROVIDER_CATALOG_PROBE_MS);
 
     return () => {
       window.removeEventListener('focus', poke);
       document.removeEventListener('visibilitychange', onVisibility);
       window.clearInterval(intervalId);
     };
-  }, [settings?.selectedProvider, lmstudioBaseForCatalog]);
+  }, [settings?.selectedProvider, localBaseForCatalog, ollamaBaseForCatalog]);
 
   useEffect(() => {
     if (!settings) return;
@@ -1760,7 +1789,7 @@ export function App() {
         return;
       }
       const s = settingsRef.current;
-      if (s?.selectedProvider === 'lmstudio' && looksLikeProviderTransportError(error)) {
+      if ((s?.selectedProvider === 'lmstudio' || s?.selectedProvider === 'ollama') && looksLikeProviderTransportError(error)) {
         void refreshModelsRef.current();
       }
 
@@ -1981,6 +2010,15 @@ export function App() {
     setInspectorTab('editor');
   };
 
+  const openWorkspaceFolder = async () => {
+    if (!workspaceRoot) return;
+    try {
+      await window.electronAPI.openWorkspaceFolder(workspaceRoot);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : 'Workspace folder could not be opened.');
+    }
+  };
+
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer = buffers[activeFilePath];
@@ -2050,11 +2088,13 @@ export function App() {
       if (modelList.length > 0) {
         setSettingsStatus(`Connected. ${modelList.length} models available. Active: ${defaultModel || 'none'}.`);
       } else {
-        setSettingsStatus(
+        const emptyMessage =
           activeSettings.selectedProvider === 'lmstudio'
             ? 'Connected, but no models returned. Load a model in LM Studio first.'
-            : 'Connected, but OpenRouter returned no models for this profile.'
-        );
+            : activeSettings.selectedProvider === 'ollama'
+              ? 'Connected, but no models returned. Pull a model in Ollama first.'
+              : 'Connected, but OpenRouter returned no models for this profile.';
+        setSettingsStatus(emptyMessage);
       }
     } catch (error) {
       setModels([]);
@@ -3141,39 +3181,7 @@ export function App() {
       if (!wizardId) return;
       const full = await window.electronAPI.loadChat(wizardId);
       if (!full || full.kind !== 'wizard' || !full.wizard) return;
-      const previousDiskRoot = full.wizard.workspaceRoot;
-      const profileInput: WizardProfile = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
-      let profile: WizardProfile;
-      try {
-        profile = await window.electronAPI.syncWizardWorkspaceFolder(profileInput);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setSettingsStatus(msg);
-        return;
-      }
-      if (
-        workspaceRootRef.current &&
-        pathsEqual(workspaceRootRef.current, previousDiskRoot) &&
-        profile.workspaceRoot !== previousDiskRoot
-      ) {
-        const mapPath = workspaceAbsolutePathPrefixRemap(previousDiskRoot, profile.workspaceRoot);
-        setWorkspaceRoot(profile.workspaceRoot);
-        setBuffers((current) => {
-          const next: Record<string, FileBuffer> = {};
-          for (const [key, buf] of Object.entries(current)) {
-            const mappedKey = mapPath(key);
-            next[mappedKey] = { ...buf, path: mapPath(buf.path) };
-          }
-          return next;
-        });
-        setActiveFilePath((active) => (active ? mapPath(active) : active));
-        try {
-          setWorkspaceTree(await window.electronAPI.getWorkspaceTree(profile.workspaceRoot));
-        } catch {
-          setWorkspaceTree([]);
-        }
-        void refreshWorkspaceChanges(profile.workspaceRoot);
-      }
+      const profile: WizardProfile = { ...wizard, workspaceRoot: full.wizard.workspaceRoot };
       await window.electronAPI.saveChat({
         ...full,
         title: profile.name,
@@ -3185,8 +3193,124 @@ export function App() {
       await refreshChatList();
       setWizardDraft(profile);
     },
-    [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]
+    [activeWizardMeta?.id, refreshChatList]
   );
+
+  const requestWizardSettingsRename = useCallback(
+    (nextName: string) =>
+      new Promise<boolean>((resolve) => {
+        if (!activeWizardMeta?.id || !activeWizard) {
+          resolve(false);
+          return;
+        }
+        setWizardRenamePrompt({
+          wizardId: activeWizardMeta.id,
+          previous: activeWizard,
+          nextName,
+          resolve
+        });
+      }),
+    [activeWizard, activeWizardMeta?.id]
+  );
+
+  const closeWizardRenamePrompt = (accepted: boolean) => {
+    const target = wizardRenamePrompt;
+    setWizardRenamePrompt(null);
+    target?.resolve(accepted);
+  };
+
+  const remapActiveWizardWorkspaceRoot = async (previousRoot: string, nextRoot: string) => {
+    if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, previousRoot) || pathsEqual(previousRoot, nextRoot)) {
+      return;
+    }
+    const mapPath = workspaceAbsolutePathPrefixRemap(previousRoot, nextRoot);
+    setWorkspaceRoot(nextRoot);
+    setBuffers((current) => {
+      const next: Record<string, FileBuffer> = {};
+      for (const [key, buf] of Object.entries(current)) {
+        const mappedKey = mapPath(key);
+        next[mappedKey] = { ...buf, path: mapPath(buf.path) };
+      }
+      return next;
+    });
+    setActiveFilePath((active) => (active ? mapPath(active) : active));
+    try {
+      setWorkspaceTree(await window.electronAPI.getWorkspaceTree(nextRoot));
+    } catch {
+      setWorkspaceTree([]);
+    }
+    void refreshWorkspaceChanges(nextRoot);
+  };
+
+  const saveWizardRenameFromSettings = async (mode: 'name-only' | 'everywhere') => {
+    const target = wizardRenamePrompt;
+    if (!target) return;
+    const nextName = target.nextName.trim();
+    if (!nextName) {
+      closeWizardRenamePrompt(false);
+      return;
+    }
+
+    const full = await window.electronAPI.loadChat(target.wizardId);
+    if (!full || full.kind !== 'wizard' || !full.wizard) {
+      closeWizardRenamePrompt(false);
+      return;
+    }
+
+    const previousName = full.wizard.name;
+    const previousRoot = full.wizard.workspaceRoot;
+    let profile: WizardProfile = { ...full.wizard, name: nextName };
+
+    try {
+      if (mode === 'everywhere') {
+        profile = await window.electronAPI.syncWizardWorkspaceFolder(profile);
+        profile = {
+          ...profile,
+          systemPrompt: replaceWizardNameText(profile.systemPrompt, previousName, nextName)
+        };
+        await remapActiveWizardWorkspaceRoot(previousRoot, profile.workspaceRoot);
+        if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, profile.workspaceRoot)) {
+          await activateWorkspace(profile.workspaceRoot);
+        }
+        try {
+          const soul = await window.electronAPI.openFile(profile.workspaceRoot, 'soul.md');
+          const nextSoul = renameWizardSoulMarkdown(soul.content, previousName, nextName);
+          if (nextSoul !== soul.content) {
+            await window.electronAPI.saveFile(profile.workspaceRoot, 'soul.md', nextSoul);
+          }
+        } catch {
+          /* soul.md can be missing in imported/custom workspaces; the display rename still succeeds. */
+        }
+        try {
+          profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
+        } catch {
+          /* keep existing document list if refresh fails */
+        }
+      }
+
+      await window.electronAPI.saveChat({
+        ...full,
+        title: nextName,
+        titleOverride: nextName,
+        updatedAt: Date.now(),
+        modelOverride: { provider: profile.provider, model: profile.model },
+        wizard: profile
+      });
+      await refreshChatList();
+      setWizardDraft(profile);
+      wizardDraftRef.current = profile;
+      setSettingsStatus(
+        mode === 'everywhere'
+          ? 'Wizard name updated across settings, workspace folder, system prompt, and soul.md.'
+          : 'Wizard display name updated in settings only.'
+      );
+      closeWizardRenamePrompt(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSettingsStatus(msg);
+      closeWizardRenamePrompt(false);
+    }
+  };
 
   const handleWizardDraftChange = useCallback(
     (next: WizardProfile) => {
@@ -4145,10 +4269,7 @@ export function App() {
     (activeNexus
       ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider
       : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? 'lmstudio';
-  const selectedProviderLabel =
-    selectedProviderKind === 'openrouter'
-      ? 'OpenRouter'
-      : 'LM Studio';
+  const selectedProviderLabel = providerLabel(selectedProviderKind);
   const sessionMode = activeWizard || activeNexus ? 'agent' : activeMediaOverrideKind ? 'talk' : (settings?.ui.sessionMode ?? 'agent');
   const isDarwin = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
   const wizardPromptDiff = wizardPromptApproval
@@ -4236,7 +4357,7 @@ export function App() {
                   <span className="chat-thread-options__field-label">Provider</span>
                   <AppSelect
                     className="app-select--compact"
-                    options={providerOptions}
+                    options={mediaProviderOptions}
                     onChange={(provider) => {
                       setMediaPickerProvider(provider);
                       setMediaPickerSelectedModel('');
@@ -4392,6 +4513,48 @@ export function App() {
         settings={settings}
         wizards={wizardChatList}
       />
+      <AnimatePresence>
+        {wizardRenamePrompt ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="app-dialog-backdrop app-dialog-backdrop--overlay-top"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            onClick={() => closeWizardRenamePrompt(false)}
+            role="presentation"
+          >
+            <motion.div
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              aria-modal="true"
+              className="app-dialog"
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              <div className="app-dialog__kicker">Wizard rename</div>
+              <h3>Apply this name everywhere?</h3>
+              <p>
+                Rename <strong>{wizardRenamePrompt.previous.name}</strong> to{' '}
+                <strong>{wizardRenamePrompt.nextName}</strong>. Mythra can also rename the workspace folder and update
+                this Wizard&apos;s system prompt and <code>soul.md</code>.
+              </p>
+              <div className="app-dialog__actions">
+                <button className="btn btn--secondary" onClick={() => closeWizardRenamePrompt(false)} type="button">
+                  Cancel
+                </button>
+                <button className="btn btn--secondary" onClick={() => void saveWizardRenameFromSettings('name-only')} type="button">
+                  Name only
+                </button>
+                <button className="btn btn--primary" onClick={() => void saveWizardRenameFromSettings('everywhere')} type="button">
+                  Apply everywhere
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       <AppConfirmDialog
         cancelLabel="Cancel"
         confirmLabel="Delete Wizard"
@@ -4711,9 +4874,9 @@ export function App() {
               <div className="app-dialog__kicker">Connection</div>
               <h3 id="connection-help-title">Need help?</h3>
               <p id="connection-help-desc">
-                Mythra sends your chats to an LLM through either <strong>OpenRouter</strong> (many cloud models, one API
-                key) or <strong>LM Studio</strong> (models running on your computer). Use the guide below for the option
-                you prefer.
+                Mythra sends your chats to an LLM through <strong>OpenRouter</strong> (many cloud models, one API key),{' '}
+                <strong>LM Studio</strong>, or <strong>Ollama</strong> (models running on your computer). Use the guide
+                below for the option you prefer.
               </p>
               <div className="app-dialog__section">
                 <div className="app-dialog__section-title">OpenRouter</div>
@@ -4734,6 +4897,15 @@ export function App() {
                   is <code className="app-dialog__code">http://127.0.0.1:1234/v1</code>), then use <strong>Test +
                   Refresh</strong> to load the model list. The server key defaults to{' '}
                   <code className="app-dialog__code">lm-studio</code> unless you changed it in LM Studio.
+                </p>
+              </div>
+              <div className="app-dialog__section">
+                <div className="app-dialog__section-title">Ollama</div>
+                <p>
+                  Ollama runs local models through its background server. Install Ollama, pull a model, then choose{' '}
+                  <strong>Ollama</strong> in Mythra. The default base URL is{' '}
+                  <code className="app-dialog__code">http://127.0.0.1:11434/v1</code>. Mythra uses the local model list
+                  from Ollama, so no cloud API key is required.
                 </p>
               </div>
               <div className="app-dialog__links">
@@ -4761,6 +4933,20 @@ export function App() {
                   rel="noreferrer"
                 >
                   LM Studio website
+                </a>
+                <span aria-hidden className="app-dialog__links-sep">
+                  ·
+                </span>
+                <a
+                  className="app-dialog__link"
+                  href="https://ollama.com/"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl('https://ollama.com/');
+                  }}
+                  rel="noreferrer"
+                >
+                  Ollama website
                 </a>
               </div>
               <div className="app-dialog__actions">
@@ -5059,7 +5245,7 @@ export function App() {
                                           <span className="chat-thread-options__field-label">Provider</span>
                                           <AppSelect
                                             className="app-select--compact"
-                                            options={providerOptions}
+                                            options={activeMediaOverrideKind ? mediaProviderOptions : providerOptions}
                                             portalDropdown
                                             onChange={async (p) => {
                                               setOverrideModelProvider(p);
@@ -5355,24 +5541,61 @@ export function App() {
                                             }
                                           }}
                                         >
-                                          <span title={session.title}>{session.title}</span>
-                                          <div className="wizard-session-row__meta">
-                                            <small>{formatRelativeDate(session.updatedAt)}</small>
-                                            <button
-                                              aria-label={`Delete ${session.title}`}
-                                              className="wizard-session-row__delete"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                requestDeleteChat(session);
+                                          {editingTitleId === session.id ? (
+                                            <input
+                                              autoFocus
+                                              className="chat-list__title-input wizard-session-row__title-input"
+                                              onBlur={(e) => {
+                                                void commitRenameChat(session.id, e.target.value);
                                               }}
-                                              title="Delete room"
-                                              type="button"
-                                            >
-                                              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-                                                <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                                              </svg>
-                                            </button>
-                                          </div>
+                                              onChange={(e) => setEditingTitleDraft(e.target.value)}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onKeyDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.key === 'Enter') {
+                                                  e.currentTarget.blur();
+                                                } else if (e.key === 'Escape') {
+                                                  e.preventDefault();
+                                                  skipNextRenameCommitRef.current = true;
+                                                  cancelRenameChat();
+                                                }
+                                              }}
+                                              value={editingTitleDraft}
+                                            />
+                                          ) : (
+                                            <>
+                                              <span title={session.title}>{session.title}</span>
+                                              <div className="wizard-session-row__meta">
+                                                <small>{formatRelativeDate(session.updatedAt)}</small>
+                                                <button
+                                                  aria-label={`Rename ${session.title}`}
+                                                  className="wizard-session-row__rename"
+                                                  onClick={(e) => beginRenameChat(e, session.id, session.title)}
+                                                  onMouseDown={(e) => e.preventDefault()}
+                                                  title="Rename room"
+                                                  type="button"
+                                                >
+                                                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                                    <path d="M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z" fill="currentColor" />
+                                                  </svg>
+                                                </button>
+                                                <button
+                                                  aria-label={`Delete ${session.title}`}
+                                                  className="wizard-session-row__delete"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    requestDeleteChat(session);
+                                                  }}
+                                                  title="Delete room"
+                                                  type="button"
+                                                >
+                                                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                                    <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                                  </svg>
+                                                </button>
+                                              </div>
+                                            </>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
@@ -5496,24 +5719,61 @@ export function App() {
                                       }
                                     }}
                                   >
-                                    <span title={session.title}>{session.title}</span>
-                                    <div className="wizard-session-row__meta">
-                                      <small>{formatRelativeDate(session.updatedAt)}</small>
-                                      <button
-                                        aria-label={`Delete ${session.title}`}
-                                        className="wizard-session-row__delete"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          requestDeleteChat(session);
+                                    {editingTitleId === session.id ? (
+                                      <input
+                                        autoFocus
+                                        className="chat-list__title-input wizard-session-row__title-input"
+                                        onBlur={(e) => {
+                                          void commitRenameChat(session.id, e.target.value);
                                         }}
-                                        title="Delete session"
-                                        type="button"
-                                      >
-                                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-                                          <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                      </button>
-                                    </div>
+                                        onChange={(e) => setEditingTitleDraft(e.target.value)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onKeyDown={(e) => {
+                                          e.stopPropagation();
+                                          if (e.key === 'Enter') {
+                                            e.currentTarget.blur();
+                                          } else if (e.key === 'Escape') {
+                                            e.preventDefault();
+                                            skipNextRenameCommitRef.current = true;
+                                            cancelRenameChat();
+                                          }
+                                        }}
+                                        value={editingTitleDraft}
+                                      />
+                                    ) : (
+                                      <>
+                                        <span title={session.title}>{session.title}</span>
+                                        <div className="wizard-session-row__meta">
+                                          <small>{formatRelativeDate(session.updatedAt)}</small>
+                                          <button
+                                            aria-label={`Rename ${session.title}`}
+                                            className="wizard-session-row__rename"
+                                            onClick={(e) => beginRenameChat(e, session.id, session.title)}
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            title="Rename session"
+                                            type="button"
+                                          >
+                                            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                              <path d="M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z" fill="currentColor" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            aria-label={`Delete ${session.title}`}
+                                            className="wizard-session-row__delete"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              requestDeleteChat(session);
+                                            }}
+                                            title="Delete session"
+                                            type="button"
+                                          >
+                                            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+                                              <path d="M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -5544,10 +5804,16 @@ export function App() {
                   >
                     {workspaceRoot ? (
                       <>
-                        <div className="workspace-meta">
+                        <button
+                          aria-label={`Open ${pathLabel(workspaceRoot)} in ${window.electronAPI.platform === 'darwin' ? 'Finder' : 'file explorer'}`}
+                          className="workspace-meta"
+                          onClick={openWorkspaceFolder}
+                          title={`Open ${workspaceRoot}`}
+                          type="button"
+                        >
                           <div className="workspace-meta__value">{pathLabel(workspaceRoot)}</div>
                           <div className="workspace-meta__hint">{workspaceRoot}</div>
-                        </div>
+                        </button>
                         <FileTree activePath={activeFilePath} nodes={workspaceTree} onOpen={openFile} />
                       </>
                     ) : (
@@ -5800,6 +6066,7 @@ export function App() {
                         onOpenDocument={(path) => void openFile(path)}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onPresetPersist={persistAfterPresetAction}
+                        onRenameRequest={requestWizardSettingsRename}
                         onRefreshModels={refreshWizardModels}
                         onSettingsChangeForFavorites={handleSettingsPanelChange}
                         settings={settings}

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join as join$1, resolve, sep, relative, dirname, basename, extname } from "node:path";
 import { existsSync, realpathSync, statSync, watch } from "node:fs";
 import { readdir, mkdir, copyFile, readFile, writeFile, rm, unlink, stat, rename, realpath, mkdtemp } from "node:fs/promises";
-import { app, dialog, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
+import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
@@ -1320,10 +1320,14 @@ function remapActiveFilePathAfterWorkspaceRootChange(prevRoot, nextRoot, activeF
 }
 const normalizeBaseUrl = (kind, baseUrl) => {
   const trimmed = baseUrl.trim().replace(/\/$/, "");
-  if (kind !== "lmstudio") {
+  if (kind === "openrouter") {
     return trimmed;
   }
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+};
+const nativeOllamaBaseUrl = (baseUrl) => {
+  const trimmed = baseUrl.trim().replace(/\/$/, "");
+  return trimmed.endsWith("/v1") ? trimmed.slice(0, -3).replace(/\/$/, "") : trimmed;
 };
 const createClient = (settings, kind = settings.selectedProvider) => {
   const provider = settings.providers[kind];
@@ -1333,7 +1337,7 @@ const createClient = (settings, kind = settings.selectedProvider) => {
   } : void 0;
   return new OpenAI({
     baseURL: normalizeBaseUrl(kind, provider.baseUrl),
-    apiKey: provider.apiKey || "lm-studio",
+    apiKey: provider.apiKey || (kind === "openrouter" ? "openrouter" : kind),
     defaultHeaders: headers,
     dangerouslyAllowBrowser: false
   });
@@ -1350,6 +1354,10 @@ const mapModelEntry = (entry) => {
     outputModalities
   };
 };
+const mapOllamaModelEntry = (entry) => ({
+  id: String(entry.name ?? entry.model ?? ""),
+  ownedBy: typeof entry.details?.family === "string" ? entry.details.family : "ollama"
+});
 const contentToString = (content) => {
   if (typeof content === "string") {
     return content;
@@ -1445,6 +1453,7 @@ const mythraSetAppThemeAgentInstruction = `App theme (Agent only): For full cust
 const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
 const mythraProductFeaturesInstruction = "Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In normal Chats mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons for media chats. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there so Mythra can render and save the generated media locally in that chat. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.";
+const mythraColoredTextInstruction = "Colored text: Mythra supports safe color tags in assistant markdown when the user asks for colored text or when a short label/status genuinely benefits from color. Syntax: `[color=green tone=normal]text[/color]`. Supported colors: red, orange, yellow, green, blue, purple, pink, gray, plus aliases danger, warning, success, info, muted. Supported tones: light, normal, dark. Do not use raw HTML, CSS, hex colors, or unsupported color names; otherwise write normal markdown. Use colored text sparingly unless the user specifically requests a whole section, quiz, or list in a color.";
 const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
@@ -1646,6 +1655,22 @@ class ModelService {
       }
       const body = await response2.json();
       return (body.data ?? []).map(mapModelEntry);
+    }
+    if (kind === "ollama") {
+      const provider = settings.providers.ollama;
+      try {
+        const client2 = createClient(settings, kind);
+        const response3 = await client2.models.list();
+        const openAiModels = (response3.data ?? []).map(mapModelEntry).filter((model) => model.id);
+        if (openAiModels.length > 0) return openAiModels;
+      } catch {
+      }
+      const response2 = await fetch(`${nativeOllamaBaseUrl(provider.baseUrl)}/api/tags`);
+      if (!response2.ok) {
+        throw new Error(`Ollama model list failed (${response2.status}).`);
+      }
+      const body = await response2.json();
+      return (body.models ?? []).map(mapOllamaModelEntry).filter((model) => model.id);
     }
     const client = createClient(settings, kind);
     const response = await client.models.list();
@@ -2718,6 +2743,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
         "For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.",
         mythraProductFeaturesInstruction,
+        mythraColoredTextInstruction,
         mythraSessionModeEmbedInstruction,
         mythraWebSearchEmbedInstruction,
         mythraThemeInChatModeInstruction,
@@ -2741,6 +2767,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         mythraSetAppThemeAgentInstruction,
         mythraToolAccessReadInstruction,
         mythraProductFeaturesInstruction,
+        mythraColoredTextInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
@@ -2779,6 +2806,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       mythraSetAppThemeAgentInstruction,
       mythraToolAccessReadInstruction,
       mythraProductFeaturesInstruction,
+      mythraColoredTextInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
       mythraCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,
@@ -3638,6 +3666,17 @@ const defaultSettings = {
       promptPresets: [],
       appName: "Mythra",
       appUrl: "https://example.local"
+    },
+    ollama: {
+      kind: "ollama",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "",
+      systemPrompt: "",
+      activePromptPresetId: null,
+      promptPresets: [],
+      appName: "Mythra",
+      appUrl: "https://example.local"
     }
   },
   search: {
@@ -3661,7 +3700,7 @@ const defaultSettings = {
     themeId: "neon-grid",
     sessionMode: "agent",
     webSearch: false,
-    favoriteModels: { lmstudio: [], openrouter: [] },
+    favoriteModels: { lmstudio: [], openrouter: [], ollama: [] },
     wizardProjectsParentFolder: null,
     nexusProjectsParentFolder: null,
     onboardingCompleted: false,
@@ -3763,6 +3802,10 @@ const mergeSettings = (saved) => ({
     openrouter: normalizeProviderProfile(
       defaultSettings.providers.openrouter,
       saved?.providers?.openrouter
+    ),
+    ollama: normalizeProviderProfile(
+      defaultSettings.providers.ollama,
+      saved?.providers?.ollama
     )
   },
   search: normalizeMergedSearch(saved?.search),
@@ -3786,6 +3829,9 @@ const mergeSettings = (saved) => ({
       ],
       openrouter: [
         ...saved?.ui?.favoriteModels?.openrouter ?? defaultSettings.ui.favoriteModels.openrouter
+      ],
+      ollama: [
+        ...saved?.ui?.favoriteModels?.ollama ?? defaultSettings.ui.favoriteModels.ollama
       ]
     }
   }
@@ -5660,7 +5706,7 @@ const sanitizeRuntime = (runtime) => {
     wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0,
     nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === "boolean" ? runtime.nexusTeamFullAccess : void 0,
     nexusLeaderApprovesTools: typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
-    nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" ? runtime.nexusLeaderProvider : void 0,
+    nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" || runtime.nexusLeaderProvider === "ollama" ? runtime.nexusLeaderProvider : void 0,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === "string" ? runtime.nexusLeaderModel : void 0,
     nexusLeaderName: typeof runtime.nexusLeaderName === "string" ? runtime.nexusLeaderName : void 0,
     mediaGenerationKind: runtime.mediaGenerationKind === "music" || runtime.mediaGenerationKind === "video" || runtime.mediaGenerationKind === "image" ? runtime.mediaGenerationKind : void 0
@@ -5807,6 +5853,13 @@ ipcMain.handle("workspace:activate", async (_event, root) => {
 ipcMain.handle("workspace:tree", async (_event, root) => {
   assertActiveWorkspace(root);
   return workspaceService.getTree(root);
+});
+ipcMain.handle("workspace:open-folder", async (_event, root) => {
+  assertActiveWorkspace(root);
+  const error = await shell.openPath(resolve(root));
+  if (error) {
+    throw new Error(error);
+  }
 });
 ipcMain.handle("workspace:detach", async () => {
   workspaceWatch.stop();

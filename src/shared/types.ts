@@ -1,7 +1,7 @@
 import type { ThemeId } from './themes';
 import type { ChatThreadBackgroundPresetId } from './chat-thread-backgrounds';
 
-export type ProviderKind = 'lmstudio' | 'openrouter';
+export type ProviderKind = 'lmstudio' | 'openrouter' | 'ollama';
 
 /** Per saved chat: route API calls through this provider + model instead of app Settings. */
 export interface ChatModelOverride {
@@ -542,6 +542,17 @@ export const defaultSettings: AppSettings = {
       promptPresets: [],
       appName: 'Mythra',
       appUrl: 'https://example.local'
+    },
+    ollama: {
+      kind: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      apiKey: 'ollama',
+      model: '',
+      systemPrompt: '',
+      activePromptPresetId: null,
+      promptPresets: [],
+      appName: 'Mythra',
+      appUrl: 'https://example.local'
     }
   },
   search: {
@@ -565,7 +576,7 @@ export const defaultSettings: AppSettings = {
     themeId: 'neon-grid',
     sessionMode: 'agent',
     webSearch: false,
-    favoriteModels: { lmstudio: [], openrouter: [] },
+    favoriteModels: { lmstudio: [], openrouter: [], ollama: [] },
     wizardProjectsParentFolder: null,
     nexusProjectsParentFolder: null,
     onboardingCompleted: false,

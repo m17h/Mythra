@@ -69,11 +69,16 @@ function remapActiveFilePathAfterWorkspaceRootChange(
 
 const normalizeBaseUrl = (kind: ProviderKind, baseUrl: string) => {
   const trimmed = baseUrl.trim().replace(/\/$/, '');
-  if (kind !== 'lmstudio') {
+  if (kind === 'openrouter') {
     return trimmed;
   }
 
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
+};
+
+const nativeOllamaBaseUrl = (baseUrl: string) => {
+  const trimmed = baseUrl.trim().replace(/\/$/, '');
+  return trimmed.endsWith('/v1') ? trimmed.slice(0, -3).replace(/\/$/, '') : trimmed;
 };
 
 const createClient = (settings: AppSettings, kind: ProviderKind = settings.selectedProvider) => {
@@ -88,7 +93,7 @@ const createClient = (settings: AppSettings, kind: ProviderKind = settings.selec
 
   return new OpenAI({
     baseURL: normalizeBaseUrl(kind, provider.baseUrl),
-    apiKey: provider.apiKey || 'lm-studio',
+    apiKey: provider.apiKey || (kind === 'openrouter' ? 'openrouter' : kind),
     defaultHeaders: headers,
     dangerouslyAllowBrowser: false
   });
@@ -117,6 +122,11 @@ const mapModelEntry = (entry: { id?: unknown; owned_by?: unknown }): ModelInfo =
     outputModalities
   };
 };
+
+const mapOllamaModelEntry = (entry: { name?: unknown; model?: unknown; details?: { family?: unknown } }): ModelInfo => ({
+  id: String(entry.name ?? entry.model ?? ''),
+  ownedBy: typeof entry.details?.family === 'string' ? entry.details.family : 'ollama'
+});
 
 const contentToString = (content: ChatCompletionAssistantMessageParam['content']) => {
   if (typeof content === 'string') {
@@ -267,6 +277,9 @@ const mythraToolAccessReadInstruction =
 /** Grounds answers about Mythra itself so models do not deny sidebar features that always exist in this app. */
 const mythraProductFeaturesInstruction =
   'Mythra UI (describe accurately when users ask how the app works; do **not** say Mythra has no Wizards or no Nexus): The left sidebar has **CHATS**, **WIZARDS**, and **FILES** tabs. In normal Chats mode, the bottom-left corner has **Music**, **Video**, and **Images** buttons for media chats. If a user asks to generate an image, song/music/audio, or video in a regular text chat, tell them they can start the matching media chat from those bottom-left buttons, choose an appropriate model, then prompt there so Mythra can render and save the generated media locally in that chat. In the Wizards section, a **Wizards / Nexus** control switches between the list of **Wizards** and the list of **Nexus projects**. **Wizards** are saved teammates with their own local **workspace folder**, **system prompt** (Inspector → Settings), and **four default core Markdown files only: soul.md, tools.md, memory.md, corrections.md**. Mythra does **not** create **todo.md** or any other default task/inbox file—users add those (or custom docs) if they want. Sessions under a Wizard run Agent tools against **that** Wizard’s folder. Wizards can be exported/imported as `.mythwiz` bundles. **Good Wizard examples** (suggest when users ask how to use them): train a **writing style or brand voice** (detail voice in soul.md, keep sample pieces in the workspace, fold feedback into memory/corrections); **complex note-taking** (PARA/Zettelkasten/second brain with linked `.md` in the folder); a **project or stack specialist** (conventions and commands in tools.md); **meeting, research, or journal** flows with dated notes the Wizard maintains; **creative or role-play** personas with lore bibles. **Nexus projects** (New → Nexus, needs at least two Wizards) tie multiple Wizards to **one shared project workspace** on disk; each member still has private identity/memory docs. A Nexus has a **leader** Wizard, optional **mission** text (Inspector → Nexus), **relay** mode (teammates usually speak one stream at a time inside one assistant reply) vs **parallel** mode (multiple teammate streams at once), and tool-approval options (e.g. team full access, leader model approval). A **normal** chat uses the globally open workspace; Wizard and Nexus sessions add the routing described above.';
+
+const mythraColoredTextInstruction =
+  'Colored text: Mythra supports safe color tags in assistant markdown when the user asks for colored text or when a short label/status genuinely benefits from color. Syntax: `[color=green tone=normal]text[/color]`. Supported colors: red, orange, yellow, green, blue, purple, pink, gray, plus aliases danger, warning, success, info, muted. Supported tones: light, normal, dark. Do not use raw HTML, CSS, hex colors, or unsupported color names; otherwise write normal markdown. Use colored text sparingly unless the user specifically requests a whole section, quiz, or list in a color.';
 
 const mythraCodingToolInstruction =
   'Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.';
@@ -547,6 +560,25 @@ export class ModelService {
       }
       const body = (await response.json()) as { data?: Array<{ id?: unknown; owned_by?: unknown }> };
       return (body.data ?? []).map(mapModelEntry);
+    }
+
+    if (kind === 'ollama') {
+      const provider = settings.providers.ollama;
+      try {
+        const client = createClient(settings, kind);
+        const response = await client.models.list();
+        const openAiModels = (response.data ?? []).map(mapModelEntry).filter((model) => model.id);
+        if (openAiModels.length > 0) return openAiModels;
+      } catch {
+        /* Older Ollama installs may not expose /v1/models; fall back to the native tags endpoint. */
+      }
+
+      const response = await fetch(`${nativeOllamaBaseUrl(provider.baseUrl)}/api/tags`);
+      if (!response.ok) {
+        throw new Error(`Ollama model list failed (${response.status}).`);
+      }
+      const body = (await response.json()) as { models?: Array<{ name?: unknown; model?: unknown; details?: { family?: unknown } }> };
+      return (body.models ?? []).map(mapOllamaModelEntry).filter((model) => model.id);
     }
 
     const client = createClient(settings, kind);
@@ -1895,6 +1927,7 @@ export class ModelService {
           ...(settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : []),
           'For editing files, running commands, or searching the open project, they must be in Agent mode (same two places: top of chat, or Settings → Theme → Session mode). If the user needs that, say so in plain language.',
           mythraProductFeaturesInstruction,
+          mythraColoredTextInstruction,
           mythraSessionModeEmbedInstruction,
           mythraWebSearchEmbedInstruction,
           mythraThemeInChatModeInstruction,
@@ -1923,6 +1956,7 @@ export class ModelService {
         mythraSetAppThemeAgentInstruction,
         mythraToolAccessReadInstruction,
         mythraProductFeaturesInstruction,
+        mythraColoredTextInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
         webHeaderUiStateLine(settings.ui.webSearch),
@@ -1969,6 +2003,7 @@ export class ModelService {
       mythraSetAppThemeAgentInstruction,
       mythraToolAccessReadInstruction,
       mythraProductFeaturesInstruction,
+      mythraColoredTextInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
       mythraCodingToolInstruction,
       `Workspace root: ${runtime.workspaceRoot}`,

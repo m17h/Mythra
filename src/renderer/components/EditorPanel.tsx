@@ -23,7 +23,7 @@ export function EditorPanel({ filePath, content, imagePreview, readOnly, readOnl
         <h2>Open a workspace, pick a file, then wire your model settings on the right.</h2>
         <p>
           This starter app already supports local folders, file editing, command streaming, theme switching, and live
-          chat against LM Studio or OpenRouter.
+          chat against LM Studio, OpenRouter, or Ollama.
         </p>
       </section>
     );

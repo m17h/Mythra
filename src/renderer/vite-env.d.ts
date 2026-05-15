@@ -54,6 +54,7 @@ declare global {
       getLastValidWorkspaceRoot: () => Promise<string | null>;
       activateWorkspace: (root: string) => Promise<{ root: string; label: string; tree: WorkspaceNode[] }>;
       getWorkspaceTree: (root: string) => Promise<WorkspaceNode[]>;
+      openWorkspaceFolder: (root: string) => Promise<void>;
       detachWorkspace: () => Promise<void>;
       openFile: (root: string, target: string) => Promise<OpenFile>;
       saveFile: (root: string, target: string, content: string) => Promise<OpenFile>;
@@ -79,7 +80,7 @@ declare global {
       openExternalUrl: (url: string) => Promise<void>;
       saveGeneratedMedia: (dataUrl: string, fileName: string, filePath?: string) => Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }>;
       openGeneratedImage: (dataUrl: string, fileName: string, mimeType: string, filePath?: string) => Promise<{ ok: boolean; error?: string }>;
-      listModels: (settings: AppSettings, providerKind?: 'lmstudio' | 'openrouter', options?: ModelListOptions) => Promise<ModelInfo[]>;
+      listModels: (settings: AppSettings, providerKind?: ProviderKind, options?: ModelListOptions) => Promise<ModelInfo[]>;
       streamChat: (
         requestId: string,
         settings: AppSettings,
