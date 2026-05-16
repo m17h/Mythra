@@ -33494,8 +33494,34 @@ function WebSearchMessageEmbed({ webSearch, onWebSearchChange, disabled }) {
     }
   );
 }
+const QUIZ_FENCE_RE = /```mythra-quiz\s*([\s\S]*?)```/gi;
+const MAX_QUIZ_QUESTIONS = 25;
+const MAX_QUIZ_CHOICES = 8;
+function normalizeQuiz(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw;
+  if (!Array.isArray(obj.questions)) return null;
+  const questions = obj.questions.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const q = item;
+    const question = typeof q.question === "string" ? q.question.trim() : "";
+    if (!question || !Array.isArray(q.choices)) return null;
+    const choices = q.choices.map((choice) => typeof choice === "string" ? choice.trim() : "").filter(Boolean).slice(0, MAX_QUIZ_CHOICES);
+    return choices.length >= 2 ? { question, choices } : null;
+  }).filter((item) => item != null).slice(0, MAX_QUIZ_QUESTIONS);
+  if (questions.length === 0) return null;
+  const title = typeof obj.title === "string" ? obj.title.trim() : "";
+  return { title: title || void 0, questions };
+}
+function parseQuizJson(raw) {
+  try {
+    return normalizeQuiz(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
 function textHasAnyEmbedToken(text2) {
-  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text2.includes(t));
+  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text2.includes(t)) || /```mythra-quiz/i.test(text2);
 }
 function findNextEmbed(rest) {
   let best = null;
@@ -33506,6 +33532,14 @@ function findNextEmbed(rest) {
   for (const s of WEB_SEARCH_EMBED_STRINGS) {
     const i = rest.indexOf(s);
     if (i >= 0 && (!best || i < best.i)) best = { i, len: s.length, kind: "web" };
+  }
+  QUIZ_FENCE_RE.lastIndex = 0;
+  const quizMatch = QUIZ_FENCE_RE.exec(rest);
+  if (quizMatch?.index != null) {
+    const quiz = parseQuizJson(quizMatch[1] ?? "");
+    if (quiz && (!best || quizMatch.index < best.i)) {
+      best = { i: quizMatch.index, len: quizMatch[0].length, kind: "quiz", quiz };
+    }
   }
   return best;
 }
@@ -33524,10 +33558,89 @@ function parseAssistantEmbeds(text2) {
     if (next.i > 0) {
       out.push({ type: "md", text: rest.slice(0, next.i) });
     }
-    out.push({ type: next.kind });
+    if (next.kind === "quiz") {
+      out.push({ type: "quiz", quiz: next.quiz });
+    } else {
+      out.push({ type: next.kind });
+    }
     rest = rest.slice(next.i + next.len);
   }
   return out;
+}
+function choiceLabel(index2) {
+  return String.fromCharCode(65 + index2);
+}
+function quizAnswersText(quiz, selected) {
+  const lines = ["Quiz answers:"];
+  quiz.questions.forEach((question, questionIndex) => {
+    const choiceIndex = selected[questionIndex];
+    const answer = choiceIndex == null ? "[unanswered]" : question.choices[choiceIndex] ?? "[unanswered]";
+    const label = choiceIndex == null ? "?" : choiceLabel(choiceIndex);
+    lines.push(`${questionIndex + 1}. ${question.question}`);
+    lines.push(`Answer: ${label}. ${answer}`);
+  });
+  return lines.join("\n");
+}
+function QuizMessageEmbed({
+  quiz,
+  submitDisabled,
+  onSubmitQuizAnswers
+}) {
+  const [selected, setSelected] = reactExports.useState({});
+  const [submitted, setSubmitted] = reactExports.useState(false);
+  const answeredCount = reactExports.useMemo(
+    () => quiz.questions.filter((_2, index2) => selected[index2] != null).length,
+    [quiz.questions, selected]
+  );
+  const complete = answeredCount === quiz.questions.length;
+  reactExports.useEffect(() => {
+    if (!complete || submitted || submitDisabled) return;
+    setSubmitted(true);
+    onSubmitQuizAnswers(quizAnswersText(quiz, selected));
+  }, [complete, onSubmitQuizAnswers, quiz, selected, submitDisabled, submitted]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--quiz", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "quiz-embed__header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Multiple choice quiz" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "quiz-embed__progress", children: [
+        answeredCount,
+        "/",
+        quiz.questions.length,
+        " answered"
+      ] })
+    ] }),
+    quiz.title ? /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "quiz-embed__title", children: quiz.title }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__questions", children: quiz.questions.map((question, questionIndex) => /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { className: "quiz-embed__question", disabled: submitted, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("legend", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          questionIndex + 1,
+          "."
+        ] }),
+        " ",
+        question.question
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__choices", children: question.choices.map((choice, choiceIndex) => {
+        const active = selected[questionIndex] === choiceIndex;
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            "aria-pressed": active,
+            className: `quiz-embed__choice ${active ? "is-selected" : ""}`,
+            onClick: () => setSelected((current) => ({
+              ...current,
+              [questionIndex]: choiceIndex
+            })),
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "quiz-embed__bubble", children: choiceLabel(choiceIndex) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: choice })
+            ]
+          },
+          `${choiceIndex}-${choice}`
+        );
+      }) })
+    ] }, `${questionIndex}-${question.question}`)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__footer", children: submitted ? "Answers sent." : complete && submitDisabled ? "Answers selected. Sending when the response finishes..." : complete ? "Sending answers..." : "Select one answer for each question." })
+  ] });
 }
 function AssistantMessageContent({
   text: text2,
@@ -33536,7 +33649,9 @@ function AssistantMessageContent({
   sessionModeToggleDisabled = false,
   webSearch,
   onWebSearchChange,
-  webSearchDisabled = false
+  webSearchDisabled = false,
+  quizSubmitDisabled = false,
+  onSubmitQuizAnswers
 }) {
   const segments = parseAssistantEmbeds(text2);
   if (segments.length === 1 && segments[0].type === "md") {
@@ -33557,15 +33672,26 @@ function AssistantMessageContent({
         i
       );
     }
-    if (webSearch) {
-      return null;
+    if (seg.type === "web") {
+      if (webSearch) {
+        return null;
+      }
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        WebSearchMessageEmbed,
+        {
+          disabled: webSearchDisabled,
+          onWebSearchChange,
+          webSearch
+        },
+        i
+      );
     }
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
-      WebSearchMessageEmbed,
+      QuizMessageEmbed,
       {
-        disabled: webSearchDisabled,
-        onWebSearchChange,
-        webSearch
+        onSubmitQuizAnswers,
+        quiz: seg.quiz,
+        submitDisabled: quizSubmitDisabled
       },
       i
     );
@@ -34161,6 +34287,7 @@ function ChatPanel({
   onAttachImages,
   onRemoveAttachment,
   onSend,
+  onSubmitQuizAnswers,
   onStop,
   chatMessages,
   contextLimit,
@@ -34500,7 +34627,9 @@ function ChatPanel({
               AssistantMessageContent,
               {
                 onSessionModeToggle,
+                onSubmitQuizAnswers,
                 onWebSearchChange,
+                quizSubmitDisabled: message.status === "streaming",
                 sessionMode,
                 sessionModeToggleDisabled,
                 text: message.content,
@@ -34671,11 +34800,11 @@ function ChatPanel({
       /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: terminalOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(
         motion.div,
         {
-          initial: { height: 0, opacity: 0 },
-          animate: { height: "auto", opacity: 1 },
-          exit: { height: 0, opacity: 0 },
+          className: "chat-terminal-overlay",
+          initial: { opacity: 0, y: 10, scale: 0.99 },
+          animate: { opacity: 1, y: 0, scale: 1 },
+          exit: { opacity: 0, y: 10, scale: 0.99 },
           transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] },
-          style: { overflow: "hidden" },
           children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-terminal__header", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-terminal__title", children: "Terminal" }),
@@ -35682,14 +35811,28 @@ function ModelSearch({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [portalDropdown]);
-  reactExports.useLayoutEffect(() => {
-    if (!mounted || !portalDropdown || !inputRef.current) {
+  const updateDropdownPosition = reactExports.useCallback(() => {
+    if (!portalDropdown || !inputRef.current) {
       setDropdownPos(null);
       return;
     }
     const rect = inputRef.current.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-  }, [mounted, portalDropdown]);
+  }, [portalDropdown]);
+  reactExports.useLayoutEffect(() => {
+    if (!mounted || !portalDropdown) {
+      setDropdownPos(null);
+      return;
+    }
+    updateDropdownPosition();
+    const onReposition = () => updateDropdownPosition();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [mounted, portalDropdown, updateDropdownPosition]);
   const baseList = sortModelsByFavorites(
     query ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase())) : models,
     favoriteIds
@@ -37311,7 +37454,7 @@ function WizardSettingsPanel({
   ] });
 }
 const dialogTransition = { duration: 0.18, ease: "easeOut" };
-const CORE_MD_NAMES = ["soul.md", "tools.md", "memory.md", "corrections.md"];
+const CORE_MD_NAMES = ["identity.md", "personality.md", "tools.md", "memory.md", "corrections.md", "soul.md"];
 function basename(path2) {
   const s = path2.replace(/\\/g, "/");
   const i = s.lastIndexOf("/");
@@ -37546,20 +37689,21 @@ const providerOptions$1 = [
   { value: "ollama", label: "Ollama" }
 ];
 const WIZARD_SETUP_DEFAULT_MODEL_ID = "google/gemini-3.1-flash-lite-preview";
-const ONBOARDING_SYSTEM_TAIL = "\n\nSoul.md and memory.md were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n";
+const ONBOARDING_SYSTEM_TAIL = "\n\nThe personality.md and memory.md files were seeded from your onboarding answers where you provided them. Keep those files authoritative—use write_file when personality or remembered facts change.\n";
 const defaultPrompt = (name2) => `You are ${name2 || "this Wizard"}, a persistent Mythra Wizard.
 
 Use your private workspace as your long-term home base:
-- soul.md defines your identity, style, values, and boundaries.
+- identity.md defines your name, role, specialty, and purpose.
+- personality.md defines your tone, style, values, boundaries, and working preferences.
 - tools.md defines tool preferences, workflows, and project conventions.
 - memory.md stores durable facts the user wants you to remember.
 - corrections.md stores mistakes, corrections, and lessons learned.
-- Mythra only seeds those four core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
+- Mythra only seeds those five core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
 - File paths default to your workspace folder only; enable **Allow paths outside workspace** in Inspector → Wizard settings if cross-folder reads/writes are needed (local disks only).
 
 Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
 
-Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in soul.md and extra markdown.
+Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in identity.md, personality.md, and extra markdown.
 
 At the start of every message in a Wizard chat, Mythra injects every Markdown (.md) file from your workspace into context (core docs first). Keep extra guides or notes as additional .md files if you want them always loaded.`;
 function previewWizardWorkspacePath(platform, parentFolder, wizardDisplayName) {
@@ -37854,7 +37998,8 @@ function WizardSetupModal({
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-setup__docs", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Core documents created automatically" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "identity.md" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "personality.md" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "tools.md" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "memory.md" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "corrections.md" })
@@ -37865,7 +38010,7 @@ function WizardSetupModal({
               /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
                 "Describe how this Wizard should behave and what it should remember long-term. Your answers seed",
                 " ",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "personality.md" }),
                 " and ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "memory.md" }),
                 " in its workspace. You can refine them anytime in the editor or ask the Wizard to update them in chat (Agent mode)."
@@ -38448,7 +38593,7 @@ const pages = [
     title: "Create persistent AI assistants",
     body: "A Wizard is a named AI with its own model, private local workspace, system prompt, and Markdown memory documents.",
     points: [
-      "Each Wizard gets documents like soul.md, tools.md, memory.md, and corrections.md.",
+      "Each Wizard gets documents like identity.md, personality.md, tools.md, memory.md, and corrections.md.",
       "Those documents are injected into Wizard chats automatically.",
       "A Wizard can have multiple sessions while keeping the same identity and memory files."
     ],
@@ -38836,7 +38981,7 @@ const replaceWizardNameText = (text2, previousName, nextName) => {
   if (!trimmedPrevious || trimmedPrevious === nextName) return text2;
   return text2.replace(new RegExp(escapeRegExp(trimmedPrevious), "g"), nextName);
 };
-const renameWizardSoulMarkdown = (text2, previousName, nextName) => {
+const renameWizardIdentityMarkdown = (text2, previousName, nextName) => {
   const trimmedPrevious = previousName.trim();
   if (!trimmedPrevious || trimmedPrevious === nextName) return text2;
   const headingPattern = new RegExp(`^(#\\s*)${escapeRegExp(trimmedPrevious)}(\\s*)$`, "m");
@@ -39011,7 +39156,7 @@ Mythra Wizard runtime:
 - You are currently associated with your private Wizard workspace: ${wizard.workspaceRoot}
 ${pathRules}
 - At the start of every message in a session, Mythra injects the current contents of every \`.md\` file in your workspace (below your system prompt). Core docs are listed first; read or re-read specific files with tools if the user edits them mid-chat.
-- When asked about your identity, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
+- When asked about your identity, personality, memory, tools, corrections, or other workspace Markdown, prefer those files—they may appear in the injected block or only on disk.
 - Do not use app theme tools unless the user explicitly asks to change Mythra's visual theme.`;
 };
 const buildNexusSystemPrompt = (leader, nexus, teamNames) => {
@@ -39025,7 +39170,7 @@ Mythra Nexus runtime:
 - You are the leader Wizard for Nexus project "${nexus.name}".
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, strengths, memory, and corrections.
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, personality, strengths, memory, and corrections.
 - The team is: ${teamNames.join(", ")}.
 ${collab}- Start by making a concise plan. Delegate tasks to specific Wizards by name when useful, and explain why.
 - **Leader coordination:** Assign owners by name and file/path scope where helpful. When work must pause until another Wizard finishes something, say clearly **WAITING ON [Wizard]:** reason so teammates idle correctly or pick alternate tasks you assign. When independent tracks can proceed safely (different files / non-overlapping scope), say **PARALLEL OK** for those tracks.
@@ -39050,7 +39195,7 @@ Mythra Nexus runtime:
 - Your Nexus role is: ${role === "leader" ? "leader" : "team member"}.
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, strengths, memory, and corrections.
+- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, personality, strengths, memory, and corrections.
 - The team is: ${teamNames.join(", ")}.
 ${role === "leader" ? modeLeader : modeMember}
 - Answer as yourself, in first person, and focus on the user's latest request.
@@ -41536,13 +41681,15 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         if (!workspaceRootRef.current || !pathsEqual(workspaceRootRef.current, profile.workspaceRoot)) {
           await activateWorkspace(profile.workspaceRoot);
         }
-        try {
-          const soul = await window.electronAPI.openFile(profile.workspaceRoot, "soul.md");
-          const nextSoul = renameWizardSoulMarkdown(soul.content, previousName, nextName);
-          if (nextSoul !== soul.content) {
-            await window.electronAPI.saveFile(profile.workspaceRoot, "soul.md", nextSoul);
+        for (const identityDoc of ["identity.md", "soul.md"]) {
+          try {
+            const current = await window.electronAPI.openFile(profile.workspaceRoot, identityDoc);
+            const nextContent = renameWizardIdentityMarkdown(current.content, previousName, nextName);
+            if (nextContent !== current.content) {
+              await window.electronAPI.saveFile(profile.workspaceRoot, identityDoc, nextContent);
+            }
+          } catch {
           }
-        } catch {
         }
         try {
           profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
@@ -41561,7 +41708,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       setWizardDraft(profile);
       wizardDraftRef.current = profile;
       setSettingsStatus(
-        mode === "everywhere" ? "Wizard name updated across settings, workspace folder, system prompt, and soul.md." : "Wizard display name updated in settings only."
+        mode === "everywhere" ? "Wizard name updated across settings, workspace folder, system prompt, and workspace identity docs." : "Wizard display name updated in settings only."
       );
       closeWizardRenamePrompt(true);
     } catch (e) {
@@ -41966,10 +42113,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     });
     await refreshChatList();
   };
-  const sendChat = async () => {
+  const sendChat = async (override) => {
     const sendSettings = settingsRef.current;
-    const trimmedInput = chatInput.trim();
-    const attachmentsSnapshot = [...chatAttachments];
+    const overrideContent = override?.content;
+    const trimmedInput = (overrideContent ?? chatInput).trim();
+    const attachmentsSnapshot = override?.attachments ? [...override.attachments] : [...chatAttachments];
     if (!sendSettings || trimmedInput.length === 0 && attachmentsSnapshot.length === 0) {
       return;
     }
@@ -41993,8 +42141,10 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         showInFlightIfActive(snapshot);
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline);
       }
-      setChatInput("");
-      setChatAttachments([]);
+      if (!override) {
+        setChatInput("");
+        setChatAttachments([]);
+      }
       return;
     }
     if (chatStreamingRef.current) {
@@ -42130,8 +42280,10 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     ];
     setChatMessages([...nextHistory, ...assistantMessagesForTurn]);
     setChatTimeline(nextTimeline);
-    setChatInput("");
-    setChatAttachments([]);
+    if (!override) {
+      setChatInput("");
+      setChatAttachments([]);
+    }
     setChatStreaming(true);
     setActiveRequestId(requestId);
     const priorChatId = activeChatIdRef.current;
@@ -42858,9 +43010,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                 " to",
                 " ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: wizardRenamePrompt.nextName }),
-                ". Mythra can also rename the workspace folder and update this Wizard's system prompt and ",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "soul.md" }),
-                "."
+                ". Mythra can also rename the workspace folder and update this Wizard's system prompt and identity document."
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__actions", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary", onClick: () => closeWizardRenamePrompt(false), type: "button", children: "Cancel" }),
@@ -44293,6 +44443,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               onInputChange: setChatInput,
               onRemoveAttachment: (id2) => setChatAttachments((c) => c.filter((a) => a.id !== id2)),
               onSend: sendChat,
+              onSubmitQuizAnswers: (answersText) => void sendChat({ content: answersText }),
               onStop: stopChat,
               modelCatalogSettled: Boolean(settings) && modelCatalogSettled,
               providerConnected,
