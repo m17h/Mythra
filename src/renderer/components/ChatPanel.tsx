@@ -7,6 +7,7 @@ import type {
   ChatCompletionTokenUsage,
   ChatMessage,
   ChatTimelineEntry,
+  ModelInfo,
   OpenRouterReasoningEffort,
   ProviderKind,
   SessionMode
@@ -80,6 +81,35 @@ function getCopyableMessageText(content: string): string {
   return s.trim();
 }
 
+function parseSubmittedQuizSelections(content: string): Record<number, number> | null {
+  if (!content.trimStart().startsWith('Quiz answers:')) return null;
+  const selected: Record<number, number> = {};
+  const answerRe = /^Answer:\s*([A-H?])\./gim;
+  let questionIndex = 0;
+  for (let match = answerRe.exec(content); match; match = answerRe.exec(content)) {
+    const label = match[1]?.toUpperCase();
+    if (label && label !== '?') {
+      selected[questionIndex] = label.charCodeAt(0) - 65;
+    }
+    questionIndex += 1;
+  }
+  return Object.keys(selected).length > 0 ? selected : null;
+}
+
+function completedQuizSelectionsAfterMessage(messages: ChatMessage[], assistantMessageId: string): Record<number, Record<number, number>> | undefined {
+  const messageIndex = messages.findIndex((message) => message.id === assistantMessageId);
+  if (messageIndex < 0) return undefined;
+  for (let i = messageIndex + 1; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!message) break;
+    if (message.role === 'assistant') return undefined;
+    if (message.role !== 'user') continue;
+    const selected = parseSubmittedQuizSelections(message.content);
+    return selected ? { 0: selected } : undefined;
+  }
+  return undefined;
+}
+
 function attachmentKind(mimeType: string): 'image' | 'video' | 'audio' | 'file' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('video/')) return 'video';
@@ -138,6 +168,36 @@ function formatTokensShort(n: number): string {
 
 function formatTokensExact(n: number): string {
   return Math.max(0, Math.round(n)).toLocaleString();
+}
+
+function formatUsdEstimate(value: number): string {
+  if (!Number.isFinite(value)) return '$0.00';
+  if (value === 0) return '$0.00';
+  if (value < 0.000001) return '<$0.000001';
+  if (value < 0.01) return `$${value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`;
+  return `$${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function messageCostTitle(cost: NonNullable<ChatMessage['costEstimate']>): string {
+  return [
+    `Estimated response cost: ${cost.display}`,
+    `Model: ${cost.model}`,
+    `Input/context/tool tokens: ${formatTokensExact(cost.inputTokens)}`,
+    `Completion tokens: ${formatTokensExact(cost.outputTokens)}`,
+    cost.reasoningTokens != null ? `Reasoning tokens: ${formatTokensExact(cost.reasoningTokens)}` : null,
+    `Total reported tokens: ${formatTokensExact(cost.totalTokens)}`,
+    cost.note
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+interface DraftCostTooltip {
+  heading: string;
+  rows: Array<{ label: string; value: string }>;
+  note: string;
+  title: string;
+  unavailable?: boolean;
 }
 
 function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
@@ -453,10 +513,12 @@ interface ChatPanelProps {
   selectedProviderLabel: string;
   selectedProviderKind: ProviderKind;
   selectedModel: string;
+  modelPricing?: ModelInfo['pricing'];
   openRouterReasoningEffort: OpenRouterReasoningEffort;
   openRouterReasoningSupported: boolean;
   onOpenRouterReasoningEffortChange: (effort: OpenRouterReasoningEffort) => void;
   openRouterCredits?: HeaderCreditsDisplay | null;
+  showModelOutputCosts: boolean;
   sessionMode: SessionMode;
   isWizard?: boolean;
   isNexus?: boolean;
@@ -730,10 +792,12 @@ export function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  modelPricing,
   openRouterReasoningEffort,
   openRouterReasoningSupported,
   onOpenRouterReasoningEffortChange,
   openRouterCredits,
+  showModelOutputCosts,
   sessionMode,
   isWizard = false,
   isNexus = false,
@@ -770,8 +834,12 @@ export function ChatPanel({
   const innerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendCostTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [sendCostTooltipOpen, setSendCostTooltipOpen] = useState(false);
+  const [sendCostTooltipAnchor, setSendCostTooltipAnchor] = useState({ top: 0, left: 0 });
 
   const contextUsedEstimate = useMemo(() => {
     const threadRough =
@@ -781,6 +849,86 @@ export function ChatPanel({
     if (lastTokenUsage == null) return rough;
     return Math.max(rough, lastTokenUsage.totalTokens);
   }, [attachments, chatMessages, input, lastTokenUsage]);
+
+  const draftCostTooltip = useMemo<DraftCostTooltip | null>(() => {
+    if (selectedProviderKind !== 'openrouter') return null;
+    const inputTokens = roughTokensForDraft(input, attachments);
+    if (inputTokens <= 0) return null;
+    const promptRate = Number(modelPricing?.prompt ?? NaN);
+    const requestRate = Number(modelPricing?.request ?? 0);
+    const modelLabel = selectedModel || 'OpenRouter model';
+    if (!Number.isFinite(promptRate)) {
+      return {
+        heading: 'Cost estimate unavailable',
+        rows: [
+          { label: 'Model', value: modelLabel },
+          { label: 'Draft tokens', value: formatTokensExact(inputTokens) }
+        ],
+        note: 'OpenRouter did not return prompt pricing for this model.',
+        title: `Cost estimate unavailable\nModel: ${modelLabel}\nDraft tokens: ${formatTokensExact(inputTokens)}\nOpenRouter did not return prompt pricing for this model.`,
+        unavailable: true
+      };
+    }
+    const requestCost = Number.isFinite(requestRate) ? requestRate : 0;
+    const total = inputTokens * promptRate + requestCost;
+    const display = formatUsdEstimate(total);
+    return {
+      heading: 'Estimated draft input cost',
+      rows: [
+        { label: 'Cost', value: display },
+        { label: 'Model', value: modelLabel },
+        { label: 'Draft tokens', value: formatTokensExact(inputTokens) }
+      ],
+      note: 'Excludes reply, reasoning, and tool-call tokens.',
+      title: `Estimated draft input cost: ${display}\nModel: ${modelLabel}\nDraft tokens: ${formatTokensExact(inputTokens)}\nExcludes reply, reasoning, and tool-call tokens.`
+    };
+  }, [attachments, input, modelPricing?.prompt, modelPricing?.request, selectedModel, selectedProviderKind]);
+  const sendButtonTitle = draftCostTooltip ? `Send\n${draftCostTooltip.title}` : 'Send';
+  const queueSendButtonTitle = draftCostTooltip
+    ? `Queue message for next teammate turn\n${draftCostTooltip.title}`
+    : 'Queue message for next teammate turn';
+
+  const clearSendCostTooltipTimer = useCallback(() => {
+    if (sendCostTooltipTimerRef.current != null) {
+      clearTimeout(sendCostTooltipTimerRef.current);
+      sendCostTooltipTimerRef.current = null;
+    }
+  }, []);
+
+  const updateSendCostTooltipAnchor = useCallback(() => {
+    const el = sendButtonRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setSendCostTooltipAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+
+  const showSendCostTooltip = useCallback(() => {
+    if (!draftCostTooltip) return;
+    clearSendCostTooltipTimer();
+    updateSendCostTooltipAnchor();
+    setSendCostTooltipOpen(true);
+  }, [clearSendCostTooltipTimer, draftCostTooltip, updateSendCostTooltipAnchor]);
+
+  const scheduleHideSendCostTooltip = useCallback(() => {
+    clearSendCostTooltipTimer();
+    sendCostTooltipTimerRef.current = setTimeout(() => setSendCostTooltipOpen(false), 120);
+  }, [clearSendCostTooltipTimer]);
+
+  useLayoutEffect(() => {
+    if (!sendCostTooltipOpen) return;
+    updateSendCostTooltipAnchor();
+    const onReposition = () => updateSendCostTooltipAnchor();
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [sendCostTooltipOpen, updateSendCostTooltipAnchor]);
+
+  useEffect(() => {
+    if (!draftCostTooltip) setSendCostTooltipOpen(false);
+  }, [draftCostTooltip]);
   /** When true and the model grows the thread height, snap scroll only if still within epsilon of bottom. */
   const userPinnedToBottomRef = useRef(true);
 
@@ -865,6 +1013,7 @@ export function ChatPanel({
   useEffect(() => {
     return () => {
       if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+      if (sendCostTooltipTimerRef.current) clearTimeout(sendCostTooltipTimerRef.current);
     };
   }, []);
 
@@ -1056,6 +1205,38 @@ export function ChatPanel({
       </>
     ) : null;
 
+  const sendCostTooltipPopover =
+    sendCostTooltipOpen &&
+    draftCostTooltip &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <div
+        className={`chat-send-cost-popover${draftCostTooltip.unavailable ? ' is-unavailable' : ''}`}
+        onMouseEnter={showSendCostTooltip}
+        onMouseLeave={scheduleHideSendCostTooltip}
+        role="tooltip"
+        style={{
+          left: sendCostTooltipAnchor.left,
+          top: sendCostTooltipAnchor.top - 10,
+          transform: 'translate(-50%, -100%)'
+        }}
+      >
+        <div className="chat-send-cost-popover__inner">
+          <div className="chat-send-cost-popover__heading">{draftCostTooltip.heading}</div>
+          <div className="chat-send-cost-popover__rows">
+            {draftCostTooltip.rows.map((row) => (
+              <div className="chat-send-cost-popover__row" key={row.label}>
+                <span>{row.label}</span>
+                <strong>{row.value}</strong>
+              </div>
+            ))}
+          </div>
+          <div className="chat-send-cost-popover__note">{draftCostTooltip.note}</div>
+        </div>
+      </div>,
+      document.body
+    );
+
   const wizardHubScrollInner = (
     <div className="chat-scroll__inner wizard-hub-scroll__inner" ref={innerRef}>
       <div className="chat-scroll__stack">
@@ -1187,6 +1368,7 @@ export function ChatPanel({
                 <div className="chat-bubble__text">
                   {message.role === 'assistant' ? (
                     <AssistantMessageContent
+                      completedQuizSelections={completedQuizSelectionsAfterMessage(chatMessages, message.id)}
                       onSessionModeToggle={onSessionModeToggle}
                       onSubmitQuizAnswers={onSubmitQuizAnswers}
                       onWebSearchChange={onWebSearchChange}
@@ -1200,6 +1382,11 @@ export function ChatPanel({
                   ) : (
                     <ChatMarkdown text={getCopyableMessageText(message.content)} />
                   )}
+                </div>
+              ) : null}
+              {showModelOutputCosts && message.role === 'assistant' && message.costEstimate ? (
+                <div className="chat-bubble__cost" title={messageCostTitle(message.costEstimate)}>
+                  Estimated cost: {message.costEstimate.display}
                 </div>
               ) : null}
             </motion.article>
@@ -1508,11 +1695,16 @@ export function ChatPanel({
             <>
               {nexusRelayQueueDuringStream ? (
                 <button
+                  ref={sendButtonRef}
                   className="chat-compose__send chat-compose__send--alongside-stop"
                   disabled={input.trim().length === 0 && attachments.length === 0}
-                  onClick={onSend}
+                  onBlur={scheduleHideSendCostTooltip}
+                  onFocus={showSendCostTooltip}
+                  onMouseEnter={showSendCostTooltip}
+                  onMouseLeave={scheduleHideSendCostTooltip}
+                  onClick={() => onSend()}
                   type="button"
-                  title="Queue message for next teammate turn"
+                  title={queueSendButtonTitle}
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                     <path d="M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -1527,17 +1719,23 @@ export function ChatPanel({
             </>
           ) : (
             <button
+              ref={sendButtonRef}
               className="chat-compose__send"
               disabled={input.trim().length === 0 && attachments.length === 0}
-              onClick={onSend}
+              onBlur={scheduleHideSendCostTooltip}
+              onFocus={showSendCostTooltip}
+              onMouseEnter={showSendCostTooltip}
+              onMouseLeave={scheduleHideSendCostTooltip}
+              onClick={() => onSend()}
               type="button"
-              title="Send"
+              title={sendButtonTitle}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
           )}
         </div>
       </div>
+      {sendCostTooltipPopover}
         </>
       )}
     </section>

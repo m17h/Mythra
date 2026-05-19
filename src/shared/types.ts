@@ -232,6 +232,8 @@ export interface UiSettings {
   webSearch: boolean;
   /** When on, shows remaining OpenRouter credits in the chat header while OpenRouter is active. */
   showOpenRouterCredits: boolean;
+  /** When on, shows estimated OpenRouter response cost below assistant messages when usage/pricing is available. */
+  showModelOutputCosts: boolean;
   /**
    * Per-provider favorited model ids (matches catalog `id` for that provider).
    * Used in Settings model picker: favorites sort first, then the rest.
@@ -379,6 +381,10 @@ export interface ChatMessage {
   assistantDisplayName?: string;
   /** When the API returns separable model reasoning (e.g. OpenRouter), shown in a collapsible "Thinking" block. */
   reasoning?: string;
+  /** Provider-reported usage for this assistant response, when available. */
+  usage?: ChatCompletionTokenUsage;
+  /** Estimated billing cost for this assistant response, when Mythra has provider pricing. */
+  costEstimate?: ChatMessageCostEstimate;
   attachments?: ChatAttachment[];
   status?: 'streaming' | 'done' | 'error';
 }
@@ -405,6 +411,23 @@ export interface ChatCompletionTokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  reasoningTokens?: number;
+}
+
+export interface ChatMessageCostEstimate {
+  provider: ProviderKind;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
+  reasoningCostUsd?: number;
+  requestCostUsd: number;
+  totalCostUsd: number;
+  display: string;
+  note?: string;
 }
 
 export interface ChatStreamDone {
@@ -415,6 +438,8 @@ export interface ChatStreamDone {
   attachments?: ChatAttachment[];
   /** Present when the upstream API reported token usage for this completion. */
   usage?: ChatCompletionTokenUsage;
+  /** Present when usage can be priced with the active provider/model catalog. */
+  costEstimate?: ChatMessageCostEstimate;
 }
 
 export interface ChatStreamError {
@@ -613,6 +638,7 @@ export const defaultSettings: AppSettings = {
     sessionMode: 'agent',
     webSearch: false,
     showOpenRouterCredits: false,
+    showModelOutputCosts: true,
     favoriteModels: { lmstudio: [], openrouter: [], ollama: [] },
     wizardProjectsParentFolder: null,
     nexusProjectsParentFolder: null,

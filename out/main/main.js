@@ -337,6 +337,7 @@ const CUSTOMIZABLE_THEME_TOKEN_KEYS = [
   "--bg-elevated",
   "--panel",
   "--panel-strong",
+  "--terminal-bg",
   "--line",
   "--line-strong",
   "--text-0",
@@ -404,6 +405,8 @@ const THEME_COLOR_SLOT_ALIASES = {
   rightpanel: ["--inspector-bg"],
   settings: ["--settings-bg"],
   editor: ["--editor-bg"],
+  terminal: ["--terminal-bg"],
+  terminalbackground: ["--terminal-bg"],
   fileeditor: ["--editor-bg"],
   text: ["--text-0"],
   primarytext: ["--text-0"],
@@ -662,6 +665,7 @@ const CUSTOM_THEME_FALLBACK_ICE_COOL_DARK = {
   "--bg-elevated": "rgba(19, 28, 40, 0.97)",
   "--panel": "rgba(13, 21, 32, 0.92)",
   "--panel-strong": "rgba(10, 16, 24, 0.96)",
+  "--terminal-bg": "rgba(10, 16, 24, 0.98)",
   "--line": "rgba(100, 150, 200, 0.14)",
   "--line-strong": "rgba(120, 170, 220, 0.22)",
   "--text-0": "#f0f6ff",
@@ -689,6 +693,7 @@ const CUSTOM_THEME_FALLBACK_NEUTRAL_SLATE = {
   "--bg-elevated": "rgba(24, 28, 36, 0.97)",
   "--panel": "rgba(17, 20, 26, 0.92)",
   "--panel-strong": "rgba(12, 14, 18, 0.96)",
+  "--terminal-bg": "rgba(12, 14, 18, 0.98)",
   "--line": "rgba(148, 163, 184, 0.12)",
   "--line-strong": "rgba(148, 163, 184, 0.22)",
   "--text-0": "#f1f5f9",
@@ -716,6 +721,7 @@ const CUSTOM_THEME_FALLBACK_LIGHT_PAPER_GRAY = {
   "--bg-elevated": "rgba(255, 255, 255, 0.98)",
   "--panel": "rgba(244, 244, 245, 0.94)",
   "--panel-strong": "rgba(255, 255, 255, 0.97)",
+  "--terminal-bg": "#ffffff",
   "--line": "rgba(15, 23, 42, 0.08)",
   "--line-strong": "rgba(15, 23, 42, 0.14)",
   "--text-0": "#18181b",
@@ -743,6 +749,7 @@ const CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI = {
   "--bg-elevated": "rgba(22, 32, 28, 0.97)",
   "--panel": "rgba(15, 23, 20, 0.92)",
   "--panel-strong": "rgba(12, 18, 16, 0.96)",
+  "--terminal-bg": "rgba(12, 18, 16, 0.98)",
   "--line": "rgba(148, 180, 160, 0.12)",
   "--line-strong": "rgba(148, 180, 160, 0.22)",
   "--text-0": "#eef7f2",
@@ -1356,7 +1363,23 @@ function mapCompletionUsage(u) {
   const pt = u.prompt_tokens ?? 0;
   const ct = u.completion_tokens ?? 0;
   const tt = u.total_tokens ?? pt + ct;
-  return { promptTokens: pt, completionTokens: ct, totalTokens: tt };
+  const rt = u.completion_tokens_details?.reasoning_tokens ?? void 0;
+  return {
+    promptTokens: pt,
+    completionTokens: ct,
+    totalTokens: tt,
+    reasoningTokens: typeof rt === "number" && Number.isFinite(rt) ? Math.max(0, rt) : void 0
+  };
+}
+function addCompletionUsage(current, next) {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    promptTokens: current.promptTokens + next.promptTokens,
+    completionTokens: current.completionTokens + next.completionTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
+    reasoningTokens: current.reasoningTokens != null || next.reasoningTokens != null ? (current.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0) : void 0
+  };
 }
 function remapActiveFilePathAfterWorkspaceRootChange(prevRoot, nextRoot, activeFilePath) {
   if (!prevRoot?.trim() || !activeFilePath?.trim()) return activeFilePath;
@@ -1543,6 +1566,37 @@ function formatUsd(value) {
   if (value < 0.01) return `$${value.toFixed(6)}`;
   return `$${value.toFixed(4)}`;
 }
+function buildOpenRouterCostEstimate(model, usage, pricing) {
+  if (!usage || !pricing) return void 0;
+  const promptRate = Number(pricing.prompt ?? NaN);
+  const completionRate = Number(pricing.completion ?? NaN);
+  const internalReasoningRate = Number(pricing.internalReasoning ?? NaN);
+  const requestRate = Number(pricing.request ?? 0);
+  if (!Number.isFinite(promptRate) || !Number.isFinite(completionRate)) return void 0;
+  const reasoningTokens = usage.reasoningTokens ?? 0;
+  const hasSeparateReasoningRate = reasoningTokens > 0 && Number.isFinite(internalReasoningRate);
+  const outputTokensForCompletionRate = hasSeparateReasoningRate ? Math.max(0, usage.completionTokens - reasoningTokens) : usage.completionTokens;
+  const inputCostUsd = usage.promptTokens * promptRate;
+  const outputCostUsd = outputTokensForCompletionRate * completionRate;
+  const reasoningCostUsd = hasSeparateReasoningRate ? reasoningTokens * internalReasoningRate : void 0;
+  const requestCostUsd = Number.isFinite(requestRate) ? requestRate : 0;
+  const totalCostUsd = inputCostUsd + outputCostUsd + (reasoningCostUsd ?? 0) + requestCostUsd;
+  return {
+    provider: "openrouter",
+    model,
+    inputTokens: usage.promptTokens,
+    outputTokens: usage.completionTokens,
+    reasoningTokens: usage.reasoningTokens,
+    totalTokens: usage.totalTokens,
+    inputCostUsd,
+    outputCostUsd,
+    reasoningCostUsd,
+    requestCostUsd,
+    totalCostUsd,
+    display: formatUsd(totalCostUsd) ?? "$0.00",
+    note: "Estimate from OpenRouter-reported token usage and model pricing. Prompt tokens include conversation context and tool-call rounds; completion tokens include visible output and provider-reported reasoning tokens when included upstream."
+  };
+}
 const GENERATED_MEDIA_DIR$1 = "generated-media";
 const MEDIA_CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 const wait = (ms, signal) => new Promise((resolveWait, reject) => {
@@ -1624,7 +1678,7 @@ const mythraAppToolInstruction = [
 ].join(" ");
 const mythraProductFeaturesInstruction = [
   "Mythra product knowledge (describe accurately when users ask how Mythra works, what you can do, where something is, or what the app is for; do **not** say Mythra has no Wizards, no Nexus, no media chats, no file tools, no PDF tools, no chat history search, or no local-time access): Mythra is a desktop AI workspace for normal chat, Agent work on local files, media generation chats, persistent Wizards, and multi-Wizard Nexus projects.",
-  'If the user asks "what can you do for me?", give a useful overview tailored to the active mode and mention relevant UI locations. In Chat mode, you can converse, search saved chat history, read prior chat messages, check local time/date, create interactive multiple-choice quizzes with clickable answer bubbles, answer with safe colored text tags when requested, estimate OpenRouter model cost, and explain Mythra settings/features. Tell them Agent mode is needed for local file edits, shell commands, PDF/file inspection, image/audio inspection, and workspace operations.',
+  'If the user asks "what can you do for me?", give a useful overview tailored to the active mode and mention relevant UI locations. In Chat mode, you can converse, search saved chat history, read prior chat messages, check local time/date, create interactive multiple-choice quizzes with clickable answer bubbles, render interactive charts/tables/stat cards for financial or numerical data, answer with safe colored text tags when requested, estimate OpenRouter model cost, and explain Mythra settings/features. Tell them Agent mode is needed for local file edits, shell commands, PDF/file inspection, image/audio inspection, and workspace operations.',
   "Main UI map: the left sidebar has **New**, **Open workspace**, **Open last workspace**, sometimes **Clear workspace**, and tabs for **CHATS**, **WIZARDS**, and **FILES**. The middle is the chat/thread area. The right Inspector has **EDITOR**, **CHANGES**, and **SETTINGS** tabs. The top chat header has the only normal Chat/Agent mode switch, active model name, Web toggle, connection status, and OpenRouter credits when enabled. The bottom message bar has image attach, OpenRouter reasoning lightbulb when supported, context meter, terminal button, and send/stop controls.",
   "Chats UI: **New** opens choices for a normal chat, Wizard, or Nexus project, and clicking elsewhere closes that menu. Normal chats can be renamed, deleted with confirmation, pinned to the top, and reordered by dragging within their pinned or unpinned group; pinned chats stay above unpinned chats. Chats with a per-chat model override show a visual indicator before opening, and media chats show Music/Video/Image badges in the sidebar.",
   "Providers and model controls: Mythra supports OpenRouter cloud models, LM Studio local/server models, and Ollama local models. The active model name in the header opens the OpenRouter model page when available. OpenRouter models can show remaining credits in the chat header when enabled in Settings, and some OpenRouter models expose reasoning levels through the lightbulb next to the image-attach button.",
@@ -1633,13 +1687,14 @@ const mythraProductFeaturesInstruction = [
   "Wizards UI and behavior: the **WIZARDS** tab lists saved Wizards. Wizards can be pinned to the top and reordered by dragging within pinned or unpinned groups; pinned Wizards stay above unpinned Wizards. Each Wizard has its own local workspace folder, model, system prompt in Inspector → Settings → Wizard, and five default core Markdown files: identity.md, personality.md, tools.md, memory.md, corrections.md. Legacy Wizards may still have soul.md. Mythra injects every `.md` file in a Wizard workspace into each Wizard message. Wizard sessions can be renamed, can rename the Wizard/profile/workspace with approval, can create durable memories, and can be exported/imported as `.mythwiz` bundles.",
   "Good Wizard examples to suggest when useful: a writing-style or brand-voice assistant; a complex note system (PARA/Zettelkasten/second brain); a project or coding-stack specialist; meeting/research/journal workflows with dated notes; a creative persona or role-play character with a lore bible. Mythra does **not** create todo.md by default; users or Wizards can add extra `.md` guides/tasks if wanted.",
   "Nexus UI and behavior: the Wizards area has a **Wizards / Nexus** switch. New → Nexus creates a shared project workspace for two or more Wizards; the user picks one parent folder and Mythra creates a named project folder. Nexus projects can be pinned. Each member keeps private identity/personality/memory docs, while Nexus has a leader Wizard, mission text, relay mode, parallel mode, team/leader approval options, and a shared project workspace for file tools.",
-  "Settings UI exact order in the right Inspector **SETTINGS** tab: **App Updates**, **Connection**, **System Prompt**, **Web Search**, collapsible **Theme**, **Tool Access**, then **Agent Autonomy** at the bottom. Do not tell users Session mode is under Theme; it is controlled from the Chat/Agent switch in the chat header or from the inline switch you can embed when appropriate.",
-  "Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Connection has provider, OpenRouter credits toggle, API key/base URL, model selector, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search has provider plus Tavily/Brave keys. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode, Continue until done, and Auto Step Limit.",
+  "Settings UI exact order in the right Inspector **SETTINGS** tab: **App Updates**, collapsible **Theme**, **Connection**, **System Prompt**, **Web Search**, **Tool Access**, then **Agent Autonomy** at the bottom. Do not tell users Session mode is under Theme; it is controlled from the Chat/Agent switch in the chat header or from the inline switch you can embed when appropriate.",
+  "Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Connection keeps the model selector visible and has collapsible details for provider, OpenRouter credits toggle, output cost estimates toggle, API key/base URL, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search keeps the search provider visible and has collapsible details for provider notes plus Tavily/Brave keys. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode, Continue until done, and Auto Step Limit.",
   "Full access mode location: if a user asks where to turn on Full access mode, say: open the right Inspector → SETTINGS, scroll to the bottom, find **Agent Autonomy**, then toggle **Full access mode**. It is not inside Theme and not one of the Tool Access checkboxes. Explain that Full access lets AI write/delete files and run commands without per-action approval.",
-  "Message formatting: Mythra supports safe colored text tags in assistant output, so when users ask for green/orange/red/etc. text, use the supported `[color=... tone=...]...[/color]` syntax rather than HTML. Mythra also supports interactive multiple-choice quiz blocks with clickable answer bubbles; mention that feature when users ask about studying, practice, quizzes, or what Mythra can do. Thinking content appears in collapsible Thinking blocks while capable models stream reasoning."
+  "Message formatting: Mythra supports safe colored text tags in assistant output, so when users ask for green/orange/red/etc. text, use the supported `[color=... tone=...]...[/color]` syntax rather than HTML. Mythra also supports interactive multiple-choice quiz blocks with clickable answer bubbles, interactive data tables, summary stat cards, and inline chart blocks for financial/numerical data; mention those features when users ask about studying, practice, quizzes, analysis, finance, reports, dashboards, or what Mythra can do. Thinking content appears in collapsible Thinking blocks while capable models stream reasoning."
 ].join(" ");
 const mythraColoredTextInstruction = "Colored text: Mythra supports safe color tags in assistant markdown when the user asks for colored text or when a short label/status genuinely benefits from color. Syntax: `[color=green tone=normal]text[/color]`. Supported colors: red, orange, yellow, green, blue, purple, pink, gray, plus aliases danger, warning, success, info, muted. Supported tones: light, normal, dark. Do not use raw HTML, CSS, hex colors, or unsupported color names; otherwise write normal markdown. Use colored text sparingly unless the user specifically requests a whole section, quiz, or list in a color.";
 const mythraQuizEmbedInstruction = 'Interactive quizzes: when the user asks for a multiple-choice quiz, asks you to quiz them, asks for practice questions, asks for selectable answers, or asks to study with a quiz, create an interactive quiz instead of a plain Markdown list. Emit a `mythra-quiz` fenced JSON block so Mythra renders clickable answer bubbles. Format exactly: ```mythra-quiz\\n{"title":"Optional title","questions":[{"question":"Question text","choices":["Answer A","Answer B","Answer C","Answer D"]}]}\\n```. The JSON root must contain `questions`; each question must contain `question` and `choices`. Use plain strings only, valid JSON with double quotes, 2-8 choices per question, and usually 3-10 questions unless the user asks otherwise. Do not include correct answers, answer letters, explanations, or an answer key in the JSON or visible text unless the user explicitly asks for an answer key. After the user selects one answer for every question, Mythra automatically sends their numbered answers back to you; then grade, explain missed answers, and continue the study flow.';
+const mythraDataEmbedInstruction = 'Data embeds: when users ask for finance, budgets, portfolios, numerical reports, CSV/table analysis, forecasting, scenario comparison, spending categories, recurring expenses, or "make this easier to understand", use Mythra structured embeds when they clarify the answer. Use `mythra-stats` for small KPI cards, `mythra-table` for sortable/hideable row data, and `mythra-chart` for visual patterns. Do not over-visualize: skip charts for one or two numbers, very uncertain data, or when a short paragraph/table is clearer. Valid JSON only: double quotes, no comments/trailing commas, no invented numbers unless clearly labeled as assumptions in normal text. Stat cards format: ```mythra-stats\\n{"title":"Monthly snapshot","cards":[{"label":"Net cash flow","value":"$840","delta":"+12% vs last month","tone":"success"},{"label":"Largest expense","value":"Rent","detail":"$1,650"}]}\\n```. Card tones: neutral, success, warning, danger, info. Interactive table format: ```mythra-table\\n{"title":"Transactions","columns":[{"key":"date","label":"Date"},{"key":"category","label":"Category"},{"key":"amount","label":"Amount","align":"right"}],"rows":[{"date":"May 1","category":"Groceries","amount":84.23}]}\\n```. Tables are best for transactions, budget line items, comparisons, imports from CSV/spreadsheets, and drilldown details. Keep tables focused (usually under 100 rows and 12 columns). Charts: emit `mythra-chart` fenced JSON, not a plain `json` code block. Supported types: `bar` for category comparisons (use `data` for one series or `series` for grouped side-by-side bars), `line` for trends/forecasts/time series, `pie`/`donut` for allocation/composition, `stacked-bar` for category totals across periods only when the stack helps (monthly spending by category, revenue mix by quarter; avoid stacked charts when precise comparison of individual series matters), and `budget` for planned vs actual. Basic chart: ```mythra-chart\\n{"type":"bar","title":"Expenses by category","valuePrefix":"$","data":[{"label":"Food","value":420},{"label":"Gas","value":110}]}\\n```. Grouped bar chart for comparing multiple series per category: ```mythra-chart\n{"type":"bar","title":"Income vs expenses","valuePrefix":"$","series":[{"name":"Income","data":[{"label":"Jan","value":4500},{"label":"Feb","value":4500}]},{"name":"Expenses","data":[{"label":"Jan","value":3140},{"label":"Feb","value":3045}]}]}\n```. Multi-line chart for trends, forecasts, and scenarios: ```mythra-chart\\n{"type":"line","title":"Savings scenarios","valuePrefix":"$","series":[{"name":"Save $500/mo","data":[{"label":"Jun","value":2500},{"label":"Dec","value":5500}]},{"name":"Save $800/mo","data":[{"label":"Jun","value":2800},{"label":"Dec","value":7600}]}]}\\n```. Stacked bar: ```mythra-chart\\n{"type":"stacked-bar","title":"Monthly spending mix","valuePrefix":"$","series":[{"name":"Food","data":[{"label":"Jan","value":420},{"label":"Feb","value":390}]},{"name":"Transport","data":[{"label":"Jan","value":160},{"label":"Feb","value":180}]}]}\\n```. Budget chart: ```mythra-chart\\n{"type":"budget","title":"Budget vs actual","valuePrefix":"$","data":[{"label":"Food","budget":400,"actual":465},{"label":"Gas","budget":150,"actual":132}]}\\n```. Chart `data` items and series may include `details` arrays for hover/drilldown notes. Use `valuePrefix":"$"` for currency and `valueSuffix":"%"` for percentages. For recurring expense detection, forecast, and scenario work, present assumptions, then use stats/cards and charts/tables when helpful.';
 const mythraCodingToolInstruction = "Mythra coding tools (apply_patch is validated by `git apply` from the workspace root — malformed hunks become “corrupt patch”): Before any edit, read_file the target so line context matches the file on disk. read_file can also extract readable text from PDF files in Agent/Wizard sessions; Mythra returns embedded PDF text by page and automatically OCRs low/no-text pages. For long PDFs, continue with pdf_start_page and pdf_page_count. If a page has embedded text but may also contain an image/table/scan with text, reread that page range with pdf_ocr=on. PDF results are read-only extracted text, not editable PDF content. apply_patch must be a single plain-text unified diff (no markdown fences, no prose). First line: `diff --git a/relative/path b/relative/path`; then `--- a/relative/path` and `+++ b/relative/path`; use one hunk per change with `@@ -start,count +start,count @@` where counts are line counts (single-line change is often `@@ -N,1 +N,1 @@`). Paths use forward slashes and match the repo relative to workspace root. Do not include `\\ No newline` unless the file truly needs it. If apply_patch fails, switch to replace_in_file (one exact contiguous match) or write_file for new/small files, then retry. Also use replace_in_file for one exact replacement, insert_after for small anchored inserts, rename_file for moves, get_git_diff after edits, search_symbols/get_file_outline to navigate, run_tests when useful. Every tool call: strict JSON only (double quotes, escape newlines in strings as \\n). Fix malformed JSON and retry; do not blame “relay” or Mythra for corrupt diffs.";
 function mergeStreamingToolDelta(acc, delta) {
   const i = delta.index;
@@ -1828,6 +1883,7 @@ class ModelService {
   loadSavedChat;
   persistChatTitle;
   activeRequests = /* @__PURE__ */ new Map();
+  openRouterCostModelCache = /* @__PURE__ */ new Map();
   async listModels(settings, providerKind, options) {
     const kind = providerKind ?? settings.selectedProvider;
     const outputModalities = options?.outputModalities?.filter((modality) => modality.trim()).map((modality) => modality.trim());
@@ -1868,6 +1924,28 @@ class ModelService {
     const response = await client.models.list();
     return (response.data ?? []).map(mapModelEntry);
   }
+  async getOpenRouterModelsForCost(settings) {
+    const provider = settings.providers.openrouter;
+    const key = normalizeBaseUrl("openrouter", provider.baseUrl);
+    const now = Date.now();
+    const cached = this.openRouterCostModelCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.models;
+    }
+    const models = await this.listModels(settings, "openrouter");
+    this.openRouterCostModelCache.set(key, { expiresAt: now + 5 * 60 * 1e3, models });
+    return models;
+  }
+  async estimateOpenRouterResponseCost(settings, model, usage) {
+    if (!usage || settings.selectedProvider !== "openrouter") return void 0;
+    try {
+      const models = await this.getOpenRouterModelsForCost(settings);
+      const pricing = models.find((item) => item.id === model)?.pricing;
+      return buildOpenRouterCostEstimate(model, usage, pricing);
+    } catch {
+      return void 0;
+    }
+  }
   stopRequest(requestId) {
     const active = this.activeRequests.get(requestId);
     if (!active) {
@@ -1905,7 +1983,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         if (runtime.mediaGenerationKind === "music") {
           await this.runAudioGenerationStream(settings, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
         } else if (runtime.mediaGenerationKind === "image") {
-          await this.runImageGeneration(client, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
+          await this.runImageGeneration(settings, client, window, requestId, provider.model, apiMessages, controller, runtime.conversationId);
         } else if (runtime.mediaGenerationKind === "video") {
           await this.runVideoGeneration(window, requestId, settings, provider.model, lastUserPrompt(messages), controller, runtime.conversationId);
         } else {
@@ -1914,6 +1992,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         return;
       }
       const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
+      let turnUsage;
       let lastRoundUsage;
       for (let step = 0; step < maxAutoSteps; step += 1) {
         this.assertNotStopped(requestId);
@@ -1970,6 +2049,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         this.assertNotStopped(requestId);
         if (lastStreamUsage) {
           lastRoundUsage = lastStreamUsage;
+          turnUsage = addCompletionUsage(turnUsage, lastStreamUsage);
         }
         const toolCallsFromStream = streamingToolAccToFunctionCalls(toolAcc);
         if (lastFinish === "tool_calls" && toolCallsFromStream.length === 0) {
@@ -2058,7 +2138,8 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
           requestId,
           content: normalizedContent,
           reasoning: assembledReasoning.trim() || void 0,
-          usage: lastStreamUsage
+          usage: turnUsage ?? lastStreamUsage,
+          costEstimate: await this.estimateOpenRouterResponseCost(settings, provider.model, turnUsage ?? lastStreamUsage)
         };
         window.webContents.send("chat:done", done2);
         this.activeRequests.delete(requestId);
@@ -2073,7 +2154,8 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       const done = {
         requestId,
         content: lastVisibleAssistantContent || `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`,
-        usage: lastRoundUsage
+        usage: turnUsage ?? lastRoundUsage,
+        costEstimate: await this.estimateOpenRouterResponseCost(settings, provider.model, turnUsage ?? lastRoundUsage)
       };
       window.webContents.send("chat:done", done);
       this.activeRequests.delete(requestId);
@@ -2083,8 +2165,11 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
     }
   }
   async runTalkStream(client, window, requestId, settings, model, apiMessages, controller) {
-    const finish = (done) => {
-      window.webContents.send("chat:done", done);
+    const finish = async (done) => {
+      window.webContents.send("chat:done", {
+        ...done,
+        costEstimate: done.costEstimate ?? await this.estimateOpenRouterResponseCost(settings, model, done.usage)
+      });
       this.activeRequests.delete(requestId);
     };
     try {
@@ -2134,7 +2219,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         }
       }
       if (sawTool) {
-        finish({
+        await finish({
           requestId,
           content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, then use Open Workspace to mount a folder if you need the project, and try again.",
           usage: lastStreamUsage
@@ -2143,11 +2228,11 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       }
       const talkNorm = normalizeAssistantContent(assembled);
       if (!talkNorm) {
-        finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: lastStreamUsage });
+        await finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: lastStreamUsage });
         return;
       }
       const reasoning = assembledReasoning.trim() || void 0;
-      finish({ requestId, content: talkNorm, reasoning, usage: lastStreamUsage });
+      await finish({ requestId, content: talkNorm, reasoning, usage: lastStreamUsage });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
@@ -2163,7 +2248,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         throw new Error("The model returned no message.");
       }
       if (assistantMessage.tool_calls?.length) {
-        finish({
+        await finish({
           requestId,
           content: "In Chat mode the assistant cannot use file or shell tools. If you need those, switch to Agent with the Chat/Agent control at the top of the chat, then use Open Workspace to mount a folder if you need the project, and try again.",
           usage: fallbackUsage
@@ -2173,11 +2258,11 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       const talkContent = contentToString(assistantMessage.content);
       const talkNorm = normalizeAssistantContent(talkContent);
       if (!talkNorm) {
-        finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: fallbackUsage });
+        await finish({ requestId, content: "The model returned an empty reply. Try your message again.", usage: fallbackUsage });
         return;
       }
       const reasoning = extractModelReasoning(assistantMessage);
-      finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
+      await finish({ requestId, content: talkNorm, reasoning, usage: fallbackUsage });
     }
   }
   async saveGeneratedMediaFile(conversationId, requestId, baseName, mimeType, bytes) {
@@ -2274,7 +2359,8 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       window.webContents.send("chat:done", {
         requestId,
         content: textPreview ? `The model returned text instead of an audio file. Preview: ${textPreview}${textPreview.length === 320 ? "..." : ""}` : "The model did not return an audio file. Try again or choose another music model.",
-        usage: result.usage
+        usage: result.usage,
+        costEstimate: await this.estimateOpenRouterResponseCost(settings, model, result.usage)
       });
       this.activeRequests.delete(requestId);
       return;
@@ -2290,11 +2376,12 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       requestId,
       content: "Generated audio.",
       attachments: [attachment],
-      usage: result.usage
+      usage: result.usage,
+      costEstimate: await this.estimateOpenRouterResponseCost(settings, model, result.usage)
     });
     this.activeRequests.delete(requestId);
   }
-  async runImageGeneration(client, window, requestId, model, apiMessages, controller, conversationId) {
+  async runImageGeneration(settings, client, window, requestId, model, apiMessages, controller, conversationId) {
     const streamSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
     const create = async (modalities) => client.chat.completions.create(
       {
@@ -2320,21 +2407,25 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
     )).filter((attachment) => attachment != null);
     if (attachments.length === 0) {
       const text = normalizeAssistantContent(contentToString(message?.content));
+      const usage2 = mapCompletionUsage(completion.usage ?? void 0);
       window.webContents.send("chat:done", {
         requestId,
         content: text ? `The model returned text instead of an image file:
 
 ${text}` : "The model did not return an image file. Try again or choose another image model.",
-        usage: mapCompletionUsage(completion.usage ?? void 0)
+        usage: usage2,
+        costEstimate: await this.estimateOpenRouterResponseCost(settings, model, usage2)
       });
       this.activeRequests.delete(requestId);
       return;
     }
+    const usage = mapCompletionUsage(completion.usage ?? void 0);
     window.webContents.send("chat:done", {
       requestId,
       content: attachments.length === 1 ? "Generated image." : `Generated ${attachments.length} images.`,
       attachments,
-      usage: mapCompletionUsage(completion.usage ?? void 0)
+      usage,
+      costEstimate: await this.estimateOpenRouterResponseCost(settings, model, usage)
     });
     this.activeRequests.delete(requestId);
   }
@@ -3153,6 +3244,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         mythraProductFeaturesInstruction,
         mythraColoredTextInstruction,
         mythraQuizEmbedInstruction,
+        mythraDataEmbedInstruction,
         mythraSessionModeEmbedInstruction,
         mythraWebSearchEmbedInstruction,
         mythraThemeInChatModeInstruction,
@@ -3179,6 +3271,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         mythraProductFeaturesInstruction,
         mythraColoredTextInstruction,
         mythraQuizEmbedInstruction,
+        mythraDataEmbedInstruction,
         mythraCurrentTimeInstruction,
         ...agentModeSystemPromptInstructions(settings, runtime),
         webLine,
@@ -3224,6 +3317,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       mythraProductFeaturesInstruction,
       mythraColoredTextInstruction,
       mythraQuizEmbedInstruction,
+      mythraDataEmbedInstruction,
       mythraCurrentTimeInstruction,
       ...agentModeSystemPromptInstructions(settings, runtime),
       mythraCodingToolInstruction,
@@ -3333,6 +3427,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
           sessionMode: settings.ui.sessionMode,
           webSearchEnabled: settings.ui.webSearch,
           showOpenRouterCredits: settings.ui.showOpenRouterCredits,
+          showModelOutputCosts: settings.ui.showModelOutputCosts,
           workspace: runtime.workspaceRoot ? {
             root: runtime.workspaceRoot,
             activeFile: runtime.activeFilePath ?? null
@@ -3363,16 +3458,17 @@ ${text}` : "The model did not return an image file. Try again or choose another 
           settingsUi: {
             exactOrder: [
               "App Updates",
+              "Theme",
               "Connection",
               "System Prompt",
               "Web Search",
-              "Theme",
               "Tool Access",
               "Agent Autonomy"
             ],
             sessionModeLocation: "Chat/Agent control at the top of the chat window",
             fullAccessModeLocation: "Inspector → SETTINGS → scroll to bottom → Agent Autonomy → Full access mode",
             toolAccessLocation: "Inspector → SETTINGS → Tool Access",
+            modelOutputCostsLocation: "Inspector → SETTINGS → Connection → Output cost estimates",
             themeLocation: "Inspector → SETTINGS → Theme"
           }
         },
@@ -4642,6 +4738,7 @@ const defaultSettings = {
     sessionMode: "agent",
     webSearch: false,
     showOpenRouterCredits: false,
+    showModelOutputCosts: true,
     favoriteModels: { lmstudio: [], openrouter: [], ollama: [] },
     wizardProjectsParentFolder: null,
     nexusProjectsParentFolder: null,
@@ -4772,6 +4869,7 @@ const mergeSettings = (saved) => ({
     chatThreadBackgroundPath: typeof saved?.ui?.chatThreadBackgroundPath === "string" && saved.ui.chatThreadBackgroundPath.trim().length > 0 ? saved.ui.chatThreadBackgroundPath.trim() : null,
     chatThreadBackgroundBlur: typeof saved?.ui?.chatThreadBackgroundBlur === "boolean" ? saved.ui.chatThreadBackgroundBlur : defaultSettings.ui.chatThreadBackgroundBlur,
     showOpenRouterCredits: typeof saved?.ui?.showOpenRouterCredits === "boolean" ? saved.ui.showOpenRouterCredits : defaultSettings.ui.showOpenRouterCredits,
+    showModelOutputCosts: typeof saved?.ui?.showModelOutputCosts === "boolean" ? saved.ui.showModelOutputCosts : defaultSettings.ui.showModelOutputCosts,
     favoriteModels: {
       lmstudio: [
         ...saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio
@@ -5144,6 +5242,7 @@ Describe this Wizard's tone, principles, strengths, boundaries, and working styl
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+- For financial, portfolio, budget, sales, CSV/table, forecast, scenario, or other numerical analysis, use Mythra data embeds when they make the answer clearer: \`mythra-stats\` for KPI cards, \`mythra-table\` for sortable row data, and \`mythra-chart\` for visuals. Always use the Mythra fence names, not plain \`json\` fences. Chart types include bar (single-series or grouped multi-series), line, pie, donut, stacked-bar (only when stacked categories across periods help), and budget (planned vs actual).
 - **Default core files** Mythra creates are only identity, personality, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
 
 ## Example directions (optional)

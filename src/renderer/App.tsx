@@ -753,6 +753,8 @@ interface NexusMultiResponseGroup {
   messageIdByRequestId: Map<string, string>;
   contentByRequestId: Map<string, string>;
   reasoningByRequestId: Map<string, string>;
+  usageByRequestId: Map<string, ChatCompletionTokenUsage>;
+  costEstimateByRequestId: Map<string, ChatMessage['costEstimate']>;
   timeline: ChatTimelineEntry[];
   /** When true, `chat:done` / `chat:error` must not finalize the parent Nexus bubble—the sequential orchestrator will. */
   suppressFinalizeUntilOrchestrator?: boolean;
@@ -1036,10 +1038,14 @@ export function App() {
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
         const content = stripDuplicateNexusSpeakerLabel(name, raw);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+        const usage = m.usage ?? group.usageByRequestId.get(requestId);
+        const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...recipe(m),
           content: content || 'Thinking...',
           reasoning,
+          usage,
+          costEstimate,
           status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
         };
       });
@@ -1064,10 +1070,14 @@ export function App() {
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
         const content = stripDuplicateNexusSpeakerLabel(name, raw);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+        const usage = m.usage ?? group.usageByRequestId.get(requestId);
+        const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...m,
           content: content || 'Thinking...',
           reasoning,
+          usage,
+          costEstimate,
           status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
         };
       })
@@ -1080,10 +1090,14 @@ export function App() {
           const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
           const content = stripDuplicateNexusSpeakerLabel(name, raw);
           const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
+          const usage = m.usage ?? group.usageByRequestId.get(requestId);
+          const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
           return {
             ...m,
             content: content || 'Thinking...',
             reasoning,
+            usage,
+            costEstimate,
             status: status === 'streaming' ? (group.pending.has(requestId) ? 'streaming' : 'done') : status
           };
         });
@@ -1738,12 +1752,16 @@ export function App() {
         });
       }
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, attachments, usage }) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, attachments, usage, costEstimate }) => {
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         nexusGroup.contentByRequestId.set(requestId, content);
         if (reasoning !== undefined) nexusGroup.reasoningByRequestId.set(requestId, reasoning);
+        if (usage && !nexusGroup.usageByRequestId.has(requestId)) nexusGroup.usageByRequestId.set(requestId, usage);
+        if (costEstimate && !nexusGroup.costEstimateByRequestId.has(requestId)) {
+          nexusGroup.costEstimateByRequestId.set(requestId, costEstimate);
+        }
         nexusGroup.pending.delete(requestId);
 
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
@@ -1771,6 +1789,8 @@ export function App() {
         const next: ChatMessage = { ...m, content, status: 'done' as const };
         if (reasoning !== undefined) next.reasoning = reasoning;
         else if (m.reasoning !== undefined) next.reasoning = m.reasoning;
+        if (usage && !next.usage) next.usage = usage;
+        if (costEstimate && !next.costEstimate) next.costEstimate = costEstimate;
         if (attachments?.length) {
           next.attachments = [...(m.attachments ?? []), ...attachments];
         }
@@ -2053,6 +2073,15 @@ export function App() {
     }
   };
 
+  const openSpecificWorkspaceFolder = async (root: string) => {
+    if (!root.trim()) return;
+    try {
+      await window.electronAPI.openWorkspaceFolder(root);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : 'Workspace folder could not be opened.');
+    }
+  };
+
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer = buffers[activeFilePath];
@@ -2120,7 +2149,7 @@ export function App() {
         );
       }
       if (modelList.length > 0) {
-        setSettingsStatus(`Connected. ${modelList.length} models available. Active: ${defaultModel || 'none'}.`);
+        setSettingsStatus('');
       } else {
         const emptyMessage =
           activeSettings.selectedProvider === 'lmstudio'
@@ -2206,7 +2235,7 @@ export function App() {
           const saved = await window.electronAPI.saveSettings(latest);
           setSettings(saved);
           settingsRef.current = saved;
-          setSettingsStatus('Saved.');
+          setSettingsStatus('');
         } catch (e) {
           const m = e instanceof Error ? e.message : 'Save failed';
           setSettingsStatus(`Could not save settings: ${m}`);
@@ -2305,7 +2334,7 @@ export function App() {
     flushSettingsAutosaveTimer();
     try {
       await persistSettingsToDisk(next);
-      setSettingsStatus('Saved.');
+      setSettingsStatus('');
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Save failed';
       setSettingsStatus(`Could not save settings to disk: ${m}`);
@@ -4095,6 +4124,8 @@ export function App() {
         ),
         contentByRequestId: new Map(parallelChildRequestIds.map((rid) => [rid, ''])),
         reasoningByRequestId: new Map(),
+        usageByRequestId: new Map(),
+        costEstimateByRequestId: new Map(),
         timeline: nextTimeline,
         suppressFinalizeUntilOrchestrator: !useParallelNexusStreams
       };
@@ -6274,10 +6305,12 @@ export function App() {
             sessionModeToggleDisabled={!settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind)}
             sessionMode={sessionMode}
             selectedModel={effectiveHeaderModelId}
+            modelPricing={effectiveHeaderModelInfo?.pricing}
             openRouterReasoningEffort={openRouterReasoningEffort}
             openRouterReasoningSupported={openRouterReasoningSupported}
             onOpenRouterReasoningEffortChange={handleOpenRouterReasoningEffortChange}
             openRouterCredits={openRouterCreditsDisplay}
+            showModelOutputCosts={settings?.ui.showModelOutputCosts ?? true}
             selectedProviderKind={selectedProviderKind}
             selectedProviderLabel={selectedProviderLabel}
             hasWorkspace={Boolean(workspaceRoot)}
@@ -6418,6 +6451,7 @@ export function App() {
                         modelOptions={overrideModels}
                         onChange={handleWizardDraftChange}
                         onOpenDocument={(path) => void openFile(path)}
+                        onOpenWorkspaceFolder={openSpecificWorkspaceFolder}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onPresetPersist={persistAfterPresetAction}
                         onRenameRequest={requestWizardSettingsRename}

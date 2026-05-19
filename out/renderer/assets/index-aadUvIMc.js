@@ -33495,8 +33495,87 @@ function WebSearchMessageEmbed({ webSearch, onWebSearchChange, disabled }) {
   );
 }
 const QUIZ_FENCE_RE = /```mythra-quiz\s*([\s\S]*?)```/gi;
+const CHART_FENCE_RE = /```mythra-chart\s*([\s\S]*?)```/gi;
+const TABLE_FENCE_RE = /```mythra-table\s*([\s\S]*?)```/gi;
+const STATS_FENCE_RE = /```mythra-stats\s*([\s\S]*?)```/gi;
+const DATA_JSON_FENCE_RE = /```(?:json)?\s*([\s\S]*?)```/gi;
 const MAX_QUIZ_QUESTIONS = 25;
 const MAX_QUIZ_CHOICES = 8;
+const MAX_CHART_POINTS = 40;
+const MAX_CHART_SERIES = 8;
+const MAX_TABLE_ROWS = 100;
+const MAX_TABLE_COLUMNS = 12;
+const MAX_STAT_CARDS = 8;
+const CHART_COLORS = ["#818cf8", "#22c55e", "#f59e0b", "#f43f5e", "#38bdf8", "#a78bfa", "#f472b6", "#14b8a6"];
+const ALLOWED_CHART_COLORS = new Set(CHART_COLORS);
+const MONTH_INDEX = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11
+};
+function clampText(raw, max = 80) {
+  return typeof raw === "string" ? raw.trim().slice(0, max) : "";
+}
+function monthSortValue(raw) {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toLowerCase();
+  const match = value.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/);
+  if (!match) return null;
+  const month = MONTH_INDEX[match[1] ?? ""];
+  if (month == null) return null;
+  const yearMatch = value.match(/\b(20\d{2}|19\d{2})\b/);
+  const year = yearMatch ? Number(yearMatch[1]) : 0;
+  return year * 12 + month;
+}
+function orderMonthData(data) {
+  if (data.length < 2) return data;
+  const monthValues = data.map((item) => monthSortValue(item.label));
+  if (monthValues.some((item) => item == null)) return data;
+  return data.map((item, index2) => ({ item, index: index2, order: monthValues[index2] ?? index2 })).sort((a, b) => a.order - b.order || a.index - b.index).map(({ item }) => item);
+}
+function orderMonthBudgetData(data) {
+  if (data.length < 2) return data;
+  const monthValues = data.map((item) => monthSortValue(item.label));
+  if (monthValues.some((item) => item == null)) return data;
+  return data.map((item, index2) => ({ item, index: index2, order: monthValues[index2] ?? index2 })).sort((a, b) => a.order - b.order || a.index - b.index).map(({ item }) => item);
+}
+function normalizeChartColor(raw) {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!value) return void 0;
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value;
+  const named = {
+    blue: "#38bdf8",
+    green: "#22c55e",
+    orange: "#f59e0b",
+    red: "#f43f5e",
+    purple: "#a78bfa",
+    pink: "#f472b6",
+    teal: "#14b8a6",
+    indigo: "#818cf8"
+  };
+  return named[value] ?? (ALLOWED_CHART_COLORS.has(value) ? value : void 0);
+}
 function normalizeQuiz(raw) {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw;
@@ -33520,8 +33599,155 @@ function parseQuizJson(raw) {
     return null;
   }
 }
+function normalizeChartData(raw) {
+  if (!Array.isArray(raw)) return [];
+  const data = raw.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const d = item;
+    const label = clampText(d.label);
+    const value = typeof d.value === "number" ? d.value : Number(d.value);
+    const rawDetails = Array.isArray(d.details) ? d.details : d.detail != null ? [d.detail] : [];
+    const details = rawDetails.map((detail) => clampText(detail, 180)).filter(Boolean).slice(0, 6);
+    const color2 = normalizeChartColor(d.color);
+    return label && Number.isFinite(value) ? { label, value, details: details.length ? details : void 0, color: color2 } : null;
+  }).filter((item) => item != null).slice(0, MAX_CHART_POINTS);
+  return orderMonthData(data);
+}
+function normalizeBudgetData(raw) {
+  if (!Array.isArray(raw)) return [];
+  const data = raw.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const d = item;
+    const label = clampText(d.label);
+    const budget = typeof d.budget === "number" ? d.budget : Number(d.budget ?? d.planned);
+    const actual = typeof d.actual === "number" ? d.actual : Number(d.actual ?? d.value);
+    const rawDetails = Array.isArray(d.details) ? d.details : d.detail != null ? [d.detail] : [];
+    const details = rawDetails.map((detail) => clampText(detail, 180)).filter(Boolean).slice(0, 6);
+    return label && Number.isFinite(budget) && Number.isFinite(actual) ? { label, budget, actual, details: details.length ? details : void 0 } : null;
+  }).filter((item) => item != null).slice(0, MAX_CHART_POINTS);
+  return orderMonthBudgetData(data);
+}
+function normalizeChartSeries(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, index2) => {
+    if (!item || typeof item !== "object") return null;
+    const s = item;
+    const name2 = clampText(s.name, 80) || `Series ${index2 + 1}`;
+    const data = normalizeChartData(s.data);
+    return data.length ? { name: name2, data, color: normalizeChartColor(s.color) } : null;
+  }).filter((item) => item != null).slice(0, MAX_CHART_SERIES);
+}
+function normalizeChart(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw;
+  const type = clampText(obj.type, 20).toLowerCase();
+  if (!["bar", "line", "pie", "donut", "stacked-bar", "stacked_bar", "budget"].includes(type)) return null;
+  const normalizedType = type === "stacked_bar" ? "stacked-bar" : type;
+  const series = normalizedType === "line" || normalizedType === "stacked-bar" || normalizedType === "bar" ? normalizeChartSeries(obj.series) : [];
+  const budgetData = normalizedType === "budget" ? normalizeBudgetData(obj.data) : [];
+  const data = normalizedType === "line" || normalizedType === "stacked-bar" || normalizedType === "bar" ? series[0]?.data ?? normalizeChartData(obj.data) : normalizeChartData(obj.data);
+  if (normalizedType === "budget") {
+    if (budgetData.length === 0) return null;
+  } else if (data.length === 0 && series.length === 0) {
+    return null;
+  }
+  return {
+    type: normalizedType,
+    title: clampText(obj.title, 120) || void 0,
+    subtitle: clampText(obj.subtitle, 180) || void 0,
+    unit: clampText(obj.unit, 24) || void 0,
+    valuePrefix: clampText(obj.valuePrefix, 8) || void 0,
+    valueSuffix: clampText(obj.valueSuffix, 16) || void 0,
+    data,
+    series: series.length ? series : void 0,
+    budgetData: budgetData.length ? budgetData : void 0
+  };
+}
+function parseChartJson(raw) {
+  try {
+    return normalizeChart(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+function normalizeTable(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw;
+  if (!Array.isArray(obj.rows)) return null;
+  const firstRow = obj.rows.find((row) => row && typeof row === "object");
+  const columns = Array.isArray(obj.columns) ? obj.columns.map((item) => {
+    if (typeof item === "string") {
+      const key2 = clampText(item, 40);
+      return key2 ? { key: key2, label: key2 } : null;
+    }
+    if (!item || typeof item !== "object") return null;
+    const c = item;
+    const key = clampText(c.key, 40);
+    if (!key) return null;
+    const align = c.align === "right" || c.align === "center" ? c.align : "left";
+    return { key, label: clampText(c.label, 80) || key, align };
+  }).filter((item) => item != null).slice(0, MAX_TABLE_COLUMNS) : Object.keys(firstRow ?? {}).slice(0, MAX_TABLE_COLUMNS).map((key) => ({ key, label: key }));
+  if (!columns.length) return null;
+  const rows = obj.rows.map((row) => {
+    if (!row || typeof row !== "object") return null;
+    const source = row;
+    const normalized = {};
+    columns.forEach((column) => {
+      const value = source[column.key];
+      normalized[column.key] = typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" ? value.trim().slice(0, 180) : value == null ? "" : String(value).slice(0, 180);
+    });
+    return normalized;
+  }).filter((item) => item != null).slice(0, MAX_TABLE_ROWS);
+  if (!rows.length) return null;
+  return {
+    title: clampText(obj.title, 120) || void 0,
+    subtitle: clampText(obj.subtitle, 180) || void 0,
+    columns,
+    rows
+  };
+}
+function parseTableJson(raw) {
+  try {
+    return normalizeTable(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+function normalizeStats(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw;
+  if (!Array.isArray(obj.cards)) return null;
+  const cards = obj.cards.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const c = item;
+    const label = clampText(c.label, 80);
+    const value = clampText(c.value, 80);
+    if (!label || !value) return null;
+    const tone = ["success", "warning", "danger", "info", "neutral"].includes(String(c.tone)) ? String(c.tone) : "neutral";
+    return {
+      label,
+      value,
+      delta: clampText(c.delta, 80) || void 0,
+      tone,
+      detail: clampText(c.detail, 140) || void 0
+    };
+  }).filter((item) => item != null).slice(0, MAX_STAT_CARDS);
+  if (!cards.length) return null;
+  return {
+    title: clampText(obj.title, 120) || void 0,
+    subtitle: clampText(obj.subtitle, 180) || void 0,
+    cards
+  };
+}
+function parseStatsJson(raw) {
+  try {
+    return normalizeStats(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
 function textHasAnyEmbedToken(text2) {
-  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text2.includes(t)) || /```mythra-quiz/i.test(text2);
+  return [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS].some((t) => text2.includes(t)) || /```mythra-quiz/i.test(text2) || /```mythra-chart/i.test(text2) || /```mythra-table/i.test(text2) || /```mythra-stats/i.test(text2);
 }
 function findNextEmbed(rest) {
   let best = null;
@@ -33539,6 +33765,52 @@ function findNextEmbed(rest) {
     const quiz = parseQuizJson(quizMatch[1] ?? "");
     if (quiz && (!best || quizMatch.index < best.i)) {
       best = { i: quizMatch.index, len: quizMatch[0].length, kind: "quiz", quiz };
+    }
+  }
+  CHART_FENCE_RE.lastIndex = 0;
+  const chartMatch = CHART_FENCE_RE.exec(rest);
+  if (chartMatch?.index != null) {
+    const chart = parseChartJson(chartMatch[1] ?? "");
+    if (chart && (!best || chartMatch.index < best.i)) {
+      best = { i: chartMatch.index, len: chartMatch[0].length, kind: "chart", chart };
+    }
+  }
+  TABLE_FENCE_RE.lastIndex = 0;
+  const tableMatch = TABLE_FENCE_RE.exec(rest);
+  if (tableMatch?.index != null) {
+    const table2 = parseTableJson(tableMatch[1] ?? "");
+    if (table2 && (!best || tableMatch.index < best.i)) {
+      best = { i: tableMatch.index, len: tableMatch[0].length, kind: "table", table: table2 };
+    }
+  }
+  STATS_FENCE_RE.lastIndex = 0;
+  const statsMatch = STATS_FENCE_RE.exec(rest);
+  if (statsMatch?.index != null) {
+    const stats = parseStatsJson(statsMatch[1] ?? "");
+    if (stats && (!best || statsMatch.index < best.i)) {
+      best = { i: statsMatch.index, len: statsMatch[0].length, kind: "stats", stats };
+    }
+  }
+  DATA_JSON_FENCE_RE.lastIndex = 0;
+  let jsonMatch;
+  while (jsonMatch = DATA_JSON_FENCE_RE.exec(rest)) {
+    const fullFence = jsonMatch[0] ?? "";
+    if (/^```mythra-(quiz|chart|table|stats)/i.test(fullFence)) continue;
+    const raw = jsonMatch[1] ?? "";
+    const chart = parseChartJson(raw);
+    if (chart && (!best || jsonMatch.index < best.i)) {
+      best = { i: jsonMatch.index, len: fullFence.length, kind: "chart", chart };
+      break;
+    }
+    const table2 = parseTableJson(raw);
+    if (table2 && (!best || jsonMatch.index < best.i)) {
+      best = { i: jsonMatch.index, len: fullFence.length, kind: "table", table: table2 };
+      break;
+    }
+    const stats = parseStatsJson(raw);
+    if (stats && (!best || jsonMatch.index < best.i)) {
+      best = { i: jsonMatch.index, len: fullFence.length, kind: "stats", stats };
+      break;
     }
   }
   return best;
@@ -33560,6 +33832,12 @@ function parseAssistantEmbeds(text2) {
     }
     if (next.kind === "quiz") {
       out.push({ type: "quiz", quiz: next.quiz });
+    } else if (next.kind === "chart") {
+      out.push({ type: "chart", chart: next.chart });
+    } else if (next.kind === "table") {
+      out.push({ type: "table", table: next.table });
+    } else if (next.kind === "stats") {
+      out.push({ type: "stats", stats: next.stats });
     } else {
       out.push({ type: next.kind });
     }
@@ -33569,6 +33847,876 @@ function parseAssistantEmbeds(text2) {
 }
 function choiceLabel(index2) {
   return String.fromCharCode(65 + index2);
+}
+function formatChartValue(chart, value) {
+  const abs = Math.abs(value);
+  const compact = abs >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : abs >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : abs >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+  return `${chart.valuePrefix ?? ""}${compact}${chart.valueSuffix ?? chart.unit ?? ""}`;
+}
+function chartRange(data) {
+  const values = data.map((d) => d.value);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) {
+    min = min > 0 ? 0 : min - 1;
+    max = max < 0 ? 0 : max + 1;
+  }
+  return { min, max };
+}
+function lineSeries(chart) {
+  return chart.series?.length ? chart.series : [{ name: chart.title || "Series", data: chart.data }];
+}
+function chartDatumColor(datum, index2) {
+  return datum?.color ?? CHART_COLORS[index2 % CHART_COLORS.length];
+}
+function chartSeriesColor(series, index2) {
+  return series?.color ?? CHART_COLORS[index2 % CHART_COLORS.length];
+}
+function ChartHeader({ chart }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__header", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: chart.type === "donut" ? "Donut chart" : chart.type === "stacked-bar" ? "Stacked bar chart" : chart.type === "budget" ? "Budget vs actual" : `${chart.type} chart` }),
+    chart.unit ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__unit", children: chart.unit }) : null,
+    chart.title ? /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "chart-embed__title", children: chart.title }) : null,
+    chart.subtitle ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chart-embed__subtitle", children: chart.subtitle }) : null
+  ] });
+}
+function indexedChartData(data) {
+  return data.map((datum, originalIndex) => ({ datum, originalIndex }));
+}
+function indexedLineSeries(series) {
+  return series.map((item, originalIndex) => ({ series: item, originalIndex }));
+}
+function chartItemClass(base, index2, activeIndex) {
+  return `${base} ${activeIndex === index2 ? "is-active" : activeIndex != null ? "is-muted" : ""}`;
+}
+function ChartLegend({
+  chart,
+  data = indexedChartData(chart.data),
+  activeIndex,
+  onActiveIndexChange,
+  hiddenIndices,
+  onToggleVisibility,
+  showPercent = false
+}) {
+  const total = data.filter((item) => !hiddenIndices.has(item.originalIndex)).reduce((sum, item) => sum + Math.max(0, item.datum.value), 0);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: data.map(({ datum, originalIndex }) => {
+    const hidden = hiddenIndices.has(originalIndex);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: `${chartItemClass("chart-embed__legend-row", originalIndex, activeIndex)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveIndexChange(null),
+        onClick: () => onToggleVisibility(originalIndex),
+        onFocus: () => onActiveIndexChange(originalIndex),
+        onMouseEnter: () => onActiveIndexChange(originalIndex),
+        onMouseLeave: () => onActiveIndexChange(null),
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleVisibility(originalIndex);
+          }
+        },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              "aria-label": `${hidden ? "Show" : "Hide"} ${datum.label}`,
+              checked: !hidden,
+              className: "chart-embed__legend-check",
+              onChange: () => void 0,
+              onClick: (e) => e.stopPropagation(),
+              type: "checkbox"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__swatch", style: { background: chartDatumColor(datum, originalIndex) } }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__legend-label", children: datum.label }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: formatChartValue(chart, datum.value) }),
+          showPercent ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: hidden ? "Hidden" : total > 0 ? `${Math.round(Math.max(0, datum.value) / total * 100)}%` : "" }) : null
+        ]
+      },
+      `${datum.label}-${originalIndex}`
+    );
+  }) });
+}
+function LineSeriesLegend({
+  chart,
+  series,
+  activeIndex,
+  onActiveIndexChange,
+  hiddenIndices,
+  onToggleVisibility
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: series.map(({ series: item, originalIndex }) => {
+    const latest = item.data[item.data.length - 1];
+    const hidden = hiddenIndices.has(originalIndex);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: `${chartItemClass("chart-embed__legend-row", originalIndex, activeIndex)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveIndexChange(null),
+        onClick: () => onToggleVisibility(originalIndex),
+        onFocus: () => onActiveIndexChange(originalIndex),
+        onMouseEnter: () => onActiveIndexChange(originalIndex),
+        onMouseLeave: () => onActiveIndexChange(null),
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleVisibility(originalIndex);
+          }
+        },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              "aria-label": `${hidden ? "Show" : "Hide"} ${item.name}`,
+              checked: !hidden,
+              className: "chart-embed__legend-check",
+              onChange: () => void 0,
+              onClick: (e) => e.stopPropagation(),
+              type: "checkbox"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__swatch", style: { background: chartSeriesColor(item, originalIndex) } }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__legend-label", children: item.name }),
+          latest ? /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: formatChartValue(chart, latest.value) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "-" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: hidden ? "Hidden" : latest?.label ?? "" })
+        ]
+      },
+      `${item.name}-${originalIndex}`
+    );
+  }) });
+}
+function BarChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  data
+}) {
+  if (data.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "All fields are hidden." });
+  }
+  const width = 640;
+  const height = 300;
+  const left = 54;
+  const right = 18;
+  const top = 22;
+  const bottom = 54;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const rawRange = chartRange(data.map((item) => item.datum));
+  const min = Math.min(0, rawRange.min);
+  const max = Math.max(0, rawRange.max);
+  const zeroY = top + (max - Math.max(0, Math.min(max, 0))) / (max - min) * plotHeight;
+  const step = plotWidth / data.length;
+  const barWidth = Math.max(10, Math.min(44, step * 0.58));
+  const yFor = (value) => top + (max - value) / (max - min) * plotHeight;
+  const tickValues = [max, (max + min) / 2, min];
+  const showValueLabels = data.length <= 12;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__svg", role: "img", viewBox: `0 0 ${width} ${height}`, children: [
+    tickValues.map((tick, index2) => {
+      const y = yFor(tick);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__grid", x1: left, x2: width - right, y1: y, y2: y }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__axis-label", textAnchor: "end", x: left - 10, y: y + 4, children: formatChartValue(chart, tick) })
+      ] }, index2);
+    }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__axis", x1: left, x2: width - right, y1: zeroY, y2: zeroY }),
+    data.map(({ datum, originalIndex }, index2) => {
+      const x = left + index2 * step + (step - barWidth) / 2;
+      const valueY = yFor(datum.value);
+      const y = Math.min(valueY, zeroY);
+      const h2 = Math.max(2, Math.abs(zeroY - valueY));
+      const color2 = chartDatumColor(datum, originalIndex);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "g",
+        {
+          onMouseEnter: () => onActiveIndexChange(originalIndex),
+          onMouseLeave: () => onActiveIndexChange(null),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: chartItemClass("chart-embed__bar", originalIndex, activeIndex), fill: color2, height: h2, rx: "5", width: barWidth, x, y, children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label}: ${formatChartValue(chart, datum.value)}` }) }),
+            showValueLabels ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__value-label", textAnchor: "middle", x: x + barWidth / 2, y: datum.value >= 0 ? y - 6 : y + h2 + 14, children: formatChartValue(chart, datum.value) }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: x + barWidth / 2, y: height - 24, children: datum.label })
+          ]
+        },
+        `${datum.label}-${originalIndex}`
+      );
+    })
+  ] });
+}
+function StackedBarChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  series
+}) {
+  if (series.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "All fields are hidden." });
+  }
+  const labels = Array.from(new Set(series.flatMap((item) => item.series.data.map((datum) => datum.label)))).slice(0, MAX_CHART_POINTS);
+  if (!labels.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "No visible data." });
+  }
+  const width = 640;
+  const height = 300;
+  const left = 54;
+  const right = 18;
+  const top = 22;
+  const bottom = 54;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const totals = labels.map(
+    (label) => series.reduce((sum, item) => sum + Math.max(0, item.series.data.find((datum) => datum.label === label)?.value ?? 0), 0)
+  );
+  const max = Math.max(...totals, 1);
+  const step = plotWidth / labels.length;
+  const barWidth = Math.max(18, Math.min(54, step * 0.62));
+  const yFor = (value) => top + (max - value) / max * plotHeight;
+  const tickValues = [max, max / 2, 0];
+  const xLabelEvery = Math.max(1, Math.ceil(labels.length / 8));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__svg", role: "img", viewBox: `0 0 ${width} ${height}`, children: [
+    tickValues.map((tick, index2) => {
+      const y = yFor(tick);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__grid", x1: left, x2: width - right, y1: y, y2: y }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__axis-label", textAnchor: "end", x: left - 10, y: y + 4, children: formatChartValue(chart, tick) })
+      ] }, index2);
+    }),
+    labels.map((label, labelIndex) => {
+      const x = left + labelIndex * step + (step - barWidth) / 2;
+      let yCursor = top + plotHeight;
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        series.map(({ series: item, originalIndex }) => {
+          const value = Math.max(0, item.data.find((datum) => datum.label === label)?.value ?? 0);
+          if (value <= 0) return null;
+          const h2 = Math.max(2, value / max * plotHeight);
+          yCursor -= h2;
+          return /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "rect",
+            {
+              className: chartItemClass("chart-embed__bar", originalIndex, activeIndex),
+              fill: chartSeriesColor(item, originalIndex),
+              height: h2,
+              onMouseEnter: () => onActiveIndexChange(originalIndex),
+              onMouseLeave: () => onActiveIndexChange(null),
+              rx: "3",
+              width: barWidth,
+              x,
+              y: yCursor,
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${label} - ${item.name}: ${formatChartValue(chart, value)}` })
+            },
+            `${label}-${item.name}`
+          );
+        }),
+        labelIndex % xLabelEvery === 0 || labelIndex === labels.length - 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: x + barWidth / 2, y: height - 24, children: label }) : null
+      ] }, label);
+    })
+  ] });
+}
+function GroupedBarChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  series
+}) {
+  if (series.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "All fields are hidden." });
+  }
+  const labels = Array.from(new Set(series.flatMap((item) => item.series.data.map((datum) => datum.label)))).slice(0, MAX_CHART_POINTS);
+  if (!labels.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "No visible data." });
+  }
+  const width = 640;
+  const height = 300;
+  const left = 54;
+  const right = 18;
+  const top = 22;
+  const bottom = 54;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const values = series.flatMap((item) => item.series.data.map((datum) => datum.value));
+  const rawRange = chartRange(values.map((value) => ({ label: "", value })));
+  const min = Math.min(0, rawRange.min);
+  const max = Math.max(0, rawRange.max);
+  const zeroY = top + (max - Math.max(0, Math.min(max, 0))) / (max - min) * plotHeight;
+  const step = plotWidth / labels.length;
+  const groupWidth = Math.min(step * 0.76, 76);
+  const barWidth = Math.max(5, groupWidth / Math.max(1, series.length));
+  const yFor = (value) => top + (max - value) / (max - min) * plotHeight;
+  const tickValues = [max, (max + min) / 2, min];
+  const xLabelEvery = Math.max(1, Math.ceil(labels.length / 8));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__svg", role: "img", viewBox: `0 0 ${width} ${height}`, children: [
+    tickValues.map((tick, index2) => {
+      const y = yFor(tick);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__grid", x1: left, x2: width - right, y1: y, y2: y }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__axis-label", textAnchor: "end", x: left - 10, y: y + 4, children: formatChartValue(chart, tick) })
+      ] }, index2);
+    }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__axis", x1: left, x2: width - right, y1: zeroY, y2: zeroY }),
+    labels.map((label, labelIndex) => {
+      const groupX = left + labelIndex * step + (step - groupWidth) / 2;
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        series.map(({ series: item, originalIndex }, seriesIndex) => {
+          const value = item.data.find((datum) => datum.label === label)?.value ?? 0;
+          const valueY = yFor(value);
+          const y = Math.min(valueY, zeroY);
+          const h2 = Math.max(2, Math.abs(zeroY - valueY));
+          const x = groupX + seriesIndex * barWidth;
+          return /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "rect",
+            {
+              className: chartItemClass("chart-embed__bar", originalIndex, activeIndex),
+              fill: chartSeriesColor(item, originalIndex),
+              height: h2,
+              onMouseEnter: () => onActiveIndexChange(originalIndex),
+              onMouseLeave: () => onActiveIndexChange(null),
+              rx: "3",
+              width: Math.max(4, barWidth - 2),
+              x,
+              y,
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${label} - ${item.name}: ${formatChartValue(chart, value)}` })
+            },
+            `${label}-${item.name}`
+          );
+        }),
+        labelIndex % xLabelEvery === 0 || labelIndex === labels.length - 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: groupX + groupWidth / 2, y: height - 24, children: label }) : null
+      ] }, label);
+    })
+  ] });
+}
+function BudgetChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  data
+}) {
+  if (data.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "All fields are hidden." });
+  }
+  const width = 640;
+  const height = 300;
+  const left = 54;
+  const right = 18;
+  const top = 22;
+  const bottom = 54;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const max = Math.max(...data.flatMap((item) => [item.budget, item.actual]), 1);
+  const step = plotWidth / data.length;
+  const barWidth = Math.max(8, Math.min(24, step * 0.24));
+  const groupGap = Math.max(4, barWidth * 0.35);
+  const yFor = (value) => top + (max - value) / max * plotHeight;
+  const tickValues = [max, max / 2, 0];
+  const xLabelEvery = Math.max(1, Math.ceil(data.length / 8));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__svg", role: "img", viewBox: `0 0 ${width} ${height}`, children: [
+    tickValues.map((tick, index2) => {
+      const y = yFor(tick);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__grid", x1: left, x2: width - right, y1: y, y2: y }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__axis-label", textAnchor: "end", x: left - 10, y: y + 4, children: formatChartValue(chart, tick) })
+      ] }, index2);
+    }),
+    data.map((datum, index2) => {
+      const center = left + index2 * step + step / 2;
+      const budgetX = center - barWidth - groupGap / 2;
+      const actualX = center + groupGap / 2;
+      const budgetY = yFor(datum.budget);
+      const actualY = yFor(datum.actual);
+      const active = activeIndex === index2;
+      const overBudget = datum.actual > datum.budget;
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "g",
+        {
+          onMouseEnter: () => onActiveIndexChange(index2),
+          onMouseLeave: () => onActiveIndexChange(null),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "rect",
+              {
+                className: `chart-embed__bar chart-embed__bar--budget ${active ? "is-active" : activeIndex != null ? "is-muted" : ""}`,
+                fill: "#818cf8",
+                height: Math.max(2, top + plotHeight - budgetY),
+                rx: "4",
+                width: barWidth,
+                x: budgetX,
+                y: budgetY,
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label} budget: ${formatChartValue(chart, datum.budget)}` })
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "rect",
+              {
+                className: `chart-embed__bar chart-embed__bar--actual ${active ? "is-active" : activeIndex != null ? "is-muted" : ""}`,
+                fill: overBudget ? "#f43f5e" : "#22c55e",
+                height: Math.max(2, top + plotHeight - actualY),
+                rx: "4",
+                width: barWidth,
+                x: actualX,
+                y: actualY,
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label} actual: ${formatChartValue(chart, datum.actual)}` })
+              }
+            ),
+            index2 % xLabelEvery === 0 || index2 === data.length - 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: center, y: height - 24, children: datum.label }) : null
+          ]
+        },
+        `${datum.label}-${index2}`
+      );
+    })
+  ] });
+}
+function LineChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  data,
+  series
+}) {
+  const allSeries = lineSeries(chart);
+  const multiSeries = allSeries.length > 1;
+  if (multiSeries && series.length === 0 || !multiSeries && data.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "All fields are hidden." });
+  }
+  const width = 640;
+  const height = 300;
+  const left = 54;
+  const right = 20;
+  const top = 24;
+  const bottom = 54;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const renderSeries = multiSeries ? series : [{ series: { name: allSeries[0]?.name ?? "Series", data: data.map((item) => item.datum) }, originalIndex: 0 }];
+  const pointOriginalIndices = multiSeries ? [] : data.map((item) => item.originalIndex);
+  const longestSeries = renderSeries.reduce((best, item) => item.series.data.length > best.series.data.length ? item : best, renderSeries[0]);
+  const maxPoints = Math.max(1, longestSeries.series.data.length);
+  const { min, max } = chartRange(renderSeries.flatMap((item) => item.series.data));
+  const xFor = (index2) => left + (maxPoints === 1 ? plotWidth / 2 : index2 / (maxPoints - 1) * plotWidth);
+  const yFor = (value) => top + (max - value) / (max - min) * plotHeight;
+  const tickValues = [max, (max + min) / 2, min];
+  const xLabelEvery = Math.max(1, Math.ceil(longestSeries.series.data.length / 8));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__svg", role: "img", viewBox: `0 0 ${width} ${height}`, children: [
+    tickValues.map((tick, index2) => {
+      const y = yFor(tick);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "chart-embed__grid", x1: left, x2: width - right, y1: y, y2: y }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__axis-label", textAnchor: "end", x: left - 10, y: y + 4, children: formatChartValue(chart, tick) })
+      ] }, index2);
+    }),
+    renderSeries.map(({ series: item, originalIndex }) => {
+      const color2 = multiSeries ? chartSeriesColor(item, originalIndex) : void 0;
+      const points = item.data.map((datum, index2) => `${xFor(index2)},${yFor(datum.value)}`).join(" ");
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "polyline",
+        {
+          className: multiSeries ? chartItemClass("chart-embed__line", originalIndex, activeIndex) : "chart-embed__line",
+          onMouseEnter: () => multiSeries ? onActiveIndexChange(originalIndex) : void 0,
+          onMouseLeave: () => multiSeries ? onActiveIndexChange(null) : void 0,
+          points,
+          style: color2 ? { stroke: color2 } : void 0
+        },
+        `${item.name}-line-${originalIndex}`
+      );
+    }),
+    !multiSeries && activeIndex != null && pointOriginalIndices.includes(activeIndex) ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "line",
+      {
+        className: "chart-embed__hover-line",
+        x1: xFor(pointOriginalIndices.indexOf(activeIndex)),
+        x2: xFor(pointOriginalIndices.indexOf(activeIndex)),
+        y1: top,
+        y2: top + plotHeight
+      }
+    ) : null,
+    longestSeries.series.data.map(
+      (datum, index2) => index2 % xLabelEvery === 0 || index2 === longestSeries.series.data.length - 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: xFor(index2), y: height - 24, children: datum.label }, `${datum.label}-${index2}`) : null
+    ),
+    renderSeries.map(
+      ({ series: item, originalIndex }) => item.data.map((datum, index2) => {
+        const activeTarget = multiSeries ? originalIndex : pointOriginalIndices[index2] ?? index2;
+        const color2 = multiSeries ? chartSeriesColor(item, originalIndex) : void 0;
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "g",
+          {
+            onMouseEnter: () => onActiveIndexChange(activeTarget),
+            onMouseLeave: () => onActiveIndexChange(null),
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "circle",
+              {
+                className: chartItemClass("chart-embed__point", activeTarget, activeIndex),
+                cx: xFor(index2),
+                cy: yFor(datum.value),
+                r: "4.5",
+                style: color2 ? { stroke: color2 } : void 0,
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${multiSeries ? `${item.name} - ` : ""}${datum.label}: ${formatChartValue(chart, datum.value)}` })
+              }
+            )
+          },
+          `${item.name}-${datum.label}-${activeTarget}`
+        );
+      })
+    )
+  ] });
+}
+function polarToCartesian(cx, cy, r, angle) {
+  const rad = (angle - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+function arcPath(cx, cy, r, startAngle, endAngle) {
+  const start = polarToCartesian(cx, cy, r, endAngle);
+  const end = polarToCartesian(cx, cy, r, startAngle);
+  const largeArc = endAngle - startAngle <= 180 ? "0" : "1";
+  return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y} Z`;
+}
+function PieChart({
+  chart,
+  activeIndex,
+  onActiveIndexChange,
+  data
+}) {
+  const positiveData = data.filter((item) => item.datum.value > 0);
+  if (positiveData.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__empty", children: "No visible positive values." });
+  }
+  const total = positiveData.reduce((sum, item) => sum + item.datum.value, 0);
+  let angle = 0;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__pie", role: "img", viewBox: "0 0 240 240", children: [
+    positiveData.length === 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "circle",
+      {
+        className: chartItemClass("chart-embed__slice", positiveData[0].originalIndex, activeIndex),
+        cx: "120",
+        cy: "120",
+        fill: chartDatumColor(positiveData[0].datum, positiveData[0].originalIndex),
+        onMouseEnter: () => onActiveIndexChange(positiveData[0].originalIndex),
+        onMouseLeave: () => onActiveIndexChange(null),
+        r: "104",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${positiveData[0].datum.label}: ${formatChartValue(chart, positiveData[0].datum.value)} (100%)` })
+      }
+    ) : positiveData.map(({ datum, originalIndex }) => {
+      const span = datum.value / total * 360;
+      const start = angle;
+      const end = angle + span;
+      angle = end;
+      const color2 = chartDatumColor(datum, originalIndex);
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "path",
+        {
+          className: chartItemClass("chart-embed__slice", originalIndex, activeIndex),
+          d: arcPath(120, 120, 104, start, end),
+          fill: color2,
+          onMouseEnter: () => onActiveIndexChange(originalIndex),
+          onMouseLeave: () => onActiveIndexChange(null),
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label}: ${formatChartValue(chart, datum.value)} (${Math.round(datum.value / total * 100)}%)` })
+        },
+        `${datum.label}-${originalIndex}`
+      );
+    }),
+    chart.type === "donut" ? /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { className: "chart-embed__donut-hole", cx: "120", cy: "120", r: "58" }) : null
+  ] });
+}
+function BudgetLegend({
+  chart,
+  data,
+  activeIndex,
+  onActiveIndexChange,
+  hiddenIndices,
+  onToggleVisibility
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: data.map((datum, index2) => {
+    const hidden = hiddenIndices.has(index2);
+    const delta = datum.actual - datum.budget;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: `${chartItemClass("chart-embed__legend-row", index2, activeIndex)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveIndexChange(null),
+        onClick: () => onToggleVisibility(index2),
+        onFocus: () => onActiveIndexChange(index2),
+        onMouseEnter: () => onActiveIndexChange(index2),
+        onMouseLeave: () => onActiveIndexChange(null),
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleVisibility(index2);
+          }
+        },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              "aria-label": `${hidden ? "Show" : "Hide"} ${datum.label}`,
+              checked: !hidden,
+              className: "chart-embed__legend-check",
+              onChange: () => void 0,
+              onClick: (e) => e.stopPropagation(),
+              type: "checkbox"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__swatch chart-embed__swatch--split" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chart-embed__legend-label", children: datum.label }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: formatChartValue(chart, datum.actual) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: delta > 0 ? "chart-embed__delta is-over" : "chart-embed__delta is-under", children: delta === 0 ? "On budget" : `${delta > 0 ? "+" : ""}${formatChartValue(chart, delta)}` })
+        ]
+      },
+      `${datum.label}-${index2}`
+    );
+  }) });
+}
+function ChartTimeRangeControls({
+  maxPoints,
+  value,
+  onChange
+}) {
+  if (maxPoints <= 6) return null;
+  const options = [3, 6, 12].filter((count) => count < maxPoints);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__range-controls", "aria-label": "Chart time range", children: [
+    options.map((count) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: value === count ? "is-active" : "",
+        onClick: () => onChange(count),
+        type: "button",
+        children: [
+          "Last ",
+          count
+        ]
+      },
+      count
+    )),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: value === "all" ? "is-active" : "", onClick: () => onChange("all"), type: "button", children: "All" })
+  ] });
+}
+function ChartDetails({
+  chart,
+  activeIndex,
+  data,
+  series,
+  budgetData
+}) {
+  const [renderedActiveIndex, setRenderedActiveIndex] = reactExports.useState(activeIndex);
+  const [isVisible, setIsVisible] = reactExports.useState(activeIndex != null);
+  const contentRef = reactExports.useRef(null);
+  const [contentHeight, setContentHeight] = reactExports.useState(0);
+  reactExports.useEffect(() => {
+    if (activeIndex != null) {
+      setRenderedActiveIndex(activeIndex);
+      const id22 = window.setTimeout(() => setIsVisible(true), 10);
+      return () => window.clearTimeout(id22);
+    }
+    setIsVisible(false);
+    const id2 = window.setTimeout(() => setRenderedActiveIndex(null), 180);
+    return () => window.clearTimeout(id2);
+  }, [activeIndex]);
+  reactExports.useEffect(() => {
+    if (!contentRef.current) return;
+    setContentHeight(contentRef.current.scrollHeight);
+  }, [renderedActiveIndex]);
+  if (renderedActiveIndex == null) return null;
+  let content2 = null;
+  if (chart.type === "budget") {
+    const item = budgetData[renderedActiveIndex];
+    if (!item) return null;
+    const delta = item.actual - item.budget;
+    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        "Budget ",
+        formatChartValue(chart, item.budget),
+        " · Actual ",
+        formatChartValue(chart, item.actual)
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: delta > 0 ? "chart-embed__delta is-over" : "chart-embed__delta is-under", children: delta === 0 ? "On budget" : `${delta > 0 ? "Over" : "Under"} by ${formatChartValue(chart, Math.abs(delta))}` }),
+      item.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  } else if (chart.type === "line" || chart.type === "stacked-bar") {
+    const item = series.find((candidate) => candidate.originalIndex === renderedActiveIndex);
+    if (!item) return null;
+    const latest = item.series.data[item.series.data.length - 1];
+    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.series.name }),
+      latest ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        "Latest ",
+        latest.label,
+        ": ",
+        formatChartValue(chart, latest.value)
+      ] }) : null,
+      latest?.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  } else {
+    const item = data.find((candidate) => candidate.originalIndex === renderedActiveIndex);
+    if (!item) return null;
+    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.datum.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: formatChartValue(chart, item.datum.value) }),
+      item.datum.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: `chart-embed__details-shell${isVisible ? " is-open" : ""}`,
+      "aria-hidden": !isVisible,
+      style: { height: isVisible ? contentHeight : 0 },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__details-measure", ref: contentRef, children: content2 })
+    }
+  );
+}
+function ChartMessageEmbed({ chart }) {
+  const [activeIndex, setActiveIndex] = reactExports.useState(null);
+  const [hiddenIndices, setHiddenIndices] = reactExports.useState(() => /* @__PURE__ */ new Set());
+  const maxRangePoints = chart.type === "budget" ? chart.budgetData?.length ?? 0 : chart.type === "line" || chart.type === "stacked-bar" || chart.series?.length ? Math.max(...lineSeries(chart).map((item) => item.data.length), 0) : chart.data.length;
+  const [range, setRange] = reactExports.useState("all");
+  const sliceStart = range === "all" ? 0 : Math.max(0, maxRangePoints - range);
+  const allData = indexedChartData(range === "all" ? chart.data : chart.data.slice(sliceStart));
+  const visibleData = allData.filter((item) => !hiddenIndices.has(item.originalIndex));
+  const series = chart.type === "line" || chart.type === "stacked-bar" || chart.series?.length ? indexedLineSeries(lineSeries(chart)) : [];
+  const rangedSeries = series.map((item) => ({
+    ...item,
+    series: {
+      ...item.series,
+      data: range === "all" ? item.series.data : item.series.data.slice(Math.max(0, item.series.data.length - range))
+    }
+  }));
+  const visibleSeries = rangedSeries.filter((item) => !hiddenIndices.has(item.originalIndex));
+  const budgetData = chart.type === "budget" ? range === "all" ? chart.budgetData ?? [] : (chart.budgetData ?? []).slice(sliceStart) : [];
+  const visibleBudgetData = budgetData.filter((_2, index2) => !hiddenIndices.has(index2));
+  const lineHasMultipleSeries = chart.type === "line" && series.length > 1;
+  const stackedHasSeries = chart.type === "stacked-bar" && series.length > 0;
+  const groupedBarHasSeries = chart.type === "bar" && series.length > 1;
+  const legendData = chart.type === "pie" || chart.type === "donut" ? allData.filter((item) => item.datum.value > 0) : allData;
+  const onToggleVisibility = (index2) => {
+    setHiddenIndices((current) => {
+      const next = new Set(current);
+      if (next.has(index2)) {
+        next.delete(index2);
+      } else {
+        next.add(index2);
+      }
+      setActiveIndex(null);
+      return next;
+    });
+  };
+  const chartProps = { chart, activeIndex, onActiveIndexChange: setActiveIndex, hiddenIndices, onToggleVisibility };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--chart", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ChartHeader, { chart }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ChartTimeRangeControls, { maxPoints: maxRangePoints, value: range, onChange: setRange }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chart-embed__body chart-embed__body--${chart.type}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__visual", children: [
+        chart.type === "bar" && groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(GroupedBarChart, { ...chartProps, series: visibleSeries }) : null,
+        chart.type === "bar" && !groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(BarChart, { ...chartProps, data: visibleData }) : null,
+        chart.type === "line" ? /* @__PURE__ */ jsxRuntimeExports.jsx(LineChart, { ...chartProps, data: visibleData, series: visibleSeries }) : null,
+        chart.type === "stacked-bar" ? /* @__PURE__ */ jsxRuntimeExports.jsx(StackedBarChart, { ...chartProps, series: visibleSeries }) : null,
+        chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetChart, { ...chartProps, data: visibleBudgetData }) : null,
+        chart.type === "pie" || chart.type === "donut" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PieChart, { ...chartProps, data: visibleData }) : null
+      ] }),
+      chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetLegend, { ...chartProps, data: budgetData }) : lineHasMultipleSeries || stackedHasSeries || groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(LineSeriesLegend, { ...chartProps, series }) : legendData.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        ChartLegend,
+        {
+          ...chartProps,
+          data: legendData,
+          showPercent: chart.type === "pie" || chart.type === "donut"
+        }
+      ) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ChartDetails, { chart, activeIndex, data: allData, series, budgetData })
+  ] });
+}
+function formatTableCell(value) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(void 0, { maximumFractionDigits: 2 });
+  }
+  return value;
+}
+function compareTableValues(a, b) {
+  const am = monthSortValue(a);
+  const bm = monthSortValue(b);
+  if (am != null && bm != null) return am - bm;
+  const an = typeof a === "number" ? a : Number(String(a ?? "").replace(/[$,%\s,]/g, ""));
+  const bn = typeof b === "number" ? b : Number(String(b ?? "").replace(/[$,%\s,]/g, ""));
+  if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+  return String(a ?? "").localeCompare(String(b ?? ""), void 0, { numeric: true, sensitivity: "base" });
+}
+function TableMessageEmbed({ table: table2 }) {
+  const [sort, setSort] = reactExports.useState(null);
+  const [hiddenKeys, setHiddenKeys] = reactExports.useState(() => /* @__PURE__ */ new Set());
+  const visibleColumns = table2.columns.filter((column) => !hiddenKeys.has(column.key));
+  const tableMinWidth = Math.max(
+    560,
+    visibleColumns.reduce((sum, column) => {
+      const labelWidth = column.label.length * 9 + 48;
+      return sum + (column.align === "right" ? Math.max(116, labelWidth) : Math.max(104, Math.min(220, labelWidth)));
+    }, 0)
+  );
+  const rows = reactExports.useMemo(() => {
+    if (!sort) return table2.rows;
+    return [...table2.rows].sort((a, b) => {
+      const av = a[sort.key];
+      const bv = b[sort.key];
+      const comparison = compareTableValues(av, bv);
+      return sort.direction === "asc" ? comparison : -comparison;
+    });
+  }, [sort, table2.rows]);
+  const toggleSort = (key) => {
+    setSort(
+      (current) => current?.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" }
+    );
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--table", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Interactive table" }),
+      table2.title ? /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "chart-embed__title", children: table2.title }) : null,
+      table2.subtitle ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chart-embed__subtitle", children: table2.subtitle }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "data-table__column-controls", children: table2.columns.map((column) => {
+      const hidden = hiddenKeys.has(column.key);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: hidden ? "is-hidden" : "",
+          onClick: () => setHiddenKeys((current) => {
+            const next = new Set(current);
+            if (next.has(column.key)) next.delete(column.key);
+            else next.add(column.key);
+            return next;
+          }),
+          type: "button",
+          children: [
+            hidden ? "Show" : "Hide",
+            " ",
+            column.label
+          ]
+        },
+        column.key
+      );
+    }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "data-table__wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: "data-table", style: { minWidth: tableMinWidth }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("tr", { children: visibleColumns.map((column) => /* @__PURE__ */ jsxRuntimeExports.jsx("th", { className: `is-${column.align ?? "left"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: () => toggleSort(column.key), type: "button", children: [
+        column.label,
+        sort?.key === column.key ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: sort.direction === "asc" ? " ↑" : " ↓" }) : null
+      ] }) }, column.key)) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: rows.map((row, rowIndex) => /* @__PURE__ */ jsxRuntimeExports.jsx("tr", { children: visibleColumns.map((column) => /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: `is-${column.align ?? "left"}`, children: formatTableCell(row[column.key] ?? "") }, column.key)) }, rowIndex)) })
+    ] }) })
+  ] });
+}
+function StatsMessageEmbed({ stats }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--stats", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Summary" }),
+      stats.title ? /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "chart-embed__title", children: stats.title }) : null,
+      stats.subtitle ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chart-embed__subtitle", children: stats.subtitle }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stats-embed__grid", children: stats.cards.map((card) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `stats-embed__card is-${card.tone ?? "neutral"}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: card.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: card.value }),
+      card.delta ? /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: card.delta }) : null,
+      card.detail ? /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: card.detail }) : null
+    ] }, `${card.label}-${card.value}`)) })
+  ] });
 }
 function quizAnswersText(quiz, selected) {
   const lines = ["Quiz answers:"];
@@ -33584,20 +34732,27 @@ function quizAnswersText(quiz, selected) {
 function QuizMessageEmbed({
   quiz,
   submitDisabled,
+  completedSelected,
   onSubmitQuizAnswers
 }) {
-  const [selected, setSelected] = reactExports.useState({});
-  const [submitted, setSubmitted] = reactExports.useState(false);
+  const locked = completedSelected != null;
+  const [selected, setSelected] = reactExports.useState(completedSelected ?? {});
+  const [submitted, setSubmitted] = reactExports.useState(locked);
   const answeredCount = reactExports.useMemo(
     () => quiz.questions.filter((_2, index2) => selected[index2] != null).length,
     [quiz.questions, selected]
   );
   const complete = answeredCount === quiz.questions.length;
   reactExports.useEffect(() => {
-    if (!complete || submitted || submitDisabled) return;
+    if (!completedSelected) return;
+    setSelected(completedSelected);
+    setSubmitted(true);
+  }, [completedSelected]);
+  reactExports.useEffect(() => {
+    if (locked || !complete || submitted || submitDisabled) return;
     setSubmitted(true);
     onSubmitQuizAnswers(quizAnswersText(quiz, selected));
-  }, [complete, onSubmitQuizAnswers, quiz, selected, submitDisabled, submitted]);
+  }, [complete, locked, onSubmitQuizAnswers, quiz, selected, submitDisabled, submitted]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--quiz", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "quiz-embed__header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-embed__label", children: "Multiple choice quiz" }),
@@ -33609,7 +34764,7 @@ function QuizMessageEmbed({
       ] })
     ] }),
     quiz.title ? /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "quiz-embed__title", children: quiz.title }) : null,
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__questions", children: quiz.questions.map((question, questionIndex) => /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { className: "quiz-embed__question", disabled: submitted, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__questions", children: quiz.questions.map((question, questionIndex) => /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { className: "quiz-embed__question", disabled: submitted || locked, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("legend", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
           questionIndex + 1,
@@ -33639,7 +34794,7 @@ function QuizMessageEmbed({
         );
       }) })
     ] }, `${questionIndex}-${question.question}`)) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__footer", children: submitted ? "Answers sent." : complete && submitDisabled ? "Answers selected. Sending when the response finishes..." : complete ? "Sending answers..." : "Select one answer for each question." })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "quiz-embed__footer", children: locked ? "Quiz completed." : submitted ? "Answers sent." : complete && submitDisabled ? "Answers selected. Sending when the response finishes..." : complete ? "Sending answers..." : "Select one answer for each question." })
   ] });
 }
 function AssistantMessageContent({
@@ -33651,6 +34806,7 @@ function AssistantMessageContent({
   onWebSearchChange,
   webSearchDisabled = false,
   quizSubmitDisabled = false,
+  completedQuizSelections,
   onSubmitQuizAnswers
 }) {
   const segments = parseAssistantEmbeds(text2);
@@ -33686,9 +34842,20 @@ function AssistantMessageContent({
         i
       );
     }
+    if (seg.type === "chart") {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(ChartMessageEmbed, { chart: seg.chart }, i);
+    }
+    if (seg.type === "table") {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(TableMessageEmbed, { table: seg.table }, i);
+    }
+    if (seg.type === "stats") {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(StatsMessageEmbed, { stats: seg.stats }, i);
+    }
+    const quizIndex = segments.slice(0, i).filter((candidate) => candidate.type === "quiz").length;
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
       QuizMessageEmbed,
       {
+        completedSelected: completedQuizSelections?.[quizIndex],
         onSubmitQuizAnswers,
         quiz: seg.quiz,
         submitDisabled: quizSubmitDisabled
@@ -33748,6 +34915,33 @@ function getCopyableMessageText(content2) {
   }
   return s.trim();
 }
+function parseSubmittedQuizSelections(content2) {
+  if (!content2.trimStart().startsWith("Quiz answers:")) return null;
+  const selected = {};
+  const answerRe = /^Answer:\s*([A-H?])\./gim;
+  let questionIndex = 0;
+  for (let match = answerRe.exec(content2); match; match = answerRe.exec(content2)) {
+    const label = match[1]?.toUpperCase();
+    if (label && label !== "?") {
+      selected[questionIndex] = label.charCodeAt(0) - 65;
+    }
+    questionIndex += 1;
+  }
+  return Object.keys(selected).length > 0 ? selected : null;
+}
+function completedQuizSelectionsAfterMessage(messages, assistantMessageId) {
+  const messageIndex = messages.findIndex((message) => message.id === assistantMessageId);
+  if (messageIndex < 0) return void 0;
+  for (let i = messageIndex + 1; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!message) break;
+    if (message.role === "assistant") return void 0;
+    if (message.role !== "user") continue;
+    const selected = parseSubmittedQuizSelections(message.content);
+    return selected ? { 0: selected } : void 0;
+  }
+  return void 0;
+}
 function attachmentKind(mimeType) {
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("video/")) return "video";
@@ -33790,6 +34984,24 @@ function formatTokensShort(n) {
 }
 function formatTokensExact(n) {
   return Math.max(0, Math.round(n)).toLocaleString();
+}
+function formatUsdEstimate(value) {
+  if (!Number.isFinite(value)) return "$0.00";
+  if (value === 0) return "$0.00";
+  if (value < 1e-6) return "<$0.000001";
+  if (value < 0.01) return `$${value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  return `$${value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}`;
+}
+function messageCostTitle(cost) {
+  return [
+    `Estimated response cost: ${cost.display}`,
+    `Model: ${cost.model}`,
+    `Input/context/tool tokens: ${formatTokensExact(cost.inputTokens)}`,
+    `Completion tokens: ${formatTokensExact(cost.outputTokens)}`,
+    cost.reasoningTokens != null ? `Reasoning tokens: ${formatTokensExact(cost.reasoningTokens)}` : null,
+    `Total reported tokens: ${formatTokensExact(cost.totalTokens)}`,
+    cost.note
+  ].filter(Boolean).join("\n");
 }
 function ChatContextMeter({ used, limit }) {
   const safeLimit = Math.max(limit, 1);
@@ -34270,10 +35482,12 @@ function ChatPanel({
   selectedProviderLabel,
   selectedProviderKind,
   selectedModel,
+  modelPricing,
   openRouterReasoningEffort,
   openRouterReasoningSupported,
   onOpenRouterReasoningEffortChange,
   openRouterCredits,
+  showModelOutputCosts,
   sessionMode,
   isWizard = false,
   isNexus = false,
@@ -34310,8 +35524,12 @@ function ChatPanel({
   const innerRef = reactExports.useRef(null);
   const bottomRef = reactExports.useRef(null);
   const textareaRef = reactExports.useRef(null);
+  const sendButtonRef = reactExports.useRef(null);
   const copyToastTimerRef = reactExports.useRef(null);
+  const sendCostTooltipTimerRef = reactExports.useRef(null);
   const [copiedMessageId, setCopiedMessageId] = reactExports.useState(null);
+  const [sendCostTooltipOpen, setSendCostTooltipOpen] = reactExports.useState(false);
+  const [sendCostTooltipAnchor, setSendCostTooltipAnchor] = reactExports.useState({ top: 0, left: 0 });
   const contextUsedEstimate = reactExports.useMemo(() => {
     const threadRough = roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS;
     const draftRough = roughTokensForDraft(input, attachments);
@@ -34319,6 +35537,85 @@ function ChatPanel({
     if (lastTokenUsage == null) return rough;
     return Math.max(rough, lastTokenUsage.totalTokens);
   }, [attachments, chatMessages, input, lastTokenUsage]);
+  const draftCostTooltip = reactExports.useMemo(() => {
+    if (selectedProviderKind !== "openrouter") return null;
+    const inputTokens = roughTokensForDraft(input, attachments);
+    if (inputTokens <= 0) return null;
+    const promptRate = Number(modelPricing?.prompt ?? NaN);
+    const requestRate = Number(modelPricing?.request ?? 0);
+    const modelLabel = selectedModel || "OpenRouter model";
+    if (!Number.isFinite(promptRate)) {
+      return {
+        heading: "Cost estimate unavailable",
+        rows: [
+          { label: "Model", value: modelLabel },
+          { label: "Draft tokens", value: formatTokensExact(inputTokens) }
+        ],
+        note: "OpenRouter did not return prompt pricing for this model.",
+        title: `Cost estimate unavailable
+Model: ${modelLabel}
+Draft tokens: ${formatTokensExact(inputTokens)}
+OpenRouter did not return prompt pricing for this model.`,
+        unavailable: true
+      };
+    }
+    const requestCost = Number.isFinite(requestRate) ? requestRate : 0;
+    const total = inputTokens * promptRate + requestCost;
+    const display = formatUsdEstimate(total);
+    return {
+      heading: "Estimated draft input cost",
+      rows: [
+        { label: "Cost", value: display },
+        { label: "Model", value: modelLabel },
+        { label: "Draft tokens", value: formatTokensExact(inputTokens) }
+      ],
+      note: "Excludes reply, reasoning, and tool-call tokens.",
+      title: `Estimated draft input cost: ${display}
+Model: ${modelLabel}
+Draft tokens: ${formatTokensExact(inputTokens)}
+Excludes reply, reasoning, and tool-call tokens.`
+    };
+  }, [attachments, input, modelPricing?.prompt, modelPricing?.request, selectedModel, selectedProviderKind]);
+  const sendButtonTitle = draftCostTooltip ? `Send
+${draftCostTooltip.title}` : "Send";
+  const queueSendButtonTitle = draftCostTooltip ? `Queue message for next teammate turn
+${draftCostTooltip.title}` : "Queue message for next teammate turn";
+  const clearSendCostTooltipTimer = reactExports.useCallback(() => {
+    if (sendCostTooltipTimerRef.current != null) {
+      clearTimeout(sendCostTooltipTimerRef.current);
+      sendCostTooltipTimerRef.current = null;
+    }
+  }, []);
+  const updateSendCostTooltipAnchor = reactExports.useCallback(() => {
+    const el = sendButtonRef.current;
+    if (!el) return;
+    const b = el.getBoundingClientRect();
+    setSendCostTooltipAnchor({ top: b.top, left: b.left + b.width / 2 });
+  }, []);
+  const showSendCostTooltip = reactExports.useCallback(() => {
+    if (!draftCostTooltip) return;
+    clearSendCostTooltipTimer();
+    updateSendCostTooltipAnchor();
+    setSendCostTooltipOpen(true);
+  }, [clearSendCostTooltipTimer, draftCostTooltip, updateSendCostTooltipAnchor]);
+  const scheduleHideSendCostTooltip = reactExports.useCallback(() => {
+    clearSendCostTooltipTimer();
+    sendCostTooltipTimerRef.current = setTimeout(() => setSendCostTooltipOpen(false), 120);
+  }, [clearSendCostTooltipTimer]);
+  reactExports.useLayoutEffect(() => {
+    if (!sendCostTooltipOpen) return;
+    updateSendCostTooltipAnchor();
+    const onReposition = () => updateSendCostTooltipAnchor();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [sendCostTooltipOpen, updateSendCostTooltipAnchor]);
+  reactExports.useEffect(() => {
+    if (!draftCostTooltip) setSendCostTooltipOpen(false);
+  }, [draftCostTooltip]);
   const userPinnedToBottomRef = reactExports.useRef(true);
   const scrollToBottomHard = reactExports.useCallback(() => {
     const node2 = scrollRef.current;
@@ -34389,6 +35686,7 @@ function ChatPanel({
   reactExports.useEffect(() => {
     return () => {
       if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+      if (sendCostTooltipTimerRef.current) clearTimeout(sendCostTooltipTimerRef.current);
     };
   }, []);
   const threadHeadKey = timeline.length === 0 ? "__empty__" : timeline[0].id;
@@ -34536,6 +35834,31 @@ function ChatPanel({
     ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__bg-scrim", "aria-hidden": true })
   ] }) : null;
+  const sendCostTooltipPopover = sendCostTooltipOpen && draftCostTooltip && typeof document !== "undefined" && reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: `chat-send-cost-popover${draftCostTooltip.unavailable ? " is-unavailable" : ""}`,
+        onMouseEnter: showSendCostTooltip,
+        onMouseLeave: scheduleHideSendCostTooltip,
+        role: "tooltip",
+        style: {
+          left: sendCostTooltipAnchor.left,
+          top: sendCostTooltipAnchor.top - 10,
+          transform: "translate(-50%, -100%)"
+        },
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-send-cost-popover__inner", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-send-cost-popover__heading", children: draftCostTooltip.heading }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-send-cost-popover__rows", children: draftCostTooltip.rows.map((row) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-send-cost-popover__row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: row.label }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: row.value })
+          ] }, row.label)) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-send-cost-popover__note", children: draftCostTooltip.note })
+        ] })
+      }
+    ),
+    document.body
+  );
   const wizardHubScrollInner = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-scroll__inner wizard-hub-scroll__inner", ref: innerRef, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-scroll__stack", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-empty wizard-hub-empty", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-empty__icon chat-empty__icon--wizard-hat", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "44", height: "44", viewBox: "0 0 44 44", fill: "none", children: [
@@ -34626,6 +35949,7 @@ function ChatPanel({
             message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
               AssistantMessageContent,
               {
+                completedQuizSelections: completedQuizSelectionsAfterMessage(chatMessages, message.id),
                 onSessionModeToggle,
                 onSubmitQuizAnswers,
                 onWebSearchChange,
@@ -34636,7 +35960,11 @@ function ChatPanel({
                 webSearch,
                 webSearchDisabled
               }
-            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null,
+            showModelOutputCosts && message.role === "assistant" && message.costEstimate ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-bubble__cost", title: messageCostTitle(message.costEstimate), children: [
+              "Estimated cost: ",
+              message.costEstimate.display
+            ] }) : null
           ]
         },
         entry.id
@@ -34953,11 +36281,16 @@ function ChatPanel({
             nexusRelayQueueDuringStream ? /* @__PURE__ */ jsxRuntimeExports.jsx(
               "button",
               {
+                ref: sendButtonRef,
                 className: "chat-compose__send chat-compose__send--alongside-stop",
                 disabled: input.trim().length === 0 && attachments.length === 0,
-                onClick: onSend,
+                onBlur: scheduleHideSendCostTooltip,
+                onFocus: showSendCostTooltip,
+                onMouseEnter: showSendCostTooltip,
+                onMouseLeave: scheduleHideSendCostTooltip,
+                onClick: () => onSend(),
                 type: "button",
-                title: "Queue message for next teammate turn",
+                title: queueSendButtonTitle,
                 children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
               }
             ) : null,
@@ -34965,16 +36298,22 @@ function ChatPanel({
           ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
+              ref: sendButtonRef,
               className: "chat-compose__send",
               disabled: input.trim().length === 0 && attachments.length === 0,
-              onClick: onSend,
+              onBlur: scheduleHideSendCostTooltip,
+              onFocus: showSendCostTooltip,
+              onMouseEnter: showSendCostTooltip,
+              onMouseLeave: scheduleHideSendCostTooltip,
+              onClick: () => onSend(),
               type: "button",
-              title: "Send",
+              title: sendButtonTitle,
               children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
             }
           )
         ] })
-      ] })
+      ] }),
+      sendCostTooltipPopover
     ] })
   ] });
 }
@@ -35983,6 +37322,7 @@ const CUSTOMIZABLE_THEME_TOKEN_KEYS = [
   "--bg-elevated",
   "--panel",
   "--panel-strong",
+  "--terminal-bg",
   "--line",
   "--line-strong",
   "--text-0",
@@ -36460,6 +37800,8 @@ function SettingsPanel({
   focusSearchSettingsKey = 0
 }) {
   const [themeSectionExpanded, setThemeSectionExpanded] = reactExports.useState(false);
+  const [connectionDetailsExpanded, setConnectionDetailsExpanded] = reactExports.useState(false);
+  const [webSearchDetailsExpanded, setWebSearchDetailsExpanded] = reactExports.useState(false);
   const [chatBgBusy, setChatBgBusy] = reactExports.useState(false);
   const [chatBgError, setChatBgError] = reactExports.useState(null);
   const [chatBgCustomFocus, setChatBgCustomFocus] = reactExports.useState(false);
@@ -36488,6 +37830,8 @@ function SettingsPanel({
   const activeThemeLabel = getThemeName(settings.ui.themeId);
   const updateAvailable = updateCheck?.ok === true && updateCheck.updateAvailable;
   const updateDownloadName = updateCheck?.ok === true ? updateCheck.downloadAsset?.name : void 0;
+  const selectedProviderLabel = providerOptions$3.find((option) => option.value === settings.selectedProvider)?.label ?? settings.selectedProvider;
+  const activeSearchProviderLabel = searchProviderOptions.find((option) => option.value === activeSearchProvider)?.label ?? activeSearchProvider;
   const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
   const chatBgSelectValue = settings.ui.chatThreadBackgroundPreset === "mystic" ? "mystic" : settings.ui.chatThreadBackgroundPath || chatBgCustomFocus ? "custom" : "none";
   const updateProvider = (patch2, opts) => {
@@ -36518,7 +37862,7 @@ function SettingsPanel({
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "settings-panel__subtitle", children: "Provider, tools, and preferences" })
     ] }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-scroll", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section settings-section--app-updates", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "App Updates" }),
           onOpenAppUpdatesInfo ? /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -36566,7 +37910,7 @@ function SettingsPanel({
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section settings-section--connection", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Connection" }),
           onOpenConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -36583,55 +37927,6 @@ function SettingsPanel({
               ] })
             }
           ) : null
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "settings-connection-provider-label", children: "Provider" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            AppSelect,
-            {
-              ariaLabelledBy: "settings-connection-provider-label",
-              options: providerOptions$3,
-              value: settings.selectedProvider,
-              onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-option", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `chat-panel__web-toggle settings-option__toggle ${settings.ui.showOpenRouterCredits ? "is-on" : ""}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-option__copy", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__label", children: "OpenRouter credits" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__hint", children: "Show remaining credits in the chat header when OpenRouter is active." })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              checked: settings.ui.showOpenRouterCredits,
-              onChange: (e) => onChange({
-                ...settings,
-                ui: {
-                  ...settings.ui,
-                  showOpenRouterCredits: e.target.checked
-                }
-              }),
-              type: "checkbox"
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
-        ] }) }),
-        isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Base URL" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => updateProvider({ baseUrl: e.target.value }), value: provider.baseUrl })
-        ] }) : null,
-        isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Ollama uses its local server and does not need an API key." }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isOpenRouter ? "API Key" : "Server Key" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              onChange: (e) => updateProvider({ apiKey: e.target.value }),
-              placeholder: isOpenRouter ? "sk-or-v1-..." : "lm-studio",
-              type: "password",
-              value: provider.apiKey
-            }
-          )
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field-row", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
@@ -36669,7 +37964,145 @@ function SettingsPanel({
           isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--secondary field-row__button", onClick: onRefreshModels, type: "button", children: "Test + Refresh" }) : null
         ] }),
         isLmStudio && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start the LM Studio server and load a model first." }),
-        isOllama && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start Ollama and pull a model first." })
+        isOllama && modelOptions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "No models loaded yet. Start Ollama and pull a model first." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `chat-thread-options chat-thread-options--settings chat-thread-options--connection ${connectionDetailsExpanded ? "is-expanded" : ""}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "chat-thread-options__header",
+                  onClick: () => setConnectionDetailsExpanded((v2) => !v2),
+                  type: "button",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "svg",
+                        {
+                          className: "chat-thread-options__chevron",
+                          width: "12",
+                          height: "12",
+                          viewBox: "0 0 12 12",
+                          fill: "none",
+                          "aria-hidden": true,
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "path",
+                            {
+                              d: "M4 2.5L7.5 6 4 9.5",
+                              stroke: "currentColor",
+                              strokeWidth: "1.4",
+                              strokeLinecap: "round",
+                              strokeLinejoin: "round"
+                            }
+                          )
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Connection details" })
+                    ] }),
+                    !connectionDetailsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__badge", children: selectedProviderLabel }) : null
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: connectionDetailsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                motion.div,
+                {
+                  initial: { height: 0, opacity: 0 },
+                  animate: { height: "auto", opacity: 1 },
+                  exit: { height: 0, opacity: 0 },
+                  transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                  style: { overflow: "hidden" },
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__body", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "settings-connection-provider-label", children: "Provider" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        AppSelect,
+                        {
+                          ariaLabelledBy: "settings-connection-provider-label",
+                          options: providerOptions$3,
+                          value: settings.selectedProvider,
+                          onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-option", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "label",
+                      {
+                        className: `chat-panel__web-toggle settings-option__toggle ${settings.ui.showOpenRouterCredits ? "is-on" : ""}`,
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-option__copy", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__label", children: "OpenRouter credits" }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__hint", children: "Show remaining credits in the chat header when OpenRouter is active." })
+                          ] }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "input",
+                            {
+                              checked: settings.ui.showOpenRouterCredits,
+                              onChange: (e) => onChange({
+                                ...settings,
+                                ui: {
+                                  ...settings.ui,
+                                  showOpenRouterCredits: e.target.checked
+                                }
+                              }),
+                              type: "checkbox"
+                            }
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
+                        ]
+                      }
+                    ) }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-option", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "label",
+                      {
+                        className: `chat-panel__web-toggle settings-option__toggle ${settings.ui.showModelOutputCosts ? "is-on" : ""}`,
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-option__copy", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__label", children: "Output cost estimates" }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-option__hint", children: "Show estimated OpenRouter response cost below assistant messages." })
+                          ] }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "input",
+                            {
+                              checked: settings.ui.showModelOutputCosts,
+                              onChange: (e) => onChange({
+                                ...settings,
+                                ui: {
+                                  ...settings.ui,
+                                  showModelOutputCosts: e.target.checked
+                                }
+                              }),
+                              type: "checkbox"
+                            }
+                          ),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-track", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-panel__web-toggle-knob" }) })
+                        ]
+                      }
+                    ) }),
+                    isLmStudio || isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Base URL" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onChange: (e) => updateProvider({ baseUrl: e.target.value }), value: provider.baseUrl })
+                    ] }) : null,
+                    isOllama ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "Ollama uses its local server and does not need an API key." }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isOpenRouter ? "API Key" : "Server Key" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          onChange: (e) => updateProvider({ apiKey: e.target.value }),
+                          placeholder: isOpenRouter ? "sk-or-v1-..." : "lm-studio",
+                          type: "password",
+                          value: provider.apiKey
+                        }
+                      )
+                    ] })
+                  ] })
+                },
+                "connection-body"
+              ) : null })
+            ]
+          }
+        )
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -36765,36 +38198,92 @@ function SettingsPanel({
             }
           )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "DuckDuckGo works without a key but only returns instant answers and is often thin. For the chained options, Mythra uses each saved API key in order; if a step fails (quota, HTTP error) it tries the next, then falls back to DuckDuckGo. Tavily is a strong pick for AI-ready snippets; Brave is a solid general web search." }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Tavily API Key" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              autoComplete: "off",
-              onChange: (e) => updateSearch({ tavilyApiKey: e.target.value }),
-              placeholder: "tvly-...",
-              type: "password",
-              value: settings.search.tavilyApiKey
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Brave Search API Key" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              autoComplete: "off",
-              onChange: (e) => updateSearch({ braveApiKey: e.target.value }),
-              placeholder: "BSA...",
-              type: "password",
-              value: settings.search.braveApiKey
-            }
-          )
-        ] }),
-        activeSearchProvider !== "duckduckgo" && !anyPremiumApiKeySaved ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: "Add and save at least one Tavily or Brave Search API key, or Mythra will use DuckDuckGo instant answers only under this provider choice." }) : null
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `chat-thread-options chat-thread-options--settings chat-thread-options--search ${webSearchDetailsExpanded ? "is-expanded" : ""}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: "chat-thread-options__header",
+                  onClick: () => setWebSearchDetailsExpanded((v2) => !v2),
+                  type: "button",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "svg",
+                        {
+                          className: "chat-thread-options__chevron",
+                          width: "12",
+                          height: "12",
+                          viewBox: "0 0 12 12",
+                          fill: "none",
+                          "aria-hidden": true,
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "path",
+                            {
+                              d: "M4 2.5L7.5 6 4 9.5",
+                              stroke: "currentColor",
+                              strokeWidth: "1.4",
+                              strokeLinecap: "round",
+                              strokeLinejoin: "round"
+                            }
+                          )
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Search details" })
+                    ] }),
+                    !webSearchDetailsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__badge", children: activeSearchProviderLabel }) : null
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: webSearchDetailsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                motion.div,
+                {
+                  initial: { height: 0, opacity: 0 },
+                  animate: { height: "auto", opacity: 1 },
+                  exit: { height: 0, opacity: 0 },
+                  transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+                  style: { overflow: "hidden" },
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-thread-options__body", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "DuckDuckGo works without a key but only returns instant answers and is often thin. For the chained options, Mythra uses each saved API key in order; if a step fails (quota, HTTP error) it tries the next, then falls back to DuckDuckGo. Tavily is a strong pick for AI-ready snippets; Brave is a solid general web search." }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Tavily API Key" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          autoComplete: "off",
+                          onChange: (e) => updateSearch({ tavilyApiKey: e.target.value }),
+                          placeholder: "tvly-...",
+                          type: "password",
+                          value: settings.search.tavilyApiKey
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Brave Search API Key" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          autoComplete: "off",
+                          onChange: (e) => updateSearch({ braveApiKey: e.target.value }),
+                          placeholder: "BSA...",
+                          type: "password",
+                          value: settings.search.braveApiKey
+                        }
+                      )
+                    ] }),
+                    activeSearchProvider !== "duckduckgo" && !anyPremiumApiKeySaved ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: "Add and save at least one Tavily or Brave Search API key, or Mythra will use DuckDuckGo instant answers only under this provider choice." }) : null
+                  ] })
+                },
+                "web-search-body"
+              ) : null })
+            ]
+          }
+        )
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? "is-expanded" : ""}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section settings-section--theme", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? "is-expanded" : ""}`, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
@@ -37062,7 +38551,7 @@ function SettingsPanel({
           )
         ] })
       ] }),
-      statusMessage && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-line", children: statusMessage })
+      statusMessage && statusMessage.trim() !== "Saved." ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-line", children: statusMessage }) : null
     ] })
   ] });
 }
@@ -37258,6 +38747,7 @@ const providerOptions$2 = [
   { value: "openrouter", label: "OpenRouter" },
   { value: "ollama", label: "Ollama" }
 ];
+const pathLabel$1 = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 function WizardSettingsPanel({
   wizard,
   settings,
@@ -37266,6 +38756,7 @@ function WizardSettingsPanel({
   onChange,
   onRenameRequest,
   onOpenDocument,
+  onOpenWorkspaceFolder,
   onRefreshModels,
   onPresetPersist,
   onSettingsChangeForFavorites,
@@ -37273,6 +38764,7 @@ function WizardSettingsPanel({
 }) {
   const [localModels, setLocalModels] = reactExports.useState(modelOptions);
   const [nameDraft, setNameDraft] = reactExports.useState(wizard.name);
+  const [markdownDocumentsExpanded, setMarkdownDocumentsExpanded] = reactExports.useState(false);
   reactExports.useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
@@ -37336,11 +38828,20 @@ function WizardSettingsPanel({
             }
           )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Workspace" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: wizard.workspaceRoot })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint", children: "This local folder belongs to this Wizard. Cloud-synced folders are not used." })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            "aria-label": `Open ${pathLabel$1(wizard.workspaceRoot)} in ${window.electronAPI.platform === "darwin" ? "Finder" : "file explorer"}`,
+            className: "workspace-meta workspace-meta--settings",
+            onClick: () => void onOpenWorkspaceFolder(wizard.workspaceRoot),
+            title: `Open ${wizard.workspaceRoot}`,
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__value", children: pathLabel$1(wizard.workspaceRoot) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-meta__hint", children: wizard.workspaceRoot })
+            ]
+          }
+        )
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Model" }),
@@ -37392,6 +38893,70 @@ function WizardSettingsPanel({
           ) : /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: wizard.model || "No model selected" })
         ] })
       ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${markdownDocumentsExpanded ? "is-expanded" : ""}`, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "chat-thread-options__header",
+            onClick: () => setMarkdownDocumentsExpanded((v2) => !v2),
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "svg",
+                  {
+                    className: "chat-thread-options__chevron",
+                    width: "12",
+                    height: "12",
+                    viewBox: "0 0 12 12",
+                    fill: "none",
+                    "aria-hidden": true,
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "path",
+                      {
+                        d: "M4 2.5L7.5 6 4 9.5",
+                        stroke: "currentColor",
+                        strokeWidth: "1.4",
+                        strokeLinecap: "round",
+                        strokeLinejoin: "round"
+                      }
+                    )
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Markdown documents" })
+              ] }),
+              !markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__badge", children: [
+                wizard.documents.length,
+                " docs"
+              ] }) : null
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          motion.div,
+          {
+            initial: { height: 0, opacity: 0 },
+            animate: { height: "auto", opacity: 1 },
+            exit: { height: 0, opacity: 0 },
+            transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+            style: { overflow: "hidden" },
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-thread-options__body", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-list", children: wizard.documents.map((doc) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                className: "wizard-doc-list__item",
+                onClick: () => onOpenDocument(doc.path),
+                type: "button",
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
+                ]
+              },
+              doc.path
+            )) }) })
+          },
+          "wizard-markdown-documents"
+        ) : null })
+      ] }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Agent autonomy" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row toggle-row--warning ${wizard.fullAccess ? "is-active" : ""}`, children: [
@@ -37418,13 +38983,6 @@ function WizardSettingsPanel({
           )
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "inline-hint inline-hint--warning", children: "When on, read/write/replace/rename/delete/outline tools may use ../ or absolute paths elsewhere on this Mac (cloud-sync locations remain blocked). list_files, symbol search, apply_patch, git diff, and shell cwd stay inside this Wizard folder—copy files here if they need listing or patching." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Markdown documents" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-list", children: wizard.documents.map((doc) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-doc-list__item", onClick: () => onOpenDocument(doc.path), type: "button", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
-        ] }, doc.path)) })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
@@ -39685,10 +41243,14 @@ function App() {
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
         const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+        const usage = m.usage ?? group.usageByRequestId.get(requestId);
+        const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...recipe(m),
           content: content2 || "Thinking...",
           reasoning,
+          usage,
+          costEstimate,
           status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
         };
       });
@@ -39709,10 +41271,14 @@ function App() {
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
         const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+        const usage = m.usage ?? group.usageByRequestId.get(requestId);
+        const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...m,
           content: content2 || "Thinking...",
           reasoning,
+          usage,
+          costEstimate,
           status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
         };
       })
@@ -39725,10 +41291,14 @@ function App() {
           const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
           const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
           const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
+          const usage = m.usage ?? group.usageByRequestId.get(requestId);
+          const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
           return {
             ...m,
             content: content2 || "Thinking...",
             reasoning,
+            usage,
+            costEstimate,
             status: status === "streaming" ? group.pending.has(requestId) ? "streaming" : "done" : status
           };
         });
@@ -40257,12 +41827,16 @@ function App() {
         });
       }
     });
-    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, attachments, usage }) => {
+    const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, attachments, usage, costEstimate }) => {
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         nexusGroup.contentByRequestId.set(requestId, content2);
         if (reasoning !== void 0) nexusGroup.reasoningByRequestId.set(requestId, reasoning);
+        if (usage && !nexusGroup.usageByRequestId.has(requestId)) nexusGroup.usageByRequestId.set(requestId, usage);
+        if (costEstimate && !nexusGroup.costEstimateByRequestId.has(requestId)) {
+          nexusGroup.costEstimateByRequestId.set(requestId, costEstimate);
+        }
         nexusGroup.pending.delete(requestId);
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
           updateNexusMultiResponseMessage(nexusGroup, "streaming", requestId);
@@ -40288,6 +41862,8 @@ function App() {
         const next = { ...m, content: content2, status: "done" };
         if (reasoning !== void 0) next.reasoning = reasoning;
         else if (m.reasoning !== void 0) next.reasoning = m.reasoning;
+        if (usage && !next.usage) next.usage = usage;
+        if (costEstimate && !next.costEstimate) next.costEstimate = costEstimate;
         if (attachments?.length) {
           next.attachments = [...m.attachments ?? [], ...attachments];
         }
@@ -40550,6 +42126,14 @@ function App() {
       setSettingsStatus(e instanceof Error ? e.message : "Workspace folder could not be opened.");
     }
   };
+  const openSpecificWorkspaceFolder = async (root2) => {
+    if (!root2.trim()) return;
+    try {
+      await window.electronAPI.openWorkspaceFolder(root2);
+    } catch (e) {
+      setSettingsStatus(e instanceof Error ? e.message : "Workspace folder could not be opened.");
+    }
+  };
   const saveActiveFile = async () => {
     if (!workspaceRoot || !activeFilePath) return;
     const activeBuffer2 = buffers[activeFilePath];
@@ -40609,7 +42193,7 @@ function App() {
         );
       }
       if (modelList.length > 0) {
-        setSettingsStatus(`Connected. ${modelList.length} models available. Active: ${defaultModel || "none"}.`);
+        setSettingsStatus("");
       } else {
         const emptyMessage = activeSettings.selectedProvider === "lmstudio" ? "Connected, but no models returned. Load a model in LM Studio first." : activeSettings.selectedProvider === "ollama" ? "Connected, but no models returned. Pull a model in Ollama first." : "Connected, but OpenRouter returned no models for this profile.";
         setSettingsStatus(emptyMessage);
@@ -40682,7 +42266,7 @@ function App() {
           const saved = await window.electronAPI.saveSettings(latest);
           setSettings(saved);
           settingsRef.current = saved;
-          setSettingsStatus("Saved.");
+          setSettingsStatus("");
         } catch (e) {
           const m = e instanceof Error ? e.message : "Save failed";
           setSettingsStatus(`Could not save settings: ${m}`);
@@ -40775,7 +42359,7 @@ function App() {
     flushSettingsAutosaveTimer();
     try {
       await persistSettingsToDisk(next);
-      setSettingsStatus("Saved.");
+      setSettingsStatus("");
     } catch (e) {
       const m = e instanceof Error ? e.message : "Save failed";
       setSettingsStatus(`Could not save settings to disk: ${m}`);
@@ -42341,6 +43925,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         ),
         contentByRequestId: new Map(parallelChildRequestIds.map((rid) => [rid, ""])),
         reasoningByRequestId: /* @__PURE__ */ new Map(),
+        usageByRequestId: /* @__PURE__ */ new Map(),
+        costEstimateByRequestId: /* @__PURE__ */ new Map(),
         timeline: nextTimeline,
         suppressFinalizeUntilOrchestrator: !useParallelNexusStreams
       };
@@ -43450,9 +45036,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.5.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.6.0"}`, children: [
                   "v",
-                  "0.5.0"
+                  "0.6.0"
                 ] })
               ] })
             ] }),
@@ -44454,10 +46040,12 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               sessionModeToggleDisabled: !settings || chatPanelIsWizard || isNexusActive || Boolean(activeMediaOverrideKind),
               sessionMode,
               selectedModel: effectiveHeaderModelId,
+              modelPricing: effectiveHeaderModelInfo?.pricing,
               openRouterReasoningEffort,
               openRouterReasoningSupported,
               onOpenRouterReasoningEffortChange: handleOpenRouterReasoningEffortChange,
               openRouterCredits: openRouterCreditsDisplay,
+              showModelOutputCosts: settings?.ui.showModelOutputCosts ?? true,
               selectedProviderKind,
               selectedProviderLabel,
               hasWorkspace: Boolean(workspaceRoot),
@@ -44613,6 +46201,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                         modelOptions: overrideModels,
                         onChange: handleWizardDraftChange,
                         onOpenDocument: (path2) => void openFile(path2),
+                        onOpenWorkspaceFolder: openSpecificWorkspaceFolder,
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onPresetPersist: persistAfterPresetAction,
                         onRenameRequest: requestWizardSettingsRename,
@@ -44639,7 +46228,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.5.0",
+                        appVersion: "0.6.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

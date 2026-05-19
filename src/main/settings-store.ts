@@ -80,6 +80,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
       typeof saved?.ui?.showOpenRouterCredits === 'boolean'
         ? saved.ui.showOpenRouterCredits
         : defaultSettings.ui.showOpenRouterCredits,
+    showModelOutputCosts:
+      typeof saved?.ui?.showModelOutputCosts === 'boolean'
+        ? saved.ui.showModelOutputCosts
+        : defaultSettings.ui.showModelOutputCosts,
     favoriteModels: {
       lmstudio: [
         ...(saved?.ui?.favoriteModels?.lmstudio ?? defaultSettings.ui.favoriteModels.lmstudio)

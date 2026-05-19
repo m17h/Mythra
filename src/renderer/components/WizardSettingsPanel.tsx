@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type WizardProfile } from '@shared/types';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
@@ -11,6 +12,7 @@ interface WizardSettingsPanelProps {
   onChange: (wizard: WizardProfile) => void;
   onRenameRequest: (name: string) => Promise<boolean>;
   onOpenDocument: (path: string) => void;
+  onOpenWorkspaceFolder: (root: string) => Promise<void>;
   onRefreshModels: (provider: ProviderKind) => Promise<ModelInfo[]>;
   /** Update + persist favorites (same mechanism as Connection → Model in Settings). */
   onPresetPersist: (next: AppSettings) => Promise<void>;
@@ -25,6 +27,8 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'ollama', label: 'Ollama' }
 ];
 
+const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+
 export function WizardSettingsPanel({
   wizard,
   settings,
@@ -33,6 +37,7 @@ export function WizardSettingsPanel({
   onChange,
   onRenameRequest,
   onOpenDocument,
+  onOpenWorkspaceFolder,
   onRefreshModels,
   onPresetPersist,
   onSettingsChangeForFavorites,
@@ -40,6 +45,7 @@ export function WizardSettingsPanel({
 }: WizardSettingsPanelProps) {
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
   const [nameDraft, setNameDraft] = useState(wizard.name);
+  const [markdownDocumentsExpanded, setMarkdownDocumentsExpanded] = useState(false);
 
   useEffect(() => {
     setLocalModels(modelOptions);
@@ -112,11 +118,18 @@ export function WizardSettingsPanel({
               value={nameDraft}
             />
           </label>
-          <div className="field">
-            <span>Workspace</span>
-            <input readOnly value={wizard.workspaceRoot} />
-          </div>
-          <div className="inline-hint">This local folder belongs to this Wizard. Cloud-synced folders are not used.</div>
+          <button
+            aria-label={`Open ${pathLabel(wizard.workspaceRoot)} in ${
+              window.electronAPI.platform === 'darwin' ? 'Finder' : 'file explorer'
+            }`}
+            className="workspace-meta workspace-meta--settings"
+            onClick={() => void onOpenWorkspaceFolder(wizard.workspaceRoot)}
+            title={`Open ${wizard.workspaceRoot}`}
+            type="button"
+          >
+            <div className="workspace-meta__value">{pathLabel(wizard.workspaceRoot)}</div>
+            <div className="workspace-meta__hint">{wizard.workspaceRoot}</div>
+          </button>
         </div>
 
         <div className="settings-section">
@@ -170,6 +183,68 @@ export function WizardSettingsPanel({
         </div>
 
         <div className="settings-section">
+          <div className={`chat-thread-options chat-thread-options--settings ${markdownDocumentsExpanded ? 'is-expanded' : ''}`}>
+            <button
+              className="chat-thread-options__header"
+              onClick={() => setMarkdownDocumentsExpanded((v) => !v)}
+              type="button"
+            >
+              <span className="chat-thread-options__header-left">
+                <svg
+                  className="chat-thread-options__chevron"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M4 2.5L7.5 6 4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="chat-thread-options__title">Markdown documents</span>
+              </span>
+              {!markdownDocumentsExpanded ? (
+                <span className="chat-thread-options__badge">{wizard.documents.length} docs</span>
+              ) : null}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {markdownDocumentsExpanded ? (
+                <motion.div
+                  key="wizard-markdown-documents"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="chat-thread-options__body">
+                    <div className="wizard-doc-list">
+                      {wizard.documents.map((doc) => (
+                        <button
+                          className="wizard-doc-list__item"
+                          key={doc.path}
+                          onClick={() => onOpenDocument(doc.path)}
+                          type="button"
+                        >
+                          <span>{doc.label}</span>
+                          <code>{doc.path.split(/[\\/]/).pop()}</code>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        <div className="settings-section">
           <h4 className="settings-section__title">Agent autonomy</h4>
           <label className={`toggle-row toggle-row--warning ${wizard.fullAccess ? 'is-active' : ''}`}>
             <span>Full access mode</span>
@@ -195,18 +270,6 @@ export function WizardSettingsPanel({
             When on, read/write/replace/rename/delete/outline tools may use ../ or absolute paths elsewhere on this Mac
             (cloud-sync locations remain blocked). list_files, symbol search, apply_patch, git diff, and shell cwd stay
             inside this Wizard folder—copy files here if they need listing or patching.
-          </div>
-        </div>
-
-        <div className="settings-section">
-          <h4 className="settings-section__title">Markdown documents</h4>
-          <div className="wizard-doc-list">
-            {wizard.documents.map((doc) => (
-              <button className="wizard-doc-list__item" key={doc.path} onClick={() => onOpenDocument(doc.path)} type="button">
-                <span>{doc.label}</span>
-                <code>{doc.path.split(/[\\/]/).pop()}</code>
-              </button>
-            ))}
           </div>
         </div>
 

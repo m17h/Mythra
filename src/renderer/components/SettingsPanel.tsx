@@ -78,6 +78,8 @@ export function SettingsPanel({
   focusSearchSettingsKey = 0
 }: SettingsPanelProps) {
   const [themeSectionExpanded, setThemeSectionExpanded] = useState(false);
+  const [connectionDetailsExpanded, setConnectionDetailsExpanded] = useState(false);
+  const [webSearchDetailsExpanded, setWebSearchDetailsExpanded] = useState(false);
   const [chatBgBusy, setChatBgBusy] = useState(false);
   const [chatBgError, setChatBgError] = useState<string | null>(null);
   /** Keeps "Custom image" selected in the dropdown before the user picks a file. */
@@ -111,6 +113,10 @@ export function SettingsPanel({
   const activeThemeLabel = getThemeName(settings.ui.themeId);
   const updateAvailable = updateCheck?.ok === true && updateCheck.updateAvailable;
   const updateDownloadName = updateCheck?.ok === true ? updateCheck.downloadAsset?.name : undefined;
+  const selectedProviderLabel =
+    providerOptions.find((option) => option.value === settings.selectedProvider)?.label ?? settings.selectedProvider;
+  const activeSearchProviderLabel =
+    searchProviderOptions.find((option) => option.value === activeSearchProvider)?.label ?? activeSearchProvider;
 
   const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
   const chatBgSelectValue =
@@ -154,7 +160,7 @@ export function SettingsPanel({
       </div>
 
       <div className="settings-scroll">
-        <div className="settings-section">
+        <div className="settings-section settings-section--app-updates">
           <div className="settings-section__title-cluster">
             <h4 className="settings-section__title settings-section__title--cluster">App Updates</h4>
             {onOpenAppUpdatesInfo ? (
@@ -215,7 +221,7 @@ export function SettingsPanel({
           </div>
         </div>
 
-        <div className="settings-section">
+        <div className="settings-section settings-section--connection">
           <div className="settings-section__title-cluster">
             <h4 className="settings-section__title settings-section__title--cluster">Connection</h4>
             {onOpenConnectionHelp ? (
@@ -233,62 +239,6 @@ export function SettingsPanel({
               </button>
             ) : null}
           </div>
-
-          <div className="field">
-            <span id="settings-connection-provider-label">Provider</span>
-            <AppSelect
-              ariaLabelledBy="settings-connection-provider-label"
-              options={providerOptions}
-              value={settings.selectedProvider}
-              onChange={(providerKind) => onChange({ ...settings, selectedProvider: providerKind })}
-            />
-          </div>
-
-          <div className="settings-option">
-            <label className={`chat-panel__web-toggle settings-option__toggle ${settings.ui.showOpenRouterCredits ? 'is-on' : ''}`}>
-              <span className="settings-option__copy">
-                <span className="settings-option__label">OpenRouter credits</span>
-                <span className="settings-option__hint">Show remaining credits in the chat header when OpenRouter is active.</span>
-              </span>
-              <input
-                checked={settings.ui.showOpenRouterCredits}
-                onChange={(e) =>
-                  onChange({
-                    ...settings,
-                    ui: {
-                      ...settings.ui,
-                      showOpenRouterCredits: e.target.checked
-                    }
-                  })
-                }
-                type="checkbox"
-              />
-              <span className="chat-panel__web-toggle-track">
-                <span className="chat-panel__web-toggle-knob" />
-              </span>
-            </label>
-          </div>
-
-          {isLmStudio || isOllama ? (
-            <label className="field">
-              <span>Base URL</span>
-              <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
-            </label>
-          ) : null}
-
-          {isOllama ? (
-            <div className="inline-hint">Ollama uses its local server and does not need an API key.</div>
-          ) : (
-            <label className="field">
-              <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
-              <input
-                onChange={(e) => updateProvider({ apiKey: e.target.value })}
-                placeholder={isOpenRouter ? 'sk-or-v1-...' : 'lm-studio'}
-                type="password"
-                value={provider.apiKey}
-              />
-            </label>
-          )}
 
           <div className="field-row">
             <div className="field">
@@ -341,6 +291,149 @@ export function SettingsPanel({
           {isOllama && modelOptions.length === 0 && (
             <div className="inline-hint">No models loaded yet. Start Ollama and pull a model first.</div>
           )}
+
+          <div
+            className={`chat-thread-options chat-thread-options--settings chat-thread-options--connection ${
+              connectionDetailsExpanded ? 'is-expanded' : ''
+            }`}
+          >
+            <button
+              className="chat-thread-options__header"
+              onClick={() => setConnectionDetailsExpanded((v) => !v)}
+              type="button"
+            >
+              <span className="chat-thread-options__header-left">
+                <svg
+                  className="chat-thread-options__chevron"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M4 2.5L7.5 6 4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="chat-thread-options__title">Connection details</span>
+              </span>
+              {!connectionDetailsExpanded ? (
+                <span className="chat-thread-options__badge">{selectedProviderLabel}</span>
+              ) : null}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {connectionDetailsExpanded ? (
+                <motion.div
+                  key="connection-body"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="chat-thread-options__body">
+                    <div className="field">
+                      <span id="settings-connection-provider-label">Provider</span>
+                      <AppSelect
+                        ariaLabelledBy="settings-connection-provider-label"
+                        options={providerOptions}
+                        value={settings.selectedProvider}
+                        onChange={(providerKind) => onChange({ ...settings, selectedProvider: providerKind })}
+                      />
+                    </div>
+
+                    <div className="settings-option">
+                      <label
+                        className={`chat-panel__web-toggle settings-option__toggle ${
+                          settings.ui.showOpenRouterCredits ? 'is-on' : ''
+                        }`}
+                      >
+                        <span className="settings-option__copy">
+                          <span className="settings-option__label">OpenRouter credits</span>
+                          <span className="settings-option__hint">
+                            Show remaining credits in the chat header when OpenRouter is active.
+                          </span>
+                        </span>
+                        <input
+                          checked={settings.ui.showOpenRouterCredits}
+                          onChange={(e) =>
+                            onChange({
+                              ...settings,
+                              ui: {
+                                ...settings.ui,
+                                showOpenRouterCredits: e.target.checked
+                              }
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span className="chat-panel__web-toggle-track">
+                          <span className="chat-panel__web-toggle-knob" />
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="settings-option">
+                      <label
+                        className={`chat-panel__web-toggle settings-option__toggle ${
+                          settings.ui.showModelOutputCosts ? 'is-on' : ''
+                        }`}
+                      >
+                        <span className="settings-option__copy">
+                          <span className="settings-option__label">Output cost estimates</span>
+                          <span className="settings-option__hint">
+                            Show estimated OpenRouter response cost below assistant messages.
+                          </span>
+                        </span>
+                        <input
+                          checked={settings.ui.showModelOutputCosts}
+                          onChange={(e) =>
+                            onChange({
+                              ...settings,
+                              ui: {
+                                ...settings.ui,
+                                showModelOutputCosts: e.target.checked
+                              }
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span className="chat-panel__web-toggle-track">
+                          <span className="chat-panel__web-toggle-knob" />
+                        </span>
+                      </label>
+                    </div>
+
+                    {isLmStudio || isOllama ? (
+                      <label className="field">
+                        <span>Base URL</span>
+                        <input onChange={(e) => updateProvider({ baseUrl: e.target.value })} value={provider.baseUrl} />
+                      </label>
+                    ) : null}
+
+                    {isOllama ? (
+                      <div className="inline-hint">Ollama uses its local server and does not need an API key.</div>
+                    ) : (
+                      <label className="field">
+                        <span>{isOpenRouter ? 'API Key' : 'Server Key'}</span>
+                        <input
+                          onChange={(e) => updateProvider({ apiKey: e.target.value })}
+                          placeholder={isOpenRouter ? 'sk-or-v1-...' : 'lm-studio'}
+                          type="password"
+                          value={provider.apiKey}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
         </div>
 
         <div className="settings-section">
@@ -434,43 +527,94 @@ export function SettingsPanel({
             />
           </label>
 
-          <div className="inline-hint">
-            DuckDuckGo works without a key but only returns instant answers and is often thin. For the chained options,
-            Mythra uses each saved API key in order; if a step fails (quota, HTTP error) it tries the next, then falls back
-            to DuckDuckGo. Tavily is a strong pick for AI-ready snippets; Brave is a solid general web search.
+          <div
+            className={`chat-thread-options chat-thread-options--settings chat-thread-options--search ${
+              webSearchDetailsExpanded ? 'is-expanded' : ''
+            }`}
+          >
+            <button
+              className="chat-thread-options__header"
+              onClick={() => setWebSearchDetailsExpanded((v) => !v)}
+              type="button"
+            >
+              <span className="chat-thread-options__header-left">
+                <svg
+                  className="chat-thread-options__chevron"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M4 2.5L7.5 6 4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="chat-thread-options__title">Search details</span>
+              </span>
+              {!webSearchDetailsExpanded ? (
+                <span className="chat-thread-options__badge">{activeSearchProviderLabel}</span>
+              ) : null}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {webSearchDetailsExpanded ? (
+                <motion.div
+                  key="web-search-body"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="chat-thread-options__body">
+                    <div className="inline-hint">
+                      DuckDuckGo works without a key but only returns instant answers and is often thin. For the chained
+                      options, Mythra uses each saved API key in order; if a step fails (quota, HTTP error) it tries the
+                      next, then falls back to DuckDuckGo. Tavily is a strong pick for AI-ready snippets; Brave is a solid
+                      general web search.
+                    </div>
+
+                    <label className="field">
+                      <span>Tavily API Key</span>
+                      <input
+                        autoComplete="off"
+                        onChange={(e) => updateSearch({ tavilyApiKey: e.target.value })}
+                        placeholder="tvly-..."
+                        type="password"
+                        value={settings.search.tavilyApiKey}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Brave Search API Key</span>
+                      <input
+                        autoComplete="off"
+                        onChange={(e) => updateSearch({ braveApiKey: e.target.value })}
+                        placeholder="BSA..."
+                        type="password"
+                        value={settings.search.braveApiKey}
+                      />
+                    </label>
+
+                    {activeSearchProvider !== 'duckduckgo' && !anyPremiumApiKeySaved ? (
+                      <div className="inline-hint inline-hint--warning">
+                        Add and save at least one Tavily or Brave Search API key, or Mythra will use DuckDuckGo instant
+                        answers only under this provider choice.
+                      </div>
+                    ) : null}
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </div>
-
-          <label className="field">
-            <span>Tavily API Key</span>
-            <input
-              autoComplete="off"
-              onChange={(e) => updateSearch({ tavilyApiKey: e.target.value })}
-              placeholder="tvly-..."
-              type="password"
-              value={settings.search.tavilyApiKey}
-            />
-          </label>
-
-          <label className="field">
-            <span>Brave Search API Key</span>
-            <input
-              autoComplete="off"
-              onChange={(e) => updateSearch({ braveApiKey: e.target.value })}
-              placeholder="BSA..."
-              type="password"
-              value={settings.search.braveApiKey}
-            />
-          </label>
-
-          {activeSearchProvider !== 'duckduckgo' && !anyPremiumApiKeySaved ? (
-            <div className="inline-hint inline-hint--warning">
-              Add and save at least one Tavily or Brave Search API key, or Mythra will use DuckDuckGo instant answers
-              only under this provider choice.
-            </div>
-          ) : null}
         </div>
 
-        <div className="settings-section">
+        <div className="settings-section settings-section--theme">
           <div className={`chat-thread-options chat-thread-options--settings ${themeSectionExpanded ? 'is-expanded' : ''}`}>
             <button
               className="chat-thread-options__header"
@@ -739,7 +883,7 @@ export function SettingsPanel({
           </label>
         </div>
 
-        {statusMessage && <div className="status-line">{statusMessage}</div>}
+        {statusMessage && statusMessage.trim() !== 'Saved.' ? <div className="status-line">{statusMessage}</div> : null}
       </div>
     </section>
   );

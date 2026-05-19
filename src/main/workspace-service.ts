@@ -65,6 +65,7 @@ const WIZARD_DEFAULT_CONTENT: Record<string, (name: string) => string> = {
 - **apply_patch**: unified diff only, valid for \`git apply\` from the Wizard workspace root. Context lines (those starting with a space) must match **exactly**—wrong spaces/tabs or stale lines cause \`corrupt patch\`. No markdown around the patch inside the tool JSON.
 - If a patch fails, try a smaller hunk, \`replace_in_file\` for one exact match, or \`write_file\` for a full small file.
 - Tools expect strict JSON (escaped newlines as \`\\n\` in strings).
+- For financial, portfolio, budget, sales, CSV/table, forecast, scenario, or other numerical analysis, use Mythra data embeds when they make the answer clearer: \`mythra-stats\` for KPI cards, \`mythra-table\` for sortable row data, and \`mythra-chart\` for visuals. Always use the Mythra fence names, not plain \`json\` fences. Chart types include bar (single-series or grouped multi-series), line, pie, donut, stacked-bar (only when stacked categories across periods help), and budget (planned vs actual).
 - **Default core files** Mythra creates are only identity, personality, tools, memory, and corrections—**not** \`todo.md\`. Add \`todo.md\` or any extra \`.md\` yourself if the user wants tasks, inboxes, or other always-loaded notes.
 
 ## Example directions (optional)
