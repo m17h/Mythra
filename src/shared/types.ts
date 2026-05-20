@@ -27,6 +27,8 @@ export interface WizardProfile {
   model: string;
   systemPrompt: string;
   documents: WizardDocument[];
+  /** Sidebar color marker for organizing saved Wizards. */
+  accentColor?: string;
   /**
    * When true, file writes, deletes, shell commands, and similar tool actions run without per-action approval
    * for this Wizard’s sessions (same idea as Settings → Agent autonomy → Full access for normal chats).
@@ -44,6 +46,13 @@ export interface NexusMember {
   role: 'leader' | 'member';
 }
 
+export interface NexusTeamWorkspaceReference {
+  wizardId: string;
+  wizardName: string;
+  role: 'leader' | 'member';
+  workspaceRoot: string;
+}
+
 export interface NexusTask {
   id: string;
   title: string;
@@ -59,6 +68,8 @@ export interface NexusProject {
   members: NexusMember[];
   tasks: NexusTask[];
   status: 'draft' | 'active' | 'done';
+  /** Sidebar color marker for organizing Nexus projects. */
+  accentColor?: string;
   /**
    * When true, every teammate stream in Nexus sessions skips per-action tool approvals (same effect as Full access).
    * Takes precedence over leaderApprovesTools.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type WheelEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type WheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import type {
@@ -18,11 +18,34 @@ import {
   roughTokensFromMessages
 } from '@renderer/lib/estimate-context-tokens';
 import { ALL_EMBED_STRIP_STRINGS } from '@shared/mythra-embeds';
+import { isChartDetailsLayoutLocked } from '@renderer/lib/chart-details-scroll';
 import { AssistantMessageContent } from './AssistantMessageContent';
 import { ChatMarkdown } from './ChatMarkdown';
 
 /** How close to the true bottom counts as “pinned” for auto-follow while the model streams. */
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
+
+export interface ChatMentionOption {
+  id: string;
+  name: string;
+  role?: 'leader' | 'member';
+}
+
+export interface ChatContextMeterOption {
+  id: string;
+  name: string;
+  role?: 'leader' | 'member';
+  limit: number;
+  model?: string;
+  providerLabel?: string;
+}
+
+interface MentionTrigger {
+  start: number;
+  end: number;
+  query: string;
+}
 
 const reasoningEffortOptions: Array<{ value: OpenRouterReasoningEffort; label: string; hint: string }> = [
   { value: 'auto', label: 'Auto', hint: 'Use the model default' },
@@ -38,27 +61,82 @@ function reasoningEffortLabel(value: OpenRouterReasoningEffort): string {
   return reasoningEffortOptions.find((option) => option.value === value)?.label ?? 'Auto';
 }
 
-function NexusRelayProgressBar(props: { wizardName: string; segmentStartedAt: number }) {
+function findMentionTrigger(value: string, caret: number): MentionTrigger | null {
+  const beforeCaret = value.slice(0, caret);
+  const at = beforeCaret.lastIndexOf('@');
+  if (at < 0) return null;
+  if (at > 0 && !/[\s([{]/.test(value[at - 1] ?? '')) return null;
+  const query = beforeCaret.slice(at + 1);
+  if (query.includes('@') || query.includes('\n')) return null;
+  return { start: at, end: caret, query };
+}
+
+function normalizedMentionText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function mentionHighlightRanges(value: string, options: ChatMentionOption[]) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const option of options) {
+    const name = option.name.trim();
+    if (name.length < 2) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, 'gi');
+    for (const match of value.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      ranges.push({ start, end: start + match[0].length });
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const prev = merged[merged.length - 1];
+    if (prev && range.start < prev.end) continue;
+    merged.push(range);
+  }
+  return merged;
+}
+
+type NexusRelayProgress = {
+  requestId: string;
+  wizardName: string;
+  segmentStartedAt: number;
+  phase: 'responding' | 'routing';
+};
+
+function NexusRelayProgressBar(props: NexusRelayProgress) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => setTick((x) => x + 1), 1000);
     return () => window.clearInterval(id);
-  }, [props.segmentStartedAt, props.wizardName]);
+  }, [props.segmentStartedAt, props.wizardName, props.phase]);
   const sec = Math.max(0, Math.floor((Date.now() - props.segmentStartedAt) / 1000));
   const mm = Math.floor(sec / 60);
   const ss = sec % 60;
   const elapsed = mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${sec}s`;
+  const isRouting = props.phase === 'routing';
 
   return (
-    <div className="chat-compose__relay-status" role="status">
+    <div className={`chat-compose__relay-status ${isRouting ? 'is-routing' : ''}`} role="status">
       <span className="chat-compose__relay-pulse" aria-hidden />
       <span className="chat-compose__relay-primary">
         <strong>{props.wizardName}</strong>
-        <span className="chat-compose__relay-muted"> · responding</span>
+        <span className="chat-compose__relay-muted">
+          {isRouting ? ' · choosing next wizard' : ' · responding'}
+        </span>
       </span>
       <span className="chat-compose__relay-elapsed">{elapsed}</span>
       <span className="chat-compose__relay-hint">
-        Still working — queue a message for the next teammate. Name someone (<strong>@WizardName</strong> or their display name) so Mythra routes the next reply to them.
+        {isRouting ? (
+          <>
+            Deciding whether another teammate should speak next. You can queue a follow-up or name someone (
+            <strong>@WizardName</strong> or their display name) to route the next reply.
+          </>
+        ) : (
+          <>
+            Still working — queue a message for the next teammate. Name someone (<strong>@WizardName</strong> or their display name) so Mythra routes the next reply to them.
+          </>
+        )}
       </span>
     </div>
   );
@@ -79,6 +157,14 @@ function getCopyableMessageText(content: string): string {
     s = s.replaceAll(token, '');
   }
   return s.trim();
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || IMAGE_FILE_EXT_RE.test(file.name);
+}
+
+function hasFileDrag(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes('Files');
 }
 
 function parseSubmittedQuizSelections(content: string): Record<number, number> | null {
@@ -200,15 +286,28 @@ interface DraftCostTooltip {
   unavailable?: boolean;
 }
 
-function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
-  const safeLimit = Math.max(limit, 1);
+function ChatContextMeter({
+  used,
+  limit,
+  options = []
+}: {
+  used: number;
+  limit: number;
+  options?: ChatContextMeterOption[];
+}) {
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const selectedOption = options.find((option) => option.id === selectedOptionId) ?? options[0] ?? null;
+  const activeLimit = selectedOption?.limit ?? limit;
+  const safeLimit = Math.max(activeLimit, 1);
   const usedRounded = Math.max(0, Math.round(used));
   const available = Math.max(0, safeLimit - usedRounded);
   const pct = Math.min(100, Math.max(0, (usedRounded / safeLimit) * 100));
   const r = 9;
   const c = 2 * Math.PI * r;
   const dashOffset = c * (1 - pct / 100);
-  const ariaSummary = `${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
+  const activeName = selectedOption?.name ?? 'Current chat';
+  const activeRole = selectedOption?.role === 'leader' ? 'Leader' : selectedOption?.role === 'member' ? 'Member' : null;
+  const ariaSummary = `${activeName}: ${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
   const warn = pct >= 88;
   const tooltipId = useId();
 
@@ -259,6 +358,14 @@ function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
   }, [clearCloseTimer]);
 
   useEffect(() => {
+    if (options.length === 0) {
+      setSelectedOptionId(null);
+      return;
+    }
+    setSelectedOptionId((current) => (current && options.some((option) => option.id === current) ? current : options[0]!.id));
+  }, [options]);
+
+  useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -271,35 +378,78 @@ function ChatContextMeter({ used, limit }: { used: number; limit: number }) {
   }, [open]);
 
   const popover =
-    open &&
     typeof document !== 'undefined' &&
     createPortal(
-      <div
-        className="chat-context-meter__popup"
-        id={tooltipId}
-        onMouseEnter={handleOpen}
-        onMouseLeave={handleScheduleClose}
-        role="tooltip"
-        style={{
-          left: anchor.left,
-          top: anchor.top - 8,
-          transform: 'translate(-50%, -100%)'
-        }}
-      >
-        <div className="chat-context-meter__popup-inner">
-          <div className="chat-context-meter__row">
-            <span className="chat-context-meter__label">Used</span>
-            <span className="chat-context-meter__value">{formatTokensExact(usedRounded)}</span>
-          </div>
-          <div className="chat-context-meter__row">
-            <span className="chat-context-meter__label">Available</span>
-            <span className="chat-context-meter__value">{formatTokensExact(available)}</span>
-          </div>
-          <div className="chat-context-meter__meta">
-            {pct.toFixed(1)}% · {formatTokensShort(safeLimit)} context window
-          </div>
-        </div>
-      </div>,
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="chat-context-meter__popup"
+            exit={{ opacity: 0 }}
+            id={tooltipId}
+            initial={{ opacity: 0 }}
+            onMouseEnter={handleOpen}
+            onMouseLeave={handleScheduleClose}
+            role="tooltip"
+            style={{
+              left: anchor.left,
+              top: anchor.top - 8,
+              transform: 'translate(-50%, -100%)'
+            }}
+            transition={{ duration: 0.14, ease: 'easeOut' }}
+          >
+            <div className="chat-context-meter__popup-inner">
+              <div className="chat-context-meter__heading">
+                <span className="chat-context-meter__label">Viewing</span>
+                <span className="chat-context-meter__name">
+                  {activeName}
+                  {activeRole ? <span>{activeRole}</span> : null}
+                </span>
+              </div>
+              <div className="chat-context-meter__row">
+                <span className="chat-context-meter__label">Used</span>
+                <span className="chat-context-meter__value">{formatTokensExact(usedRounded)}</span>
+              </div>
+              <div className="chat-context-meter__row">
+                <span className="chat-context-meter__label">Available</span>
+                <span className="chat-context-meter__value">{formatTokensExact(available)}</span>
+              </div>
+              <div className="chat-context-meter__meta">
+                {pct.toFixed(1)}% · {formatTokensShort(safeLimit)} context window
+                {selectedOption?.model ? (
+                  <>
+                    <br />
+                    {selectedOption.providerLabel ? `${selectedOption.providerLabel} · ` : ''}
+                    {selectedOption.model}
+                  </>
+                ) : null}
+              </div>
+              {options.length > 1 ? (
+                <div className="chat-context-meter__options" aria-label="Choose wizard context display">
+                  {options.map((option) => {
+                    const optionLimit = Math.max(option.limit, 1);
+                    const optionPct = Math.min(100, Math.max(0, (usedRounded / optionLimit) * 100));
+                    return (
+                      <button
+                        className={`chat-context-meter__option ${option.id === selectedOption?.id ? 'is-active' : ''}`}
+                        key={option.id}
+                        onClick={() => setSelectedOptionId(option.id)}
+                        type="button"
+                      >
+                        <span className="chat-context-meter__option-name">
+                          {option.name}
+                          {option.role === 'leader' ? <span>Leader</span> : null}
+                        </span>
+                        <span className="chat-context-meter__option-value">{optionPct.toFixed(0)}%</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>,
       document.body
     );
 
@@ -526,15 +676,18 @@ interface ChatPanelProps {
   modelCatalogSettled: boolean;
   providerConnected: boolean;
   isStreaming: boolean;
+  composerDisabled?: boolean;
+  composerDisabledPlaceholder?: string;
   webSearch: boolean;
   onWebSearchChange: (next: boolean) => void;
   /** True while settings have not loaded yet */
   webSearchDisabled?: boolean;
   onInputChange: (value: string) => void;
-  onAttachImages: (files: FileList | null) => void;
+  mentionOptions?: ChatMentionOption[];
+  onAttachImages: (files: FileList | File[] | null) => void;
   onRemoveAttachment: (id: string) => void;
   /** Nexus relay only: footer progress while one teammate streams (live elapsed timer). */
-  nexusRelayProgress?: { wizardName: string; segmentStartedAt: number } | null;
+  nexusRelayProgress?: NexusRelayProgress | null;
   /** Nexus relay only: allow Send during streaming (queues user turns for the next teammate). */
   nexusRelayQueueDuringStream?: boolean;
   onSend: () => void;
@@ -544,6 +697,8 @@ interface ChatPanelProps {
   chatMessages: ChatMessage[];
   /** Max context from model catalog, or a default when unknown. */
   contextLimit: number;
+  /** Nexus-only: alternate wizard context windows that can be shown in the footer meter. */
+  contextMeterOptions?: ChatContextMeterOption[];
   /** Last API usage for this thread, if the provider reported it. */
   lastTokenUsage: ChatCompletionTokenUsage | null;
   /** Toggle Chat ↔ Agent; persisted with settings. */
@@ -804,10 +959,13 @@ export function ChatPanel({
   modelCatalogSettled,
   providerConnected,
   isStreaming,
+  composerDisabled = false,
+  composerDisabledPlaceholder,
   webSearch,
   onWebSearchChange,
   webSearchDisabled = false,
   onInputChange,
+  mentionOptions = [],
   onAttachImages,
   onRemoveAttachment,
   onSend,
@@ -815,6 +973,7 @@ export function ChatPanel({
   onStop,
   chatMessages,
   contextLimit,
+  contextMeterOptions = [],
   lastTokenUsage,
   onSessionModeToggle,
   sessionModeToggleDisabled = false,
@@ -834,12 +993,90 @@ export function ChatPanel({
   const innerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mentionBackdropRef = useRef<HTMLDivElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendCostTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const composerDragDepthRef = useRef(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [sendCostTooltipOpen, setSendCostTooltipOpen] = useState(false);
   const [sendCostTooltipAnchor, setSendCostTooltipAnchor] = useState({ top: 0, left: 0 });
+  const [composerDragActive, setComposerDragActive] = useState(false);
+  const [mentionCaret, setMentionCaret] = useState(0);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [dismissedMentionStart, setDismissedMentionStart] = useState<number | null>(null);
+
+  const rawMentionTrigger = useMemo(
+    () => (isNexus && mentionOptions.length > 0 ? findMentionTrigger(input, mentionCaret) : null),
+    [input, isNexus, mentionCaret, mentionOptions.length]
+  );
+  const mentionTrigger =
+    rawMentionTrigger && rawMentionTrigger.start !== dismissedMentionStart ? rawMentionTrigger : null;
+  const filteredMentionOptions = useMemo(() => {
+    if (!mentionTrigger) return [];
+    const needle = normalizedMentionText(mentionTrigger.query);
+    if (!needle) return mentionOptions;
+    return mentionOptions.filter((option) => normalizedMentionText(option.name).includes(needle));
+  }, [mentionOptions, mentionTrigger]);
+  const visibleMentionOptions = useMemo(() => filteredMentionOptions.slice(0, 8), [filteredMentionOptions]);
+  const mentionMenuOpen = Boolean(mentionTrigger && visibleMentionOptions.length > 0);
+  const mentionNames = useMemo(() => mentionOptions.map((option) => option.name), [mentionOptions]);
+  const mentionHighlightNodes = useMemo(() => {
+    if (!isNexus || mentionOptions.length === 0 || input.length === 0) return null;
+    const ranges = mentionHighlightRanges(input, mentionOptions);
+    if (ranges.length === 0) return null;
+    const nodes: Array<string | ReactElement> = [];
+    let cursor = 0;
+    ranges.forEach((range, index) => {
+      if (range.start > cursor) nodes.push(input.slice(cursor, range.start));
+      nodes.push(
+        <mark className="chat-compose__mention-highlight" key={`${range.start}-${range.end}-${index}`}>
+          {input.slice(range.start, range.end)}
+        </mark>
+      );
+      cursor = range.end;
+    });
+    if (cursor < input.length) nodes.push(input.slice(cursor));
+    return nodes;
+  }, [input, isNexus, mentionOptions]);
+  const shouldShowMentionBackdrop = Boolean(mentionHighlightNodes);
+
+  useEffect(() => {
+    setMentionSelectedIndex(0);
+  }, [mentionTrigger?.query, visibleMentionOptions.length]);
+
+  const updateMentionCaretFromTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (el) setMentionCaret(el.selectionStart);
+  }, []);
+
+  const insertMention = useCallback(
+    (option: ChatMentionOption) => {
+      const trigger = mentionTrigger;
+      if (!trigger) return;
+      const mention = `@${option.name} `;
+      const next = `${input.slice(0, trigger.start)}${mention}${input.slice(trigger.end)}`;
+      const nextCaret = trigger.start + mention.length;
+      onInputChange(next);
+      setMentionCaret(nextCaret);
+      setDismissedMentionStart(null);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [input, mentionTrigger, onInputChange]
+  );
+
+  const syncMentionBackdropScroll = useCallback(() => {
+    const textarea = textareaRef.current;
+    const backdrop = mentionBackdropRef.current;
+    if (!textarea || !backdrop) return;
+    backdrop.scrollTop = textarea.scrollTop;
+    backdrop.scrollLeft = textarea.scrollLeft;
+  }, []);
 
   const contextUsedEstimate = useMemo(() => {
     const threadRough =
@@ -913,6 +1150,44 @@ export function ChatPanel({
     clearSendCostTooltipTimer();
     sendCostTooltipTimerRef.current = setTimeout(() => setSendCostTooltipOpen(false), 120);
   }, [clearSendCostTooltipTimer]);
+
+  const handleComposerDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current += 1;
+    setComposerDragActive(true);
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleComposerDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleComposerDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current = Math.max(0, composerDragDepthRef.current - 1);
+    if (composerDragDepthRef.current === 0) {
+      setComposerDragActive(false);
+    }
+  }, []);
+
+  const handleComposerDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current = 0;
+    setComposerDragActive(false);
+    const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile);
+    if (imageFiles.length) {
+      onAttachImages(imageFiles);
+    }
+  }, [onAttachImages]);
 
   useLayoutEffect(() => {
     if (!sendCostTooltipOpen) return;
@@ -1068,6 +1343,9 @@ export function ChatPanel({
       if (lockUntilRaw != null && lockUntilRaw !== '' && Number(lockUntilRaw) > Date.now()) {
         return;
       }
+      if (isChartDetailsLayoutLocked(scroll)) {
+        return;
+      }
 
       if (isStreaming) {
         cancelAnimationFrame(raf);
@@ -1173,7 +1451,9 @@ export function ChatPanel({
 
   const isTalk = !isWizard && !isNexus && sessionMode === 'talk';
 
-  const statusLabel = isStreaming
+  const statusLabel = nexusRelayProgress?.phase === 'routing'
+    ? 'Routing'
+    : isStreaming
     ? 'Working'
     : providerConnected
       ? 'Connected'
@@ -1375,12 +1655,13 @@ export function ChatPanel({
                       quizSubmitDisabled={message.status === 'streaming'}
                       sessionMode={sessionMode}
                       sessionModeToggleDisabled={sessionModeToggleDisabled}
+                      mentionNames={mentionNames}
                       text={message.content}
                       webSearch={webSearch}
                       webSearchDisabled={webSearchDisabled}
                     />
                   ) : (
-                    <ChatMarkdown text={getCopyableMessageText(message.content)} />
+                    <ChatMarkdown mentionNames={mentionNames} text={getCopyableMessageText(message.content)} />
                   )}
                 </div>
               ) : null}
@@ -1641,11 +1922,21 @@ export function ChatPanel({
             ))}
           </div>
         ) : null}
-        <div className={`chat-compose__bar ${isStreaming ? 'is-working' : ''}`}>
+        <div
+          className={`chat-compose__bar ${isStreaming ? 'is-working' : ''} ${composerDragActive ? 'is-drag-over' : ''}`}
+          onDragEnter={handleComposerDragEnter}
+          onDragLeave={handleComposerDragLeave}
+          onDragOver={handleComposerDragOver}
+          onDrop={handleComposerDrop}
+        >
+          <span className="chat-compose__drop-hint" aria-hidden>
+            Drop image to attach
+          </span>
           <label className="chat-compose__attach" title="Attach images">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 10l-3.5-3.5a2 2 0 00-2.83 0L2 12M14 10v4H2v-2M14 10V5a2 2 0 00-2-2H4a2 2 0 00-2 2v7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/><circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.3"/></svg>
             <input
               accept="image/*"
+              disabled={composerDisabled}
               multiple
               onChange={(e) => { onAttachImages(e.target.files); e.target.value = ''; }}
               type="file"
@@ -1653,33 +1944,94 @@ export function ChatPanel({
           </label>
           {selectedProviderKind === 'openrouter' ? (
             <OpenRouterReasoningButton
-              disabled={isStreaming}
+              disabled={isStreaming || composerDisabled}
               effort={openRouterReasoningEffort}
               model={selectedModel || 'No model selected'}
               onChange={onOpenRouterReasoningEffortChange}
               supported={openRouterReasoningSupported}
             />
           ) : null}
-          <textarea
-            ref={textareaRef}
-            className="chat-compose__input"
-            onChange={(e) => onInputChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                const canSend =
-                  !isStreaming ||
-                  (nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0));
-                if (canSend) {
-                  onSend();
+          <div className={`chat-compose__input-wrap ${shouldShowMentionBackdrop ? 'has-mention-highlights' : ''}`}>
+            {shouldShowMentionBackdrop ? (
+              <div className="chat-compose__mention-backdrop" ref={mentionBackdropRef} aria-hidden>
+                {mentionHighlightNodes}
+              </div>
+            ) : null}
+            <textarea
+              ref={textareaRef}
+              className="chat-compose__input"
+              aria-autocomplete={mentionOptions.length > 0 ? 'list' : undefined}
+              aria-controls={mentionMenuOpen ? 'nexus-mention-list' : undefined}
+              onChange={(e) => {
+                if (composerDisabled) return;
+                onInputChange(e.target.value);
+                setMentionCaret(e.target.selectionStart);
+                setDismissedMentionStart(null);
+              }}
+              onKeyDown={(e) => {
+                if (composerDisabled) return;
+                if (mentionMenuOpen) {
+                  if (e.key === 'Tab' || e.key === 'Enter') {
+                    e.preventDefault();
+                    insertMention(visibleMentionOptions[mentionSelectedIndex] ?? visibleMentionOptions[0]!);
+                    return;
+                  }
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setMentionSelectedIndex((current) => (current + 1) % visibleMentionOptions.length);
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setMentionSelectedIndex((current) => (current - 1 + visibleMentionOptions.length) % visibleMentionOptions.length);
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setDismissedMentionStart(mentionTrigger?.start ?? null);
+                    return;
+                  }
                 }
-              }
-            }}
-            placeholder="Type a message..."
-            rows={1}
-            value={input}
-          />
-          <ChatContextMeter limit={contextLimit} used={contextUsedEstimate} />
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const canSend =
+                    !composerDisabled &&
+                    (!isStreaming ||
+                      (nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0)));
+                  if (canSend) {
+                    onSend();
+                  }
+                }
+              }}
+              onKeyUp={updateMentionCaretFromTextarea}
+              onScroll={syncMentionBackdropScroll}
+              onSelect={updateMentionCaretFromTextarea}
+              placeholder={composerDisabledPlaceholder ?? 'Type a message...'}
+              rows={1}
+              value={input}
+              disabled={composerDisabled}
+            />
+          </div>
+          {mentionMenuOpen ? (
+            <div className="chat-compose__mention-menu" id="nexus-mention-list" role="listbox">
+              {visibleMentionOptions.map((option, index) => (
+                <button
+                  aria-selected={index === mentionSelectedIndex}
+                  className={`chat-compose__mention-option ${index === mentionSelectedIndex ? 'is-active' : ''}`}
+                  key={option.id}
+                  onClick={() => insertMention(option)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  role="option"
+                  type="button"
+                >
+                  <span className="chat-compose__mention-at">@</span>
+                  <span className="chat-compose__mention-name">{option.name}</span>
+                  {option.role === 'leader' ? <span className="chat-compose__mention-role">Leader</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <ChatContextMeter limit={contextLimit} options={contextMeterOptions} used={contextUsedEstimate} />
           <button
             className={`chat-compose__terminal-toggle ${terminalOpen ? 'is-active' : ''}`}
             onClick={handleTerminalToggle}
@@ -1697,7 +2049,7 @@ export function ChatPanel({
                 <button
                   ref={sendButtonRef}
                   className="chat-compose__send chat-compose__send--alongside-stop"
-                  disabled={input.trim().length === 0 && attachments.length === 0}
+                  disabled={composerDisabled || (input.trim().length === 0 && attachments.length === 0)}
                   onBlur={scheduleHideSendCostTooltip}
                   onFocus={showSendCostTooltip}
                   onMouseEnter={showSendCostTooltip}
@@ -1721,7 +2073,7 @@ export function ChatPanel({
             <button
               ref={sendButtonRef}
               className="chat-compose__send"
-              disabled={input.trim().length === 0 && attachments.length === 0}
+              disabled={composerDisabled || (input.trim().length === 0 && attachments.length === 0)}
               onBlur={scheduleHideSendCostTooltip}
               onFocus={showSendCostTooltip}
               onMouseEnter={showSendCostTooltip}

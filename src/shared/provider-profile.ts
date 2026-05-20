@@ -1,6 +1,7 @@
-import type { OpenRouterReasoningEffort, ProviderKind, ProviderProfile, SavedPromptPreset } from './types';
+import type { AppSettings, OpenRouterReasoningEffort, ProviderKind, ProviderProfile, SavedPromptPreset } from './types';
 
 const OPENROUTER_REASONING_EFFORTS: OpenRouterReasoningEffort[] = ['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const PROVIDER_KINDS: ProviderKind[] = ['lmstudio', 'openrouter', 'ollama'];
 
 function normalizeReasoningEffort(v: unknown, fallback: OpenRouterReasoningEffort | undefined): OpenRouterReasoningEffort {
   return OPENROUTER_REASONING_EFFORTS.includes(v as OpenRouterReasoningEffort)
@@ -77,5 +78,26 @@ export function normalizeProviderProfile(
     appName: typeof base.appName === 'string' ? base.appName : defaults.appName,
     appUrl: typeof base.appUrl === 'string' ? base.appUrl : defaults.appUrl,
     reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
+  };
+}
+
+export function syncProviderSystemPromptFields(settings: AppSettings, sourceProvider: ProviderKind = settings.selectedProvider): AppSettings {
+  const source = settings.providers[sourceProvider] ?? settings.providers[settings.selectedProvider];
+  if (!source) return settings;
+
+  return {
+    ...settings,
+    providers: PROVIDER_KINDS.reduce<AppSettings['providers']>(
+      (providers, kind) => ({
+        ...providers,
+        [kind]: {
+          ...settings.providers[kind],
+          systemPrompt: source.systemPrompt,
+          activePromptPresetId: source.activePromptPresetId,
+          promptPresets: source.promptPresets
+        }
+      }),
+      settings.providers
+    )
   };
 }

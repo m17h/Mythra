@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join as join$1, resolve, sep, relative, dirname, basename, extname } from "node:path";
 import { existsSync, realpathSync, statSync, watch } from "node:fs";
 import { readdir, mkdir, copyFile, readFile, writeFile, rm, unlink, stat, rename, realpath, mkdtemp } from "node:fs/promises";
-import { app, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
+import { app, safeStorage, dialog, BrowserWindow, ipcMain, shell, nativeImage } from "electron";
 import { join } from "path";
 import { spawn, execFile } from "node:child_process";
 import OpenAI from "openai";
@@ -311,6 +311,79 @@ class CommandService {
 }
 const MYTHRA_SESSION_MODE_TOGGLE = "[[MYTHRA_SESSION_MODE_TOGGLE]]";
 const MYTHRA_WEB_SEARCH_TOGGLE = "[[MYTHRA_WEB_SEARCH_TOGGLE]]";
+const OPENROUTER_REASONING_EFFORTS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh"];
+const PROVIDER_KINDS$1 = ["lmstudio", "openrouter", "ollama"];
+function normalizeReasoningEffort(v, fallback) {
+  return OPENROUTER_REASONING_EFFORTS.includes(v) ? v : fallback ?? "auto";
+}
+function isSavedPromptPresetList(v) {
+  return Array.isArray(v) && v.every(
+    (x) => x != null && typeof x === "object" && typeof x.id === "string" && typeof x.name === "string" && typeof x.prompt === "string" && typeof x.updatedAt === "number"
+  );
+}
+function rawHasPromptPresetsKey(raw) {
+  return Object.prototype.hasOwnProperty.call(raw, "promptPresets");
+}
+function normalizeProviderProfile(defaults, saved) {
+  const raw = saved ?? {};
+  const base = { ...defaults, ...raw };
+  if (rawHasPromptPresetsKey(raw) && isSavedPromptPresetList(raw.promptPresets)) {
+    const v = raw.activePromptPresetId;
+    const activePromptPresetId2 = typeof v === "string" ? v : null;
+    return {
+      kind: base.kind ?? defaults.kind,
+      baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
+      apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
+      model: typeof base.model === "string" ? base.model : defaults.model,
+      systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
+      activePromptPresetId: activePromptPresetId2,
+      promptPresets: raw.promptPresets,
+      appName: typeof base.appName === "string" ? base.appName : defaults.appName,
+      appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
+      reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
+    };
+  }
+  const promptPresets = isSavedPromptPresetList(raw.customPromptPresets) ? raw.customPromptPresets : [];
+  const oldPid = raw.promptPresetId;
+  const oldA = raw.activeCustomPresetId;
+  let activePromptPresetId = null;
+  if (oldPid === "custom") {
+    activePromptPresetId = typeof oldA === "string" ? oldA : null;
+  } else {
+    activePromptPresetId = null;
+  }
+  return {
+    kind: base.kind ?? defaults.kind,
+    baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
+    apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
+    model: typeof base.model === "string" ? base.model : defaults.model,
+    systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
+    activePromptPresetId,
+    promptPresets,
+    appName: typeof base.appName === "string" ? base.appName : defaults.appName,
+    appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
+    reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
+  };
+}
+function syncProviderSystemPromptFields(settings, sourceProvider = settings.selectedProvider) {
+  const source = settings.providers[sourceProvider] ?? settings.providers[settings.selectedProvider];
+  if (!source) return settings;
+  return {
+    ...settings,
+    providers: PROVIDER_KINDS$1.reduce(
+      (providers, kind) => ({
+        ...providers,
+        [kind]: {
+          ...settings.providers[kind],
+          systemPrompt: source.systemPrompt,
+          activePromptPresetId: source.activePromptPresetId,
+          promptPresets: source.promptPresets
+        }
+      }),
+      settings.providers
+    )
+  };
+}
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
   { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
@@ -1667,7 +1740,7 @@ const sessionModeUiStateLine = (mode) => mode === "agent" ? "UI session mode: Ag
 const mythraWebSearchToolRoutingHint = `web_search: Mythra follows your Web Search provider choice (Settings): DuckDuckGo only, or Tavily-then-Brave / Brave-then-Tavily for whichever API keys are saved—each failure (including quota) skips to the next step, ending on DuckDuckGo instant answers. Failed steps appear in the tool result. DuckDuckGo only returns short blurbs and links, not full pages. For weather, include a resolvable place (city/region) in the query; when DuckDuckGo has no answer, a built-in Open-Meteo fallback may return approximate current conditions (not GPS/“here”). Write tight, distinctive queries: key nouns, exact product or library names, error strings in quotes, or a year for time-sensitive items. If the result is empty or off-topic, call web_search again with different wording before giving up. If still nothing, say that honestly; do not invent URLs or facts the tool did not return.`;
 const mythraThemeInChatModeInstruction = `App theme: In Chat mode you cannot read or change the theme (no get_app_theme, set_custom_theme, set_app_theme, revert_app_theme, merge_custom_theme_tokens). You cannot call get_tool_access, get_system_prompt, or change tool permissions—switch to Agent mode first. If the user asks what theme is active, to change the theme, palette, or to revert a theme, say they need Agent mode first, and include the session-mode line so they get an inline switch: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 const mythraSetAppThemeAgentInstruction = `App theme (Agent only): For full custom colors call set_custom_theme with an explicit palette from (${SEMANTIC_CUSTOM_THEME_PALETTE_IDS.join(", ")}) and mode light or dark when brightness matters—do not rely only on the description string for routing (e.g. user asks for **red** → palette **red**, not pink). For targeted recolors ("sidebar only", exact hex), use merge_custom_theme_tokens with slots or whitelisted CSS variables. set_app_theme only applies fixed preset tiles (${PRESET_THEME_IDS.join(", ")}). revert_app_theme undoes the last change. After a successful theme change, reply in one short sentence and do not describe colors that differ from the tool result. **Mystic chat background:** When Settings → chat background is **Mythic**, artwork tracks the UI theme. For **Custom** app themes, **light** custom uses the **ice** Mystic image and **dark** custom uses the **neon** Mystic image; the UI layers **--chat-thread-bg** and bubble-related tokens (**--chat-assistant-bg**, **--chat-user-bg**, **--thinking-bg**) on top so the conversation area tints to match the palette. Prefer this coordinated look—after set_custom_theme you may call merge_custom_theme_tokens on **chatThread** / **assistantMessage** / **userMessage** with rgba washes of the accent if the user wants a stronger match.`;
-const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.";
+const mythraModelSystemPromptInstruction = "System prompt: in Agent mode you may always call get_system_prompt to read the stored global assistant instructions—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full global prompt and saves to disk. Call get_tool_access to read Tool access toggles.";
 const mythraToolAccessReadInstruction = "Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.";
 const mythraCurrentTimeInstruction = "Current time/date: If the user asks for the current time, date, weekday, timezone, today/tomorrow/yesterday, deadlines, schedules, logs “from today”, or anything that depends on the local clock, call get_current_time first. Use its local machine time as authoritative; do not guess from model training data.";
 const mythraAppToolInstruction = [
@@ -1836,9 +1909,9 @@ function agentModeSystemPromptInstructions(settings, runtime) {
   if (runtime.wizardId) {
     const label = runtime.wizardName?.trim() || "this Wizard";
     return [
-      `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global LLM provider preset in Settings.`,
+      `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global System Prompt preset in Settings.`,
       "To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. Mythra opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.",
-      "`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global LLM provider** preset in Settings—do not confuse the two.",
+      "`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global System Prompt** preset in Settings—do not confuse the two.",
       "`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). Mythra also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit identity.md and adjust `set_wizard_system_prompt` so identity text matches. For legacy Wizards, update soul.md if that is where identity still lives.",
       "Non-Wizard Tool access lines elsewhere in this prompt still apply to files, workspace search, and commands; Wizard prompt edits bypass the “AI can change system prompt” toggle.",
       "`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[Mythra model routing`, `[Mythra] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on identity.md or personality.md when facts live there), then minimally adjust—do not paste large unrelated blocks.",
@@ -2559,7 +2632,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       type: "function",
       function: {
         name: "get_system_prompt",
-        description: "Return the full system prompt text and preset metadata for the **currently selected** LLM provider in Settings (read-only, never writes). Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.",
+        description: "Return the full global system prompt text and preset metadata from Settings (read-only, never writes). It is the same across LM Studio, OpenRouter, and Ollama. Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.",
         parameters: {
           type: "object",
           properties: {},
@@ -2573,7 +2646,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       type: "function",
       function: {
         name: "get_wizard_system_prompt",
-        description: "Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not Mythra’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global LLM provider preset in Settings. Long prompts may be truncated.",
+        description: "Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not Mythra’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global System Prompt preset in Settings. Long prompts may be truncated.",
         parameters: {
           type: "object",
           properties: {},
@@ -2900,13 +2973,13 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         type: "function",
         function: {
           name: "set_system_prompt",
-          description: "Replace the entire system prompt for the **currently selected** LLM provider in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately; applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.",
+          description: "Replace the entire global system prompt in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately, syncs across LM Studio/OpenRouter/Ollama, and applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.",
           parameters: {
             type: "object",
             properties: {
               system_prompt: {
                 type: "string",
-                description: "Full new system prompt text (replaces the previous one for this provider)."
+                description: "Full new system prompt text (replaces the previous global prompt)."
               }
             },
             required: ["system_prompt"],
@@ -2922,7 +2995,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
         type: "function",
         function: {
           name: "set_wizard_system_prompt",
-          description: "Replace this Wizard’s private system prompt only—not the global LLM provider preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. Mythra shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste Mythra Agent routing text from this chat into system_prompt—only persona/editor-style instructions.",
+          description: "Replace this Wizard’s private system prompt only—not the global System Prompt preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. Mythra shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste Mythra Agent routing text from this chat into system_prompt—only persona/editor-style instructions.",
           parameters: {
             type: "object",
             properties: {
@@ -3017,6 +3090,61 @@ ${text}` : "The model did not return an image file. Try again or choose another 
           }
         }
       });
+      if (runtime.nexusTeamWorkspaces?.length) {
+        tools.push(
+          {
+            type: "function",
+            function: {
+              name: "list_nexus_teammate_workspaces",
+              description: "List Nexus teammate Wizard workspaces and their Markdown documents. Use this when you need to understand who teammates are or what private docs are available. Returns paths only, not document contents.",
+              parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "read_nexus_teammate_file",
+              description: "Read a file from a Nexus teammate Wizard workspace by wizard_id or wizard_name. Read-only: cannot write, edit, delete, rename, patch, or run commands in teammate workspaces. Use for identity, personality, memory, and Markdown docs when needed.",
+              parameters: {
+                type: "object",
+                properties: {
+                  wizard_id: {
+                    type: "string",
+                    description: "The teammate wizard id from list_nexus_teammate_workspaces."
+                  },
+                  wizard_name: {
+                    type: "string",
+                    description: "The teammate wizard display name. Use if you do not know wizard_id."
+                  },
+                  path: {
+                    type: "string",
+                    description: "Workspace-relative path inside that teammate Wizard workspace."
+                  },
+                  pdf_start_page: {
+                    type: "number",
+                    description: "PDF-only. 1-based page number to start reading from."
+                  },
+                  pdf_page_count: {
+                    type: "number",
+                    description: "PDF-only. Number of pages to read from pdf_start_page."
+                  },
+                  pdf_ocr: {
+                    type: "string",
+                    enum: ["auto", "on", "off"],
+                    description: "PDF-only. auto OCRs pages with little/no embedded text."
+                  }
+                },
+                required: ["path"],
+                additionalProperties: false
+              }
+            }
+          }
+        );
+      }
     }
     if (settings.tools.fileWrite) {
       tools.push(
@@ -3296,6 +3424,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       settings.tools.workspaceSearch ? "list_files, list_recent_files" : null,
       settings.tools.workspaceSearch ? "search_symbols, get_file_outline" : null,
       settings.tools.fileRead ? "read_file, summarize_file, describe_image, transcribe_audio" : null,
+      settings.tools.fileRead && runtime.nexusTeamWorkspaces?.length ? "list_nexus_teammate_workspaces, read_nexus_teammate_file" : null,
       settings.tools.fileWrite ? "apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path" : null,
       settings.tools.commandDeck ? "get_git_diff, run_tests, run_command" : null,
       settings.tools.allowModelSystemPrompt ? "set_system_prompt" : null,
@@ -3327,6 +3456,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       `Approval: ${this.effectiveFullAccess(settings, runtime) ? "writes/commands/system prompt runs without per-action approval" : "user approval may be required for some writes, deletes, commands, and system prompt changes"}.`,
       runtime.wizardId ? "Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access." : "",
       runtime.wizardId ? runtime.wizardAllowOutsideWorkspace ? "Wizard **Allow paths outside workspace** is ON: read/write/replace/insert/rename/delete/get_file_outline may target ../ segments or absolute local paths (cloud-sync folders remain blocked). list_files, search_symbols, apply_patch, get_git_diff, run_tests, and run_command stay scoped to this Wizard’s workspace folder only." : "Wizard path-based file tools default to this workspace folder only. If the user wants reads/writes elsewhere on disk (another Wizard folder, home directory, etc.), tell them to enable **Allow paths outside workspace** for this Wizard in Inspector → Wizard settings. Until then Mythra rejects paths outside the workspace—even with approval. To reuse another Wizard’s docs without that setting, suggest copying files here or opening that Wizard’s session." : "",
+      runtime.nexusTeamWorkspaces?.length ? "Nexus teammate Wizard workspaces are NOT auto-loaded into this prompt. You have read-only tools to inspect teammate identity/memory/docs on demand: list_nexus_teammate_workspaces and read_nexus_teammate_file. These tools never grant write access to teammate Wizard folders; normal file write tools still target only the shared Nexus workspace." : "",
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
@@ -3698,7 +3828,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       })();
       return JSON.stringify(
         {
-          provider: kind,
+          active_provider: kind,
           prompt_preset: preset,
           active_prompt_preset_id: provider.activePromptPresetId,
           system_prompt,
@@ -3769,7 +3899,7 @@ ${truncate(system_prompt, 900)}`
       );
       const saved = await this.persistAppSettings((base) => {
         const p = base.providers[providerKind];
-        return {
+        return syncProviderSystemPromptFields({
           ...base,
           providers: {
             ...base.providers,
@@ -3779,15 +3909,14 @@ ${truncate(system_prompt, 900)}`
               activePromptPresetId: null
             }
           }
-        };
+        });
       });
       Object.assign(settings, saved);
       return JSON.stringify(
         {
           ok: true,
-          provider: providerKind,
           length: system_prompt.length,
-          message: "System prompt saved for the active provider. It applies on the next message."
+          message: "Global system prompt saved across providers. It applies on the next message."
         },
         null,
         2
@@ -4051,6 +4180,100 @@ ${memory}`,
             path: relative(workspaceRoot, audio.path),
             mimeType: audio.mimeType,
             transcript
+          },
+          null,
+          2
+        );
+      }
+      case "list_nexus_teammate_workspaces": {
+        if (!settings.tools.fileRead) {
+          throw new Error("The list_nexus_teammate_workspaces tool is disabled in settings.");
+        }
+        const members = runtime.nexusTeamWorkspaces ?? [];
+        if (members.length === 0) {
+          throw new Error("This chat has no Nexus teammate workspace references.");
+        }
+        const entries = await Promise.all(
+          members.map(async (member) => {
+            try {
+              const docs = await this.workspaceService.listWizardWorkspaceDocuments(member.workspaceRoot);
+              return {
+                wizardId: member.wizardId,
+                wizardName: member.wizardName,
+                role: member.role,
+                workspaceRoot: member.workspaceRoot,
+                markdownDocuments: docs.filter((doc) => /\.md$/i.test(doc.path)).map((doc) => ({
+                  path: relative(member.workspaceRoot, doc.path),
+                  label: doc.label,
+                  core: doc.core
+                }))
+              };
+            } catch (error) {
+              return {
+                wizardId: member.wizardId,
+                wizardName: member.wizardName,
+                role: member.role,
+                workspaceRoot: member.workspaceRoot,
+                error: error instanceof Error ? error.message : "Could not list workspace."
+              };
+            }
+          })
+        );
+        return JSON.stringify({ ok: true, count: entries.length, entries }, null, 2);
+      }
+      case "read_nexus_teammate_file": {
+        if (!settings.tools.fileRead) {
+          throw new Error("The read_nexus_teammate_file tool is disabled in settings.");
+        }
+        const members = runtime.nexusTeamWorkspaces ?? [];
+        if (members.length === 0) {
+          throw new Error("This chat has no Nexus teammate workspace references.");
+        }
+        const wizardId = String(args.wizard_id ?? "").trim();
+        const wizardName = String(args.wizard_name ?? "").trim().toLowerCase();
+        const member = members.find((candidate) => candidate.wizardId === wizardId) ?? members.find((candidate) => candidate.wizardName.trim().toLowerCase() === wizardName);
+        if (!member) {
+          throw new Error("read_nexus_teammate_file requires a valid wizard_id or wizard_name from list_nexus_teammate_workspaces.");
+        }
+        const path = String(args.path ?? "");
+        if (!path) {
+          throw new Error("read_nexus_teammate_file requires a path.");
+        }
+        const pdfStartPage = Number(args.pdf_start_page);
+        const pdfPageCount = Number(args.pdf_page_count);
+        const rawPdfOcr = String(args.pdf_ocr ?? "auto");
+        const pdfOcr = rawPdfOcr === "on" || rawPdfOcr === "off" ? rawPdfOcr : "auto";
+        const file = await this.workspaceService.openFile(member.workspaceRoot, path, false, {
+          pdf: {
+            startPage: Number.isFinite(pdfStartPage) ? pdfStartPage : void 0,
+            pageCount: Number.isFinite(pdfPageCount) ? pdfPageCount : void 0,
+            ocr: pdfOcr
+          }
+        });
+        if (file.imagePreview && !file.content) {
+          return JSON.stringify(
+            {
+              wizardId: member.wizardId,
+              wizardName: member.wizardName,
+              path: relative(member.workspaceRoot, file.path),
+              kind: "image",
+              mimeType: file.imagePreview.mimeType,
+              readOnly: true,
+              note: "Binary image file. No text content is returned here."
+            },
+            null,
+            2
+          );
+        }
+        return JSON.stringify(
+          {
+            wizardId: member.wizardId,
+            wizardName: member.wizardName,
+            path: relative(member.workspaceRoot, file.path),
+            kind: file.readOnlyReason?.toLowerCase().includes("pdf") ? "pdf" : "text",
+            readOnly: true,
+            note: file.readOnlyReason ?? "Read-only Nexus teammate workspace file.",
+            content: truncate(file.content)
           },
           null,
           2
@@ -4766,58 +4989,92 @@ function mysticVariantForTheme(themeId, customThemeLight) {
 function isChatThreadBackgroundPresetId(value) {
   return value === "mystic";
 }
-const OPENROUTER_REASONING_EFFORTS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh"];
-function normalizeReasoningEffort(v, fallback) {
-  return OPENROUTER_REASONING_EFFORTS.includes(v) ? v : fallback ?? "auto";
+const ENCRYPTED_SECRET_PREFIX = "mythra-enc:";
+const PROVIDER_KINDS = ["lmstudio", "openrouter", "ollama"];
+function isEncryptedSecret(value) {
+  return value.startsWith(ENCRYPTED_SECRET_PREFIX);
 }
-function isSavedPromptPresetList(v) {
-  return Array.isArray(v) && v.every(
-    (x) => x != null && typeof x === "object" && typeof x.id === "string" && typeof x.name === "string" && typeof x.prompt === "string" && typeof x.updatedAt === "number"
-  );
+function isEncryptionAvailable() {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
 }
-function rawHasPromptPresetsKey(raw) {
-  return Object.prototype.hasOwnProperty.call(raw, "promptPresets");
+function decryptSecretValue(stored) {
+  if (!stored) return "";
+  if (!isEncryptedSecret(stored)) return stored;
+  if (!isEncryptionAvailable()) {
+    console.warn("[mythra] Encrypted API key on disk but OS encryption is unavailable on this machine.");
+    return "";
+  }
+  try {
+    const encoded = stored.slice(ENCRYPTED_SECRET_PREFIX.length);
+    const buffer = Buffer.from(encoded, "base64");
+    return safeStorage.decryptString(buffer);
+  } catch (error) {
+    console.warn("[mythra] Failed to decrypt stored API key:", error);
+    return "";
+  }
 }
-function normalizeProviderProfile(defaults, saved) {
-  const raw = saved ?? {};
-  const base = { ...defaults, ...raw };
-  if (rawHasPromptPresetsKey(raw) && isSavedPromptPresetList(raw.promptPresets)) {
-    const v = raw.activePromptPresetId;
-    const activePromptPresetId2 = typeof v === "string" ? v : null;
-    return {
-      kind: base.kind ?? defaults.kind,
-      baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
-      apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
-      model: typeof base.model === "string" ? base.model : defaults.model,
-      systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
-      activePromptPresetId: activePromptPresetId2,
-      promptPresets: raw.promptPresets,
-      appName: typeof base.appName === "string" ? base.appName : defaults.appName,
-      appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
-      reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
+function encryptSecretValue(plain) {
+  if (!plain) return "";
+  if (!isEncryptionAvailable()) return plain;
+  try {
+    const buffer = safeStorage.encryptString(plain);
+    return `${ENCRYPTED_SECRET_PREFIX}${buffer.toString("base64")}`;
+  } catch (error) {
+    console.warn("[mythra] Failed to encrypt API key; storing as plaintext:", error);
+    return plain;
+  }
+}
+function decryptSettingsSecrets(settings) {
+  const providers = { ...settings.providers };
+  for (const kind of PROVIDER_KINDS) {
+    providers[kind] = {
+      ...providers[kind],
+      apiKey: decryptSecretValue(providers[kind].apiKey)
     };
   }
-  const promptPresets = isSavedPromptPresetList(raw.customPromptPresets) ? raw.customPromptPresets : [];
-  const oldPid = raw.promptPresetId;
-  const oldA = raw.activeCustomPresetId;
-  let activePromptPresetId = null;
-  if (oldPid === "custom") {
-    activePromptPresetId = typeof oldA === "string" ? oldA : null;
-  } else {
-    activePromptPresetId = null;
+  return {
+    ...settings,
+    providers,
+    search: {
+      ...settings.search,
+      tavilyApiKey: decryptSecretValue(settings.search.tavilyApiKey),
+      braveApiKey: decryptSecretValue(settings.search.braveApiKey)
+    }
+  };
+}
+function encryptSettingsSecrets(settings) {
+  const providers = { ...settings.providers };
+  for (const kind of PROVIDER_KINDS) {
+    providers[kind] = {
+      ...providers[kind],
+      apiKey: encryptSecretValue(providers[kind].apiKey)
+    };
   }
   return {
-    kind: base.kind ?? defaults.kind,
-    baseUrl: typeof base.baseUrl === "string" ? base.baseUrl : defaults.baseUrl,
-    apiKey: typeof base.apiKey === "string" ? base.apiKey : defaults.apiKey,
-    model: typeof base.model === "string" ? base.model : defaults.model,
-    systemPrompt: typeof base.systemPrompt === "string" ? base.systemPrompt : defaults.systemPrompt,
-    activePromptPresetId,
-    promptPresets,
-    appName: typeof base.appName === "string" ? base.appName : defaults.appName,
-    appUrl: typeof base.appUrl === "string" ? base.appUrl : defaults.appUrl,
-    reasoningEffort: normalizeReasoningEffort(base.reasoningEffort, defaults.reasoningEffort)
+    ...settings,
+    providers,
+    search: {
+      ...settings.search,
+      tavilyApiKey: encryptSecretValue(settings.search.tavilyApiKey),
+      braveApiKey: encryptSecretValue(settings.search.braveApiKey)
+    }
   };
+}
+function isPlaintextSecret(value) {
+  return typeof value === "string" && value.length > 0 && !isEncryptedSecret(value);
+}
+function rawSettingsHasPlaintextSecrets(parsed) {
+  if (!parsed) return false;
+  for (const kind of PROVIDER_KINDS) {
+    if (isPlaintextSecret(parsed.providers?.[kind]?.apiKey)) return true;
+  }
+  if (isPlaintextSecret(parsed.search?.tavilyApiKey)) return true;
+  if (isPlaintextSecret(parsed.search?.braveApiKey)) return true;
+  return false;
 }
 const SETTINGS_FILE = "mythra-settings.json";
 const LEGACY_SETTINGS_FILES = ["openkiwi-settings.json", "pixel-forge-settings.json"];
@@ -4835,7 +5092,7 @@ function normalizeMergedSearch(saved) {
     braveApiKey: typeof base.braveApiKey === "string" ? base.braveApiKey : ""
   };
 }
-const mergeSettings = (saved) => ({
+const mergeSettings = (saved) => syncProviderSystemPromptFields({
   ...defaultSettings,
   ...saved,
   lastWorkspaceRoot: typeof saved?.lastWorkspaceRoot === "string" && saved.lastWorkspaceRoot.trim().length > 0 ? saved.lastWorkspaceRoot.trim() : null,
@@ -4886,16 +5143,27 @@ const mergeSettings = (saved) => ({
 class SettingsStore {
   userData = app.getPath("userData");
   path = join$1(this.userData, SETTINGS_FILE);
+  async writeEncrypted(settings) {
+    const forDisk = encryptSettingsSecrets(settings);
+    await mkdir(dirname(this.path), { recursive: true });
+    await writeFile(this.path, JSON.stringify(forDisk, null, 2), "utf8");
+  }
   async load() {
     const pathsToTry = [this.path, ...LEGACY_SETTINGS_FILES.map((f) => join$1(this.userData, f))];
     for (const tryPath of pathsToTry) {
       try {
         const raw = await readFile(tryPath, "utf8");
-        const merged = mergeSettings(JSON.parse(raw));
-        if (tryPath !== this.path && !existsSync(this.path)) {
+        const parsed = JSON.parse(raw);
+        const merged = decryptSettingsSecrets(mergeSettings(parsed));
+        const migratingLegacyFile = tryPath !== this.path && !existsSync(this.path);
+        if (migratingLegacyFile) {
           try {
-            await mkdir(dirname(this.path), { recursive: true });
-            await writeFile(this.path, JSON.stringify(merged, null, 2), "utf8");
+            await this.writeEncrypted(merged);
+          } catch {
+          }
+        } else if (tryPath === this.path && rawSettingsHasPlaintextSecrets(parsed) && isEncryptionAvailable()) {
+          try {
+            await this.writeEncrypted(merged);
           } catch {
           }
         }
@@ -4906,9 +5174,9 @@ class SettingsStore {
     return defaultSettings;
   }
   async save(next) {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify(next, null, 2), "utf8");
-    return next;
+    const synced = syncProviderSystemPromptFields(next);
+    await this.writeEncrypted(synced);
+    return synced;
   }
 }
 const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100";
@@ -6823,6 +7091,12 @@ const sanitizeRuntime = (runtime) => {
     wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0,
     wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0,
     nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === "boolean" ? runtime.nexusTeamFullAccess : void 0,
+    nexusTeamWorkspaces: Array.isArray(runtime.nexusTeamWorkspaces) ? runtime.nexusTeamWorkspaces.map((member) => ({
+      wizardId: typeof member?.wizardId === "string" ? member.wizardId : "",
+      wizardName: typeof member?.wizardName === "string" ? member.wizardName : "",
+      role: member?.role === "leader" ? "leader" : "member",
+      workspaceRoot: typeof member?.workspaceRoot === "string" ? member.workspaceRoot : ""
+    })).filter((member) => member.wizardId.trim() && member.wizardName.trim() && member.workspaceRoot.trim()) : void 0,
     nexusLeaderApprovesTools: typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
     nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" || runtime.nexusLeaderProvider === "ollama" ? runtime.nexusLeaderProvider : void 0,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === "string" ? runtime.nexusLeaderModel : void 0,

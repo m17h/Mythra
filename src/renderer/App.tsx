@@ -1,10 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { AppUpdatesInfoDialog } from './components/AppUpdatesInfoDialog';
 import { AppSelect } from './components/AppSelect';
-import { ChatPanel } from './components/ChatPanel';
+import { ChatPanel, type ChatContextMeterOption, type ChatMentionOption } from './components/ChatPanel';
 import { ChangesPanel } from './components/ChangesPanel';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
@@ -36,6 +36,7 @@ import {
   type ModelInfo,
   type NexusProject,
   type NexusSetupRequest,
+  type NexusTeamWorkspaceReference,
   type OpenFile,
   type OpenRouterCreditsResult,
   type OpenRouterReasoningEffort,
@@ -77,6 +78,23 @@ function sidebarBrandLogoSrc(
     return logoIce;
   }
   return logoNeonGrid;
+}
+
+const WIZARD_ORB_DEFAULT_COLOR = '#22c55e';
+const WIZARD_ORB_COLORS = [
+  { label: 'Green', color: '#22c55e' },
+  { label: 'Teal', color: '#14b8a6' },
+  { label: 'Blue', color: '#3b82f6' },
+  { label: 'Purple', color: '#8b5cf6' },
+  { label: 'Pink', color: '#ec4899' },
+  { label: 'Red', color: '#ef4444' },
+  { label: 'Orange', color: '#f97316' },
+  { label: 'Yellow', color: '#eab308' },
+  { label: 'Slate', color: '#94a3b8' }
+] as const;
+
+function wizardOrbStyle(color: string): CSSProperties {
+  return { '--wizard-orb-color': color } as CSSProperties;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -337,7 +355,7 @@ const buildNexusSystemPrompt = (leader: WizardProfile, nexus: NexusProject, team
   const collab =
     nexus.parallelWizardResponses === true
       ? '- **Parallel Nexus:** When Mythra runs multiple teammate streams on one message, everyone answers concurrently—you cannot rely on seeing drafts first. Coordinate explicitly in writing (ownership, sequencing, WAITING/BLOCKED).\n'
-      : '- **Relay Nexus:** Teammates answer **one stream at a time** in a single combined assistant message; they can read earlier segments before speaking. End a round with `[NEXUS_END]` when the Nexus is done with this user message, or `[NEXUS_CONTINUE]` to hand off another turn.\n';
+      : '- **Relay Nexus:** Teammates answer **one stream at a time** in ordered visible turns; a hidden leader router decides whether another teammate should speak next or the round should end.\n';
 
   return `${leader.systemPrompt}
 
@@ -345,10 +363,15 @@ Mythra Nexus runtime:
 - You are the leader Wizard for Nexus project "${nexus.name}".
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, personality, strengths, memory, and corrections.
+- Teammate Wizard workspaces are not automatically injected into your prompt. Use the read-only Nexus teammate tools when you need to inspect teammate identity, personality, strengths, memory, or corrections.
 - The team is: ${teamNames.join(', ')}.
+- All Nexus Wizards receive this same operating briefing: everyone should understand relay order, leader routing, tap-ins, and read-only teammate workspace inspection.
+- Leader capabilities: you can coordinate visible turns, explicitly tap in a teammate with \`@WizardName\` or \`WizardName, ...\`, and use read-only teammate workspace tools to understand who each Wizard is before assigning or routing work.
+- Teammate workspace access is read-only and on demand. It is for understanding identity, memory, preferences, and role fit—not for editing teammate private files.
 ${collab}- Start by making a concise plan. Delegate tasks to specific Wizards by name when useful, and explain why.
 - **Leader coordination:** Assign owners by name and file/path scope where helpful. When work must pause until another Wizard finishes something, say clearly **WAITING ON [Wizard]:** reason so teammates idle correctly or pick alternate tasks you assign. When independent tracks can proceed safely (different files / non-overlapping scope), say **PARALLEL OK** for those tracks.
+- Do not start your reply with your own name, a speaker label, or a line like "${leader.name}:". Mythra already displays your name above your message bubble.
+- Do not quote, recap, or paste earlier Wizard messages before your answer. Read prior teammate turns for context, then write only your new contribution.
 - If a teammate's injected docs suggest they are better suited for a task, adjust assignments and say so.
 - Treat this as a collaborative project room: include short messages addressed to teammates, task assignments, status updates, and a clear next action.
 - Only edit files in the shared Nexus workspace unless the user explicitly asks you to update a Wizard's private docs in a separate Wizard session.`;
@@ -377,14 +400,18 @@ const buildNexusResponderSystemPrompt = (
   const relayLeader =
     '- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n' +
     '- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n' +
-    '- When another teammate should speak next on this user message, end with `[NEXUS_CONTINUE]` alone on its own last line. When the Nexus should stop discussing this user message, end with `[NEXUS_END]` alone on its own last line.\n' +
+    '- For a normal user message, each routed Wizard should speak at most once. Do not request another round just to restate, summarize, or refine what was already answered.\n' +
+    '- To explicitly tap in a teammate next, end your visible reply by addressing them with `@WizardName` or `WizardName, ...`; Mythra treats that as a routing command and forces that Wizard to respond next.\n' +
+    '- A hidden leader router also decides who speaks next after each visible turn. Do not emit routing control tags; just make your useful contribution.\n' +
     '- When the user calls someone out **by Wizard display name** (or `@ThatName`) in a queued mid-relay message, Mythra usually routes the **next** stream to that teammate—reply directly if it was you.\n';
 
   const relayMember =
     '- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n' +
     '- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n' +
     '- If the user addresses you **by name** or `@yourName`, treat that as your cue to respond next even when others were busy.\n' +
-    '- Ask teammates questions when helpful. Use `[NEXUS_CONTINUE]` alone on its own last line if more discussion is needed; use `[NEXUS_END]` alone on its own last line when you believe this user message is fully addressed.\n';
+    '- For a normal user message, each routed Wizard should speak at most once. Do not request another round just to restate, summarize, or refine what was already answered.\n' +
+    '- You can explicitly tap in a teammate by ending your visible reply with `@WizardName` or `WizardName, ...`; Mythra treats that as a routing command and forces that Wizard to respond next.\n' +
+    '- Ask teammates questions when helpful, but do not emit routing control tags; the hidden leader router will decide whether another Wizard should speak.\n';
 
   const modeLeader = conversationMode === 'parallel' ? parallelLeader : relayLeader;
   const modeMember = conversationMode === 'parallel' ? parallelMember : relayMember;
@@ -396,10 +423,15 @@ Mythra Nexus runtime:
 - Your Nexus role is: ${role === 'leader' ? 'leader' : 'team member'}.
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, personality, strengths, memory, and corrections.
+- Teammate Wizard workspaces are not automatically injected into your prompt. Use the read-only Nexus teammate tools when you need to inspect teammate identity, personality, strengths, memory, or corrections.
 - The team is: ${teamNames.join(', ')}.
+- All Nexus Wizards receive this same operating briefing: everyone should understand relay order, leader routing, tap-ins, and read-only teammate workspace inspection.
+- Leader capabilities: the leader can coordinate visible turns, explicitly tap in a teammate with \`@WizardName\` or \`WizardName, ...\`, and use read-only teammate workspace tools to understand who each Wizard is before assigning or routing work.
+- Teammate workspace access is read-only and on demand. It is for understanding identity, memory, preferences, and role fit—not for editing teammate private files.
 ${role === 'leader' ? modeLeader : modeMember}
 - Answer as yourself, in first person, and focus on the user's latest request.
+- Do not start your reply with your own name, a speaker label, or a line like "${wizard.name}:". Mythra already displays your name above your message bubble.
+- Do not quote, recap, or paste earlier Wizard messages before your answer. Read prior teammate turns for context, then write only your new contribution.
 - Prefer splitting files/paths across teammates when parallelizing so simultaneous edits collide less often.
 - If another Wizard is better suited for part of the work, say so clearly and suggest how to split it.
 - Only edit files in the shared Nexus workspace unless the user explicitly asks you to update your private docs in a separate Wizard session.`;
@@ -454,32 +486,21 @@ const buildNexusDocsContext = async (
   team: Array<{ id: string; wizard: WizardProfile; role: 'leader' | 'member' }>
 ): Promise<WizardDocsContextResult> => {
   const loaded: Array<{ name: string; ok: boolean }> = [];
-  const parts: string[] = [];
   for (const member of team) {
-    const result = await buildWizardDocsContext(member.wizard);
-    loaded.push(
-      ...result.loaded.map((doc) => ({
-        name: `${member.wizard.name}/${doc.name}`,
-        ok: doc.ok
-      }))
-    );
-    if (result.message) {
-      parts.push(`## ${member.role === 'leader' ? 'Leader' : 'Member'}: ${member.wizard.name}\n${result.message.content}`);
+    try {
+      const docs = await window.electronAPI.listWizardDocuments(member.wizard.workspaceRoot);
+      const mdDocs = docs.filter((doc) => /\.md$/i.test(doc.path));
+      loaded.push(
+        ...mdDocs.map((doc) => ({
+          name: `${member.wizard.name}/${workspaceRelativeDisplay(member.wizard.workspaceRoot, doc.path) || doc.label || pathLabel(doc.path)}`,
+          ok: true
+        }))
+      );
+    } catch {
+      loaded.push({ name: member.wizard.name, ok: false });
     }
   }
-  if (parts.length === 0) return { message: null, loaded };
-  return {
-    loaded,
-    message: {
-      id: `nexus-docs-${Date.now()}`,
-      role: 'system',
-      content: [
-        'Nexus team private Wizard Markdown documents are injected below as read-only context. Use them to coordinate role fit, memory, style, and corrections while doing project work only in the shared Nexus workspace.',
-        ...parts
-      ].join('\n\n'),
-      status: 'done'
-    }
-  };
+  return { message: null, loaded };
 };
 
 type DiffLineKind = 'same' | 'add' | 'remove';
@@ -519,6 +540,19 @@ const stripNexusRelayControlMarkers = (raw: string) =>
 
 const parseNexusRelayWantsEnd = (raw: string) => /\[\s*NEXUS_END\s*\]/i.test(raw);
 
+const userRequestsEveryNexusWizard = (text: string) =>
+  /\b(all|every|each)\s+(?:of\s+(?:you|the\s+)?|the\s+)?(?:wizards?|models?|members?|teammates?|agents?)\b/i.test(text) ||
+  /\b(?:you\s+guys|you\s+all|y['’]?all|the\s+team|the\s+group)\b/i.test(text) ||
+  /\b(?:everyone|everybody)'?s\s+(?:thoughts?|opinions?|perspectives?|takes?)\b/i.test(text) ||
+  /\b(?:thoughts?|opinions?|perspectives?|takes?)\s+(?:from|of)\s+(?:everyone|everybody|the\s+team|all\s+of\s+you)\b/i.test(text) ||
+  /\b(?:everyone|everybody)\b/i.test(text) ||
+  /\beach\s+of\s+you\b/i.test(text);
+
+const userInvitesNexusDiscussion = (text: string) =>
+  /\b(?:discuss|debate|deliberate|brainstorm|collaborate|work\s+through|talk\s+(?:it|this)\s+through|back\s+and\s+forth|roundtable)\b/i.test(
+    text
+  );
+
 const sortNexusTeamLeaderFirst = <T extends { id: string }>(team: T[], leaderWizardId: string) =>
   [...team].sort((a, b) => {
     if (a.id === leaderWizardId && b.id !== leaderWizardId) return -1;
@@ -528,6 +562,19 @@ const sortNexusTeamLeaderFirst = <T extends { id: string }>(team: T[], leaderWiz
 
 /** Member row used in Nexus relay streams (subset of `nexusResponders` item). */
 type NexusRelayResponder = { id: string; wizard: WizardProfile; role: 'leader' | 'member' };
+type NexusRelayProgress = {
+  requestId: string;
+  wizardName: string;
+  segmentStartedAt: number;
+  phase: 'responding' | 'routing';
+};
+
+interface NexusLeaderRouteDecision {
+  action: 'speak' | 'end';
+  wizardId?: string;
+  wizardName?: string;
+  reason?: string;
+}
 
 function isWizardNameMentionedInText(displayName: string, haystack: string): boolean {
   const name = displayName.trim();
@@ -539,55 +586,184 @@ function isWizardNameMentionedInText(displayName: string, haystack: string): boo
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(t);
 }
 
-/**
- * When the user queued messages mid-relay (often calling someone out), route the next stream to that teammate
- * when exactly one Wizard display name matches; otherwise fall back to round-robin.
- */
-function pickNexusRelaySpeakerForQueuedTurn(
-  ordered: NexusRelayResponder[],
-  roundRobinPick: NexusRelayResponder,
-  queuedSlice: ChatMessage[]
-): NexusRelayResponder {
-  if (queuedSlice.length === 0) return roundRobinPick;
-  const text = queuedSlice.map((m) => m.content ?? '').join('\n');
-  if (!text.trim()) return roundRobinPick;
-
-  const hits = ordered.filter((m) => isWizardNameMentionedInText(m.wizard.name, text));
-  if (hits.length === 1) return hits[0]!;
-  if (hits.length > 1) {
-    const lower = text.toLowerCase();
-    let best = hits[0]!;
-    let bestPos = Infinity;
-    for (const m of hits) {
-      const nm = m.wizard.name.trim().toLowerCase();
-      const atIdx = lower.indexOf(`@${nm}`);
-      const bareIdx = lower.indexOf(nm);
-      const idx = atIdx !== -1 ? atIdx : bareIdx === -1 ? Infinity : bareIdx;
-      if (idx < bestPos) {
-        bestPos = idx;
-        best = m;
-      }
+function orderedNexusAtMentionResponders(
+  team: NexusRelayResponder[],
+  text: string
+): NexusRelayResponder[] {
+  const source = text.trim();
+  if (!source) return [];
+  const mentions: Array<{ index: number; member: NexusRelayResponder }> = [];
+  for (const member of team) {
+    const name = member.wizard.name.trim();
+    if (name.length < 2) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, 'gi');
+    for (const match of source.matchAll(pattern)) {
+      mentions.push({ index: match.index ?? 0, member });
     }
-    return best;
   }
-  return roundRobinPick;
+  mentions.sort((a, b) => a.index - b.index);
+  const seen = new Set<string>();
+  const ordered: NexusRelayResponder[] = [];
+  for (const hit of mentions) {
+    if (seen.has(hit.member.id)) continue;
+    seen.add(hit.member.id);
+    ordered.push(hit.member);
+  }
+  return ordered;
+}
+
+function orderedNexusVisibleTapIns(
+  team: NexusRelayResponder[],
+  speakerId: string,
+  text: string
+): NexusRelayResponder[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const paragraphs = trimmed.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  const lines = trimmed.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const candidates = [
+    lines[lines.length - 1] ?? '',
+    paragraphs[paragraphs.length - 1] ?? '',
+    trimmed
+  ].filter(Boolean);
+
+  for (const source of candidates) {
+    const mentionHits = orderedNexusAtMentionResponders(team, source).filter((member) => member.id !== speakerId);
+    if (mentionHits.length > 0) return mentionHits;
+  }
+
+  const finalBlock = paragraphs[paragraphs.length - 1] ?? lines[lines.length - 1] ?? trimmed;
+  const directHits: Array<{ index: number; member: NexusRelayResponder }> = [];
+  for (const member of team) {
+    if (member.id === speakerId) continue;
+    const name = member.wizard.name.trim();
+    if (name.length < 2) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(^|[.!?]\\s+|\\n)${escaped}\\s*[,::—-]\\s*`, 'i');
+    const match = finalBlock.match(pattern);
+    if (match?.index != null) directHits.push({ index: match.index, member });
+  }
+  directHits.sort((a, b) => a.index - b.index);
+  return directHits.map((hit) => hit.member);
+}
+
+function stripJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (fenced?.[1] ?? trimmed).trim();
+}
+
+function parseNexusLeaderRouteDecision(raw: string, team: NexusRelayResponder[]): NexusLeaderRouteDecision | null {
+  const cleaned = stripJsonFence(raw);
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  const source = jsonMatch?.[0] ?? cleaned;
+  try {
+    const parsed = JSON.parse(source) as Record<string, unknown>;
+    const rawAction = String(parsed.action ?? parsed.next ?? parsed.decision ?? '').trim().toLowerCase();
+    if (rawAction === 'end' || rawAction === 'stop' || rawAction === 'done') {
+      return {
+        action: 'end',
+        reason: typeof parsed.reason === 'string' ? parsed.reason : undefined
+      };
+    }
+    const wizardId = String(parsed.wizardId ?? parsed.wizard_id ?? parsed.id ?? '').trim();
+    const wizardName = String(parsed.wizardName ?? parsed.wizard_name ?? parsed.name ?? parsed.speaker ?? '').trim();
+    const member =
+      team.find((item) => item.id === wizardId) ??
+      team.find((item) => item.wizard.name.trim().toLowerCase() === wizardName.toLowerCase());
+    if (member) {
+      return {
+        action: 'speak',
+        wizardId: member.id,
+        wizardName: member.wizard.name,
+        reason: typeof parsed.reason === 'string' ? parsed.reason : undefined
+      };
+    }
+  } catch {
+    /* Fall through to the compact text fallback below. */
+  }
+
+  if (/^\s*(?:end|stop|done)\b/i.test(cleaned)) {
+    return { action: 'end' };
+  }
+  for (const member of team) {
+    const escaped = member.wizard.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(cleaned)) {
+      return { action: 'speak', wizardId: member.id, wizardName: member.wizard.name };
+    }
+  }
+  return null;
+}
+
+function buildNexusLeaderRouterSystemPrompt(
+  leader: WizardProfile,
+  nexus: NexusProject,
+  team: NexusRelayResponder[]
+) {
+  const teamRows = team
+    .map((member) =>
+      JSON.stringify({
+        wizardId: member.id,
+        name: member.wizard.name,
+        role: member.role
+      })
+    )
+    .join('\n');
+  return `${leader.systemPrompt}
+
+Mythra hidden Nexus leader router:
+- You are the invisible routing controller for Nexus project "${nexus.name}".
+- You decide who should speak next in the visible chat, or whether the current user request is complete.
+- Return exactly one JSON object and no markdown.
+- Valid END response: {"action":"end","reason":"short reason"}
+- Valid speaker response: {"action":"speak","wizardId":"one of the ids below","reason":"short reason"}
+- Do not choose a speaker just to restate, summarize, or polish what the team already said.
+- If the user asked every wizard/model/member to answer, route each relevant wizard at most once, then end unless the user also clearly asked for debate or back-and-forth.
+- If the request is open-ended, a debate, a design discussion, or unresolved after the last speaker, choose the one wizard with the most useful next contribution.
+- If a queued follow-up mentions a wizard by name or @name, choose that wizard unless another choice is clearly required.
+- Prefer ending when the current visible answers already satisfy the user.
+
+Team:
+${teamRows}`;
 }
 
 const chatFingerprint = (messages: ChatMessage[], timeline: ChatTimelineEntry[]) =>
   JSON.stringify({ messages, timeline });
 
-const stripDuplicateNexusSpeakerLabel = (name: string, raw: string) => {
+const nexusSpeakerLabelPattern = (name: string) => {
   const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return raw.replace(new RegExp(`^\\s*${escaped}\\s*:\\s*`, 'i'), '').trim();
+  return String.raw`(?:\*\*)?${escaped}\s*:(?:\*\*)?`;
+};
+
+const stripDuplicateNexusSpeakerLabel = (name: string, raw: string) => {
+  if (!name.trim()) return raw.trim();
+  return raw.replace(new RegExp(`^\\s*${nexusSpeakerLabelPattern(name)}\\s*`, 'i'), '').trim();
+};
+
+const cleanNexusResponderContent = (name: string, raw: string, knownNames: string[]) => {
+  let text = stripDuplicateNexusSpeakerLabel(name, raw);
+  const names = knownNames.map((n) => n.trim()).filter(Boolean);
+  if (names.length === 0 || !name.trim()) return text;
+
+  const labelAlternation = names.map(nexusSpeakerLabelPattern).join('|');
+  const startsWithKnownSpeaker = new RegExp(`^\\s*(?:${labelAlternation})\\s*`, 'i').test(text);
+  const ownLabelAfterTranscript = new RegExp(`(?:^|\\n)\\s*${nexusSpeakerLabelPattern(name)}\\s*`, 'i').exec(text);
+  if (startsWithKnownSpeaker && ownLabelAfterTranscript && ownLabelAfterTranscript.index > 0) {
+    text = text.slice(ownLabelAfterTranscript.index + ownLabelAfterTranscript[0].length).trim();
+  }
+
+  return stripDuplicateNexusSpeakerLabel(name, text);
 };
 
 const formatNexusMultiResponseContent = (group: NexusMultiResponseGroup) =>
   group.responders
     .map(({ requestId, name }) => {
       const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
-      const content = stripDuplicateNexusSpeakerLabel(name, raw);
-      return `**${name}:**\n${content || 'Thinking...'}`;
+      const content = cleanNexusResponderContent(name, raw, group.responders.map((responder) => responder.name));
+      return content ? `**${name}:**\n${content}` : '';
     })
+    .filter(Boolean)
     .join('\n\n');
 
 const formatNexusMultiResponseReasoning = (group: NexusMultiResponseGroup) =>
@@ -760,6 +936,12 @@ interface NexusMultiResponseGroup {
   suppressFinalizeUntilOrchestrator?: boolean;
 }
 
+interface HiddenNexusRouterRequest {
+  parentRequestId: string;
+  content: string;
+  error?: string;
+}
+
 interface OpenRouterCreditsState {
   loading: boolean;
   result: OpenRouterCreditsResult | null;
@@ -814,6 +996,8 @@ export function App() {
   const activeChatIdRef = useRef<string | undefined>(undefined);
   const inFlightChatsRef = useRef<Map<string, InFlightChat>>(new Map());
   const nexusMultiResponseGroupsRef = useRef<Map<string, NexusMultiResponseGroup>>(new Map());
+  const hiddenNexusRouterRequestsRef = useRef<Map<string, HiddenNexusRouterRequest>>(new Map());
+  const stoppedNexusRelayRequestIdsRef = useRef<Set<string>>(new Set());
   const finalizeNexusMultiResponseUiRef = useRef<(group: NexusMultiResponseGroup, usage?: ChatCompletionTokenUsage) => void>(
     () => {}
   );
@@ -822,7 +1006,7 @@ export function App() {
   /** When true, composer accepts queued sends while relay streaming (sequential Nexus only). */
   const nexusRelayComposeUnlockedRef = useRef(false);
   /** Footer progress: who is streaming and since when (epoch ms). */
-  const [nexusRelayProgress, setNexusRelayProgress] = useState<{ wizardName: string; segmentStartedAt: number } | null>(null);
+  const [nexusRelayProgress, setNexusRelayProgress] = useState<NexusRelayProgress | null>(null);
   const [chatList, setChatList] = useState<SavedChatMeta[]>([]);
   /** Provider whose catalog to show in “This chat” model override (when enabled). */
   const [overrideModelProvider, setOverrideModelProvider] = useState<ProviderKind>('lmstudio');
@@ -830,6 +1014,10 @@ export function App() {
   const [chatModelExpanded, setChatModelExpanded] = useState(false);
   /** Per-chat model override before the thread is saved (no activeChatId). Copied to disk on first send / persist. */
   const [newChatModelOverride, setNewChatModelOverride] = useState<ChatModelOverride | null>(null);
+  const [optimisticChatModelOverride, setOptimisticChatModelOverride] = useState<{
+    chatId: string;
+    override: ChatModelOverride | null;
+  } | null>(null);
   const newChatModelOverrideRef = useRef<ChatModelOverride | null>(null);
   newChatModelOverrideRef.current = newChatModelOverride;
   const [mediaPickerKind, setMediaPickerKind] = useState<MediaGenerationKind | null>(null);
@@ -887,6 +1075,9 @@ export function App() {
   const [normalChatDropTarget, setNormalChatDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
   const [draggingWizardId, setDraggingWizardId] = useState<string | null>(null);
   const [wizardDropTarget, setWizardDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
+  const [wizardColorPickerId, setWizardColorPickerId] = useState<string | null>(null);
+  const [nexusColorPickerId, setNexusColorPickerId] = useState<string | null>(null);
+  const [inFlightChatIds, setInFlightChatIds] = useState<Set<string>>(new Set());
   const [wizardRenamePrompt, setWizardRenamePrompt] = useState<{
     wizardId: string;
     previous: WizardProfile;
@@ -907,6 +1098,8 @@ export function App() {
   const settingsAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wizardAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nexusAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wizardColorPickerRef = useRef<HTMLDivElement | null>(null);
+  const nexusColorPickerRef = useRef<HTMLDivElement | null>(null);
   const wizardDraftRef = useRef<WizardProfile | null>(null);
   const nexusDraftRef = useRef<NexusProject | null>(null);
   const lastContentFingerprintRef = useRef<string | null>(null);
@@ -920,6 +1113,33 @@ export function App() {
       if (item.chatId === chatId) return item;
     }
     return undefined;
+  };
+
+  const rememberInFlight = (requestId: string, snapshot: InFlightChat) => {
+    inFlightChatsRef.current.set(requestId, snapshot);
+    setInFlightChatIds((current) => {
+      if (current.has(snapshot.chatId)) return current;
+      const next = new Set(current);
+      next.add(snapshot.chatId);
+      return next;
+    });
+  };
+
+  const forgetInFlight = (requestId: string) => {
+    const snapshot = inFlightChatsRef.current.get(requestId);
+    const deleted = inFlightChatsRef.current.delete(requestId);
+    if (snapshot && deleted) {
+      const stillInFlight = [...inFlightChatsRef.current.values()].some((item) => item.chatId === snapshot.chatId);
+      if (!stillInFlight) {
+        setInFlightChatIds((current) => {
+          if (!current.has(snapshot.chatId)) return current;
+          const next = new Set(current);
+          next.delete(snapshot.chatId);
+          return next;
+        });
+      }
+    }
+    return deleted;
   };
 
   const showInFlightIfActive = (snapshot: InFlightChat) => {
@@ -978,6 +1198,7 @@ export function App() {
   };
 
   const appendActivity = (activity: ChatActivity) => {
+    if (hiddenNexusRouterRequestsRef.current.has(activity.requestId)) return;
     const nexusGroup = nexusMultiResponseGroupsRef.current.get(activity.requestId);
     const routedRequestId = nexusGroup?.messageIdByRequestId.get(activity.requestId) ?? nexusGroup?.messageId;
     const routedActivity = routedRequestId ? { ...activity, requestId: routedRequestId } : activity;
@@ -1006,7 +1227,7 @@ export function App() {
     const message: ChatMessage = {
       id: messageId,
       role: 'assistant',
-      content: 'Thinking...',
+      content: '',
       status: 'streaming',
       assistantDisplayName: name
     };
@@ -1026,6 +1247,7 @@ export function App() {
   ) => {
     const targetRequestIds = requestIdFilter ? new Set([requestIdFilter]) : group.requestIds;
     const responderByRequestId = new Map(group.responders.map((responder) => [responder.requestId, responder.name]));
+    const responderNames = group.responders.map((responder) => responder.name);
     const recipe = (m: ChatMessage): ChatMessage => ({
       ...m
     });
@@ -1036,13 +1258,13 @@ export function App() {
         if (!requestId) return m;
         const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
-        const content = stripDuplicateNexusSpeakerLabel(name, raw);
+        const content = cleanNexusResponderContent(name, raw, responderNames);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
         const usage = m.usage ?? group.usageByRequestId.get(requestId);
         const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...recipe(m),
-          content: content || 'Thinking...',
+          content,
           reasoning,
           usage,
           costEstimate,
@@ -1068,13 +1290,13 @@ export function App() {
         if (!requestId) return m;
         const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
-        const content = stripDuplicateNexusSpeakerLabel(name, raw);
+        const content = cleanNexusResponderContent(name, raw, responderNames);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
         const usage = m.usage ?? group.usageByRequestId.get(requestId);
         const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...m,
-          content: content || 'Thinking...',
+          content,
           reasoning,
           usage,
           costEstimate,
@@ -1088,13 +1310,13 @@ export function App() {
         updateTimelineMessage(messageId, (m) => {
           const name = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? 'Wizard';
           const raw = group.contentByRequestId.get(requestId)?.trim() ?? '';
-          const content = stripDuplicateNexusSpeakerLabel(name, raw);
+          const content = cleanNexusResponderContent(name, raw, responderNames);
           const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || undefined;
           const usage = m.usage ?? group.usageByRequestId.get(requestId);
           const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
           return {
             ...m,
-            content: content || 'Thinking...',
+            content,
             reasoning,
             usage,
             costEstimate,
@@ -1160,7 +1382,7 @@ export function App() {
     if (finalSnapshot) {
       void saveChatSnapshot(finalSnapshot.chatId, finalSnapshot.messages, finalSnapshot.timeline).finally(() => {
         if (inFlightChatsRef.current.get(group.messageId) === finalSnapshot) {
-          inFlightChatsRef.current.delete(group.messageId);
+          forgetInFlight(group.messageId);
         }
       });
     }
@@ -1292,10 +1514,26 @@ export function App() {
   }, [activeNexusMeta?.id]);
 
   const effectiveModelOverride = useMemo((): ChatModelOverride | null => {
-    if (activeChatId) return activeChatMeta?.modelOverride ?? null;
+    if (activeChatId) {
+      if (optimisticChatModelOverride?.chatId === activeChatId) {
+        return optimisticChatModelOverride.override;
+      }
+      return activeChatMeta?.modelOverride ?? null;
+    }
     return newChatModelOverride;
-  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
+  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride, optimisticChatModelOverride]);
   const activeMediaOverrideKind = mediaKindForOverride(effectiveModelOverride);
+
+  useEffect(() => {
+    setOptimisticChatModelOverride(null);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (!activeChatId || optimisticChatModelOverride?.chatId !== activeChatId) return;
+    if (JSON.stringify(activeChatMeta?.modelOverride ?? null) === JSON.stringify(optimisticChatModelOverride.override)) {
+      setOptimisticChatModelOverride(null);
+    }
+  }, [activeChatId, activeChatMeta?.modelOverride, optimisticChatModelOverride]);
 
   const showWizardHubPlaceholder = useMemo(
     () =>
@@ -1514,6 +1752,30 @@ export function App() {
   }, [showNewMenu]);
 
   useEffect(() => {
+    if (!wizardColorPickerId && !nexusColorPickerId) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (wizardColorPickerRef.current?.contains(target)) return;
+      if (nexusColorPickerRef.current?.contains(target)) return;
+      setWizardColorPickerId(null);
+      setNexusColorPickerId(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWizardColorPickerId(null);
+        setNexusColorPickerId(null);
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [wizardColorPickerId, nexusColorPickerId]);
+
+  useEffect(() => {
     const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
     const path = settings?.ui.chatThreadBackgroundPath?.trim();
 
@@ -1647,11 +1909,11 @@ export function App() {
   useEffect(() => {
     if (!settings) return;
     if (activeChatId) {
-      setOverrideModelProvider(activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider);
+      setOverrideModelProvider(effectiveModelOverride?.provider ?? settings.selectedProvider);
     } else {
       setOverrideModelProvider(newChatModelOverride?.provider ?? settings.selectedProvider);
     }
-  }, [activeChatId, activeChatMeta?.modelOverride?.provider, newChatModelOverride?.provider, settings]);
+  }, [activeChatId, effectiveModelOverride?.provider, newChatModelOverride?.provider, settings?.selectedProvider]);
 
   useEffect(() => {
     if (!settings) {
@@ -1659,6 +1921,7 @@ export function App() {
       return;
     }
     let cancelled = false;
+    setOverrideModels([]);
     void window.electronAPI
       .listModels(
         settings,
@@ -1668,6 +1931,9 @@ export function App() {
       .then((list) => {
         if (cancelled) return;
         setOverrideModels(activeMediaOverrideKind ? list.filter((model) => modelMatchesMediaKind(model, activeMediaOverrideKind)) : list);
+      })
+      .catch(() => {
+        if (!cancelled) setOverrideModels([]);
       });
     return () => {
       cancelled = true;
@@ -1723,6 +1989,11 @@ export function App() {
       }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        if (delta) hiddenRouter.content += delta;
+        return;
+      }
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         if (delta) {
@@ -1753,6 +2024,11 @@ export function App() {
       }
     });
     const offDoneChat = window.electronAPI.onChatDone(({ requestId, content, reasoning, attachments, usage, costEstimate }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        hiddenRouter.content = content;
+        return;
+      }
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
@@ -1763,6 +2039,7 @@ export function App() {
           nexusGroup.costEstimateByRequestId.set(requestId, costEstimate);
         }
         nexusGroup.pending.delete(requestId);
+        setNexusRelayProgress((current) => (current?.requestId === requestId ? null : current));
 
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
           updateNexusMultiResponseMessage(nexusGroup, 'streaming', requestId);
@@ -1806,7 +2083,7 @@ export function App() {
         }
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
           if (inFlightChatsRef.current.get(requestId) === snapshot) {
-            inFlightChatsRef.current.delete(requestId);
+            forgetInFlight(requestId);
           }
         });
         return;
@@ -1815,11 +2092,17 @@ export function App() {
       setActiveRequestId(undefined);
     });
     const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        hiddenRouter.error = error;
+        return;
+      }
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         nexusGroup.contentByRequestId.set(requestId, `Error: ${error}`);
         nexusGroup.pending.delete(requestId);
+        setNexusRelayProgress((current) => (current?.requestId === requestId ? null : current));
         appendActivity({
           id: uid(),
           requestId: nexusGroup.messageId,
@@ -1866,7 +2149,7 @@ export function App() {
         }
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
           if (inFlightChatsRef.current.get(requestId) === snapshot) {
-            inFlightChatsRef.current.delete(requestId);
+            forgetInFlight(requestId);
           }
         });
         return;
@@ -2551,10 +2834,12 @@ export function App() {
     }
   }, []);
 
-  const addChatAttachments = async (files: FileList | null) => {
+  const addChatAttachments = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
+    const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(file.name));
+    if (!imageFiles.length) return;
     const nextAttachments = await Promise.all(
-      Array.from(files).map(
+      imageFiles.map(
         (file) =>
           new Promise<ChatAttachment>((resolve, reject) => {
             const reader = new FileReader();
@@ -2869,7 +3154,7 @@ export function App() {
     const inFlight = findInFlightByChatId(id);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(id);
     if (activeChatId === id) await startNewChat();
@@ -2933,7 +3218,7 @@ export function App() {
     const inFlight = findInFlightByChatId(session.id);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(session.id);
     if (activeChatId === session.id) {
@@ -2960,7 +3245,7 @@ export function App() {
     const inFlight = findInFlightByChatId(session.id);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(session.id);
     if (activeChatId === session.id) {
@@ -2997,7 +3282,7 @@ export function App() {
       const inf = findInFlightByChatId(cid);
       if (inf) {
         await window.electronAPI.stopChat(inf.requestId);
-        inFlightChatsRef.current.delete(inf.requestId);
+        forgetInFlight(inf.requestId);
       }
     }
 
@@ -3041,7 +3326,7 @@ export function App() {
       const inf = findInFlightByChatId(cid);
       if (inf) {
         await window.electronAPI.stopChat(inf.requestId);
-        inFlightChatsRef.current.delete(inf.requestId);
+        forgetInFlight(inf.requestId);
       }
     }
 
@@ -3243,10 +3528,19 @@ export function App() {
         setNewChatModelOverride(nextOverride);
         return;
       }
+      setOptimisticChatModelOverride({ chatId: activeChatId, override: nextOverride });
       const full = await window.electronAPI.loadChat(activeChatId);
-      if (!full) return;
-      await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
-      await refreshChatList();
+      if (!full) {
+        setOptimisticChatModelOverride(null);
+        return;
+      }
+      try {
+        await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
+        await refreshChatList();
+      } catch (error) {
+        setOptimisticChatModelOverride(null);
+        throw error;
+      }
     },
     [activeChatId, activeChatMeta?.modelOverride, refreshChatList]
   );
@@ -3591,6 +3885,83 @@ export function App() {
     [refreshChatList]
   );
 
+  const saveWizardAccentColor = useCallback(
+    async (wizardId: string, accentColor: string) => {
+      setWizardColorPickerId(null);
+      setChatList((current) =>
+        current.map((chat) =>
+          chat.id === wizardId && chat.wizard
+            ? {
+                ...chat,
+                wizard: {
+                  ...chat.wizard,
+                  accentColor
+                }
+              }
+            : chat
+        )
+      );
+
+      const full = await window.electronAPI.loadChat(wizardId);
+      if (!full || full.kind !== 'wizard' || !full.wizard) return;
+      const activeDraft = activeWizardMeta?.id === wizardId ? wizardDraftRef.current : null;
+      const nextWizard: WizardProfile = {
+        ...(activeDraft ?? full.wizard),
+        accentColor
+      };
+      await window.electronAPI.saveChat({
+        ...full,
+        wizard: nextWizard,
+        modelOverride: { provider: nextWizard.provider, model: nextWizard.model },
+        updatedAt: full.updatedAt
+      });
+      if (activeWizardMeta?.id === wizardId) {
+        setWizardDraft(nextWizard);
+        wizardDraftRef.current = nextWizard;
+      }
+      await refreshChatList();
+    },
+    [activeWizardMeta?.id, refreshChatList]
+  );
+
+  const saveNexusAccentColor = useCallback(
+    async (nexusId: string, accentColor: string) => {
+      setNexusColorPickerId(null);
+      setChatList((current) =>
+        current.map((chat) =>
+          chat.id === nexusId && chat.nexus
+            ? {
+                ...chat,
+                nexus: {
+                  ...chat.nexus,
+                  accentColor
+                }
+              }
+            : chat
+        )
+      );
+
+      const full = await window.electronAPI.loadChat(nexusId);
+      if (!full || full.kind !== 'nexus' || !full.nexus) return;
+      const activeDraft = activeNexusMeta?.id === nexusId ? nexusDraftRef.current : null;
+      const nextNexus: NexusProject = {
+        ...(activeDraft ?? full.nexus),
+        accentColor
+      };
+      await window.electronAPI.saveChat({
+        ...full,
+        nexus: nextNexus,
+        updatedAt: full.updatedAt
+      });
+      if (activeNexusMeta?.id === nexusId) {
+        setNexusDraft(nextNexus);
+        nexusDraftRef.current = nextNexus;
+      }
+      await refreshChatList();
+    },
+    [activeNexusMeta?.id, refreshChatList]
+  );
+
   const canReorderNormalChats = useCallback(
     (sourceId: string | null, targetId: string) => {
       if (!sourceId || sourceId === targetId) return false;
@@ -3851,6 +4222,10 @@ export function App() {
     if (!sendSettings || (trimmedInput.length === 0 && attachmentsSnapshot.length === 0)) {
       return;
     }
+    if (composerDisabledReason) {
+      setSettingsStatus(composerDisabledReason);
+      return;
+    }
 
     if (
       chatStreamingRef.current &&
@@ -3985,6 +4360,14 @@ export function App() {
     const nexusLeader = nexusForStream
       ? nexusTeam.find((member) => member.id === nexusForStream.leaderWizardId)?.wizard ?? null
       : null;
+    const nexusTeamWorkspaceRefs: NexusTeamWorkspaceReference[] = nexusForStream
+      ? nexusTeam.map((member) => ({
+          wizardId: member.id,
+          wizardName: member.wizard.name,
+          role: member.role,
+          workspaceRoot: member.wizard.workspaceRoot
+        }))
+      : [];
     if (wizardForStream && (!wizardForStream.model.trim() || !wizardForStream.workspaceRoot.trim())) return;
     if (nexusForStream && (!nexusLeader?.model.trim() || !nexusForStream.workspaceRoot.trim())) return;
     if (wizardForStream && workspaceRootRef.current !== wizardForStream.workspaceRoot) {
@@ -4011,9 +4394,17 @@ export function App() {
       attachments: attachmentsSnapshot,
       status: 'done'
     };
-    const nexusResponders = nexusForStream && nexusTeam.length >= 2 ? nexusTeam : [];
-    const useNexusMultiWizard = Boolean(nexusResponders.length >= 2);
-    const useParallelNexusStreams = Boolean(useNexusMultiWizard && nexusForStream?.parallelWizardResponses);
+    const allNexusResponders = nexusForStream && nexusTeam.length >= 2 ? nexusTeam : [];
+    const targetedNexusResponders = orderedNexusAtMentionResponders(
+      allNexusResponders as NexusRelayResponder[],
+      userMessage.content
+    );
+    const hasTargetedNexusResponders = targetedNexusResponders.length > 0;
+    const nexusResponders = hasTargetedNexusResponders ? targetedNexusResponders : allNexusResponders;
+    const useNexusMultiWizard = Boolean(nexusResponders.length >= (hasTargetedNexusResponders ? 1 : 2));
+    const useParallelNexusStreams = Boolean(
+      useNexusMultiWizard && !hasTargetedNexusResponders && nexusForStream?.parallelWizardResponses
+    );
     const parallelChildRequestIds =
       useNexusMultiWizard && useParallelNexusStreams ? nexusResponders.map(() => uid()) : [];
     const relayIntroSpeaker =
@@ -4038,7 +4429,7 @@ export function App() {
         ? nexusResponders.map((member, index) => ({
             id: parallelChildRequestIds[index]!,
             role: 'assistant' as const,
-            content: 'Thinking...',
+            content: '',
             status: 'streaming' as const,
             assistantDisplayName: member.wizard.name
           }))
@@ -4100,7 +4491,7 @@ export function App() {
     }
     if (!chatIdForStream) return;
     const mediaOverrideKind = mediaKindForOverride(overrideForStream);
-    inFlightChatsRef.current.set(requestId, {
+    rememberInFlight(requestId, {
       chatId: chatIdForStream,
       requestId,
       messages: [...nextHistory, ...assistantMessagesForTurn],
@@ -4200,6 +4591,14 @@ export function App() {
       : wizardForStream
         ? await buildWizardDocsContext(wizardForStream)
         : { message: null, loaded: [] };
+    const nexusOwnDocsByWizardId = new Map<string, WizardDocsContextResult>();
+    if (nexusForStream) {
+      await Promise.all(
+        nexusTeam.map(async (member) => {
+          nexusOwnDocsByWizardId.set(member.id, await buildWizardDocsContext(member.wizard));
+        })
+      );
+    }
     if (wizardForStream) {
       const loadedDocs = wizardDocsContext.loaded;
       const okCount = loadedDocs.filter((doc) => doc.ok).length;
@@ -4225,6 +4624,17 @@ export function App() {
     if (nexusForStream) {
       const loadedDocs = wizardDocsContext.loaded;
       const okCount = loadedDocs.filter((doc) => doc.ok).length;
+      const ownDocRows = nexusTeam.map((member) => {
+        const own = nexusOwnDocsByWizardId.get(member.id);
+        const ownOk = own?.loaded.filter((doc) => doc.ok).length ?? 0;
+        const ownTotal = own?.loaded.length ?? 0;
+        return `${member.wizard.name}: ${ownOk}/${ownTotal}`;
+      });
+      const ownDocTotal = [...nexusOwnDocsByWizardId.values()].reduce((sum, docs) => sum + docs.loaded.length, 0);
+      const ownDocOkCount = [...nexusOwnDocsByWizardId.values()].reduce(
+        (sum, docs) => sum + docs.loaded.filter((doc) => doc.ok).length,
+        0
+      );
       const missingProfiles = nexusForStream.members.length - nexusTeam.length;
       const checklist = [
         `Nexus workspace active: ${nexusForStream.workspaceRoot}`,
@@ -4237,18 +4647,24 @@ export function App() {
           ? useParallelNexusStreams
             ? [`Parallel mode: ${nexusTeam.length} Wizard streams ran concurrently on this message (each uses its own model profile).`]
             : [
-                `Relay mode: teammates respond one stream at a time in one assistant bubble (cap ${Math.min(
-                  96,
-                  Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24)
-                )} wizard turns unless the Nexus emits [NEXUS_END]).`
+                hasTargetedNexusResponders
+                  ? `Mention route: ${nexusResponders
+                      .map((member) => member.wizard.name)
+                      .join(' -> ')} will respond one stream at a time in the order mentioned.`
+                  : `Relay mode: teammates respond one stream at a time in one assistant bubble (cap ${Math.min(
+                      96,
+                      Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24)
+                    )} wizard turns; the leader router chooses each next speaker dynamically).`
               ]
           : []),
-        `Injected ${okCount}/${loadedDocs.length} team Markdown documents into this request.`
+        `Read-only teammate workspace tools available for ${nexusTeamWorkspaceRefs.length} Wizard(s).`,
+        `Auto-injected each responding Wizard's own private Markdown documents into that Wizard's stream: ${ownDocRows.join(', ') || 'none'}.`,
+        `Auto-injected 0 team Markdown documents; ${okCount}/${loadedDocs.length} Markdown document path(s) are available to inspect on demand.`
       ].join('\n');
       const activity: ChatActivity = {
         id: uid(),
         requestId,
-        kind: okCount === loadedDocs.length ? 'success' : 'warning',
+        kind: okCount === loadedDocs.length && ownDocOkCount === ownDocTotal ? 'success' : 'warning',
         message: checklist
       };
       const activityEntry: ChatTimelineEntry = { id: `activity-${activity.id}`, type: 'activity', activity };
@@ -4260,11 +4676,16 @@ export function App() {
       }
     }
     const streamHistory = wizardDocsContext.message ? [wizardDocsContext.message, ...nextHistory] : nextHistory;
+    const nexusHistoryForMember = (member: { id: string }, history: ChatMessage[]) => {
+      const docs = nexusOwnDocsByWizardId.get(member.id);
+      return docs?.message ? [docs.message, ...history] : history;
+    };
 
     if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && useParallelNexusStreams) {
       await Promise.all(
         nexusResponders.map((member, index) => {
           const rid = parallelChildRequestIds[index]!;
+          const memberStreamHistory = nexusHistoryForMember(member, streamHistory);
           const memberSettings: AppSettings = {
             ...sendSettings,
             selectedProvider: member.wizard.provider,
@@ -4291,7 +4712,7 @@ export function App() {
               sessionMode: 'agent' as const
             }
           };
-          return window.electronAPI.streamChat(rid, memberSettings, streamHistory, {
+          return window.electronAPI.streamChat(rid, memberSettings, memberStreamHistory, {
             workspaceRoot: nexusForStream.workspaceRoot,
             activeFilePath: activeFilePathRef.current,
             conversationId: `${chatSessionIdRef.current}:${member.id}`,
@@ -4301,6 +4722,7 @@ export function App() {
             wizardFullAccess: undefined,
             wizardAllowOutsideWorkspace: undefined,
             nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
             nexusLeaderApprovesTools:
               Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
             nexusLeaderProvider: nexusLeader.provider,
@@ -4314,24 +4736,186 @@ export function App() {
 
     if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && !useParallelNexusStreams) {
       try {
+        stoppedNexusRelayRequestIdsRef.current.delete(requestId);
         nexusRelayComposeUnlockedRef.current = true;
-        const ordered = sortNexusTeamLeaderFirst(nexusResponders, nexusForStream.leaderWizardId);
-        const maxTurns = Math.min(96, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24));
-        const relayHardCap = Math.min(160, maxTurns + 40);
+        const relayTeam = sortNexusTeamLeaderFirst(
+          (allNexusResponders.length > 0 ? allNexusResponders : nexusResponders) as NexusRelayResponder[],
+          nexusForStream.leaderWizardId
+        );
+        const ordered = hasTargetedNexusResponders
+          ? nexusResponders
+          : relayTeam;
+        const maxTurns = hasTargetedNexusResponders
+          ? ordered.length
+          : Math.min(96, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24));
+        const relayHardCap = hasTargetedNexusResponders
+          ? Math.min(160, Math.max(maxTurns, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24)))
+          : Math.min(160, maxTurns + 40);
+        const latestUserWantsEveryWizard = userRequestsEveryNexusWizard(userMessage.content);
+        const latestUserInvitesDiscussion = userInvitesNexusDiscussion(userMessage.content);
+        const spokenWizardIds = new Set<string>();
+        const visibleTapInQueue: NexusRelayResponder[] = [];
+        let lastSpeakerId: string | null = null;
         let relayAssistantDigest = '';
         let turn = 0;
 
+        const chooseLeaderRoutedSpeaker = async (queuedSlice: ChatMessage[]): Promise<NexusRelayResponder | null> => {
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) return null;
+          const unspoken = relayTeam.filter((member) => !spokenWizardIds.has(member.id));
+          const queuedText = queuedSlice.map((message) => message.content ?? '').join('\n');
+          const queuedAtMentionHits = queuedText.trim() ? orderedNexusAtMentionResponders(relayTeam, queuedText) : [];
+          const queuedMentionHits =
+            queuedAtMentionHits.length > 0
+              ? queuedAtMentionHits
+              : queuedText.trim()
+                ? relayTeam.filter((member) => isWizardNameMentionedInText(member.wizard.name, queuedText))
+                : [];
+          if (queuedMentionHits.length > 0) {
+            return queuedMentionHits[0]!;
+          }
+          while (visibleTapInQueue.length > 0) {
+            const tapped = visibleTapInQueue.shift()!;
+            if (tapped.id !== lastSpeakerId) return tapped;
+          }
+          if (latestUserWantsEveryWizard && !latestUserInvitesDiscussion && spokenWizardIds.size >= ordered.length) {
+            return null;
+          }
+
+          const routerRequestId = uid();
+          hiddenNexusRouterRequestsRef.current.set(routerRequestId, { parentRequestId: requestId, content: '' });
+          setNexusRelayProgress({
+            requestId: routerRequestId,
+            wizardName: 'Mythra',
+            segmentStartedAt: Date.now(),
+            phase: 'routing'
+          });
+          const routerSettings: AppSettings = {
+            ...sendSettings,
+            selectedProvider: nexusLeader.provider,
+            providers: {
+              ...sendSettings.providers,
+              [nexusLeader.provider]: {
+                ...sendSettings.providers[nexusLeader.provider],
+                model: nexusLeader.model,
+                systemPrompt: buildNexusLeaderRouterSystemPrompt(nexusLeader, nexusForStream, relayTeam)
+              }
+            },
+            tools: {
+              ...sendSettings.tools,
+              allowModelSystemPrompt: false
+            },
+            agent: {
+              ...sendSettings.agent,
+              autoContinue: false
+            },
+            ui: {
+              ...sendSettings.ui,
+              sessionMode: 'talk' as const,
+              webSearch: false
+            }
+          };
+          const routeState = [
+            'Nexus routing state for the current user message.',
+            `Latest user request:\n${userMessage.content}`,
+            queuedSlice.length > 0
+              ? `Queued user follow-up(s):\n${queuedSlice.map((message) => message.content).join('\n\n')}`
+              : 'Queued user follow-up(s): none',
+            `User asked every wizard/model/member to answer: ${latestUserWantsEveryWizard ? 'yes' : 'no'}`,
+            `User invited open-ended discussion/back-and-forth: ${latestUserInvitesDiscussion ? 'yes' : 'no'}`,
+            `Already spoken this user message: ${
+              relayTeam
+                .filter((member) => spokenWizardIds.has(member.id))
+                .map((member) => member.wizard.name)
+                .join(', ') || 'none'
+            }`,
+            `Last speaker: ${lastSpeakerId ? relayTeam.find((member) => member.id === lastSpeakerId)?.wizard.name ?? 'unknown' : 'none'}`,
+            `Current visible Nexus transcript for this user message:\n${relayAssistantDigest.trim() || '[none yet]'}`,
+            'Return JSON only. Choose END if the current answers already satisfy the user.'
+          ].join('\n\n');
+          const leaderRouterMember = relayTeam.find((member) => member.id === nexusForStream.leaderWizardId) ?? relayTeam[0]!;
+          const routerMessages: ChatMessage[] = [
+            ...nexusHistoryForMember(leaderRouterMember, messagesForHistory),
+            userMessage,
+            {
+              id: `nexus-router-state-${routerRequestId}`,
+              role: 'user',
+              content: routeState,
+              status: 'done'
+            }
+          ];
+
+          let routerResult: { ok: boolean } = { ok: false };
+          try {
+            routerResult = await window.electronAPI.streamChat(routerRequestId, routerSettings, routerMessages, {
+              workspaceRoot: nexusForStream.workspaceRoot,
+              activeFilePath: activeFilePathRef.current,
+              conversationId: `${chatSessionIdRef.current}:leader-router:${turn}`,
+              wizardId: undefined,
+              wizardName: undefined,
+              wizardSystemPrompt: undefined,
+              wizardFullAccess: undefined,
+              wizardAllowOutsideWorkspace: undefined,
+              nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+              nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
+              nexusLeaderApprovesTools:
+                Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
+              nexusLeaderProvider: nexusLeader.provider,
+              nexusLeaderModel: nexusLeader.model,
+              nexusLeaderName: nexusLeader.name.trim() || undefined
+            });
+          } finally {
+            setNexusRelayProgress((current) => (current?.requestId === routerRequestId ? null : current));
+          }
+
+          const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(routerRequestId);
+          hiddenNexusRouterRequestsRef.current.delete(routerRequestId);
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) return null;
+          const decision = parseNexusLeaderRouteDecision(hiddenRouter?.content ?? '', relayTeam);
+          const fallback = latestUserWantsEveryWizard && !latestUserInvitesDiscussion && unspoken.length > 0
+            ? unspoken[0]!
+            : spokenWizardIds.size === 0
+              ? relayTeam[0]!
+              : null;
+          if (!routerResult.ok || hiddenRouter?.error || !decision) {
+            return fallback;
+          }
+          if (decision.action === 'end') {
+            return fallback;
+          }
+          const selected = relayTeam.find((member) => member.id === decision.wizardId);
+          if (!selected) return fallback;
+          if (
+            latestUserWantsEveryWizard &&
+            !latestUserInvitesDiscussion &&
+            spokenWizardIds.has(selected.id) &&
+            unspoken.length > 0
+          ) {
+            return unspoken[0]!;
+          }
+          if (selected.id === lastSpeakerId && unspoken.length > 0 && !queuedText.trim()) {
+            return unspoken[0]!;
+          }
+          return selected;
+        };
+
         while (turn < relayHardCap) {
-          if (turn >= maxTurns && nexusQueuedUserTurnsRef.current.length === 0) {
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) {
+            break;
+          }
+          if (turn >= maxTurns && nexusQueuedUserTurnsRef.current.length === 0 && visibleTapInQueue.length === 0) {
             break;
           }
 
           const queuedSlice = nexusQueuedUserTurnsRef.current.splice(0);
-          const roundRobinMember = ordered[turn % ordered.length]!;
-          const member =
-            queuedSlice.length > 0
-              ? pickNexusRelaySpeakerForQueuedTurn(ordered as NexusRelayResponder[], roundRobinMember, queuedSlice)
-              : roundRobinMember;
+          let member: NexusRelayResponder | null = null;
+          if (hasTargetedNexusResponders && turn < ordered.length) {
+            member = ordered[turn]!;
+          } else {
+            member = await chooseLeaderRoutedSpeaker(queuedSlice);
+          }
+          if (!member) {
+            break;
+          }
           const rid = uid();
           nexusMultiGroup.requestIds.add(rid);
           nexusMultiGroup.pending.add(rid);
@@ -4340,16 +4924,22 @@ export function App() {
           nexusMultiGroup.contentByRequestId.set(rid, '');
           nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
 
-          setNexusRelayProgress({ wizardName: member.wizard.name, segmentStartedAt: Date.now() });
+          setNexusRelayProgress({
+            requestId: rid,
+            wizardName: member.wizard.name,
+            segmentStartedAt: Date.now(),
+            phase: 'responding'
+          });
 
           addNexusMultiResponseMessage(nexusMultiGroup, rid, member.wizard.name);
           updateNexusMultiResponseMessage(nexusMultiGroup, 'streaming');
 
+          const memberStreamHistory = nexusHistoryForMember(member, streamHistory);
           const continuationHistoryBase =
             relayAssistantDigest.trim().length === 0
-              ? streamHistory
+              ? memberStreamHistory
               : [
-                  ...streamHistory,
+                  ...memberStreamHistory,
                   {
                     id: `nexus-relay-${requestId}-${turn}`,
                     role: 'assistant' as const,
@@ -4398,6 +4988,7 @@ export function App() {
             wizardFullAccess: undefined,
             wizardAllowOutsideWorkspace: undefined,
             nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
             nexusLeaderApprovesTools:
               Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
             nexusLeaderProvider: nexusLeader.provider,
@@ -4416,13 +5007,21 @@ export function App() {
           updateNexusMultiResponseMessage(nexusMultiGroup, 'streaming');
 
           relayAssistantDigest = formatNexusMultiResponseContent(nexusMultiGroup);
+          const tapIns = orderedNexusVisibleTapIns(relayTeam, member.id, cleaned);
+          for (const tapIn of tapIns) {
+            if (!visibleTapInQueue.some((queued) => queued.id === tapIn.id)) {
+              visibleTapInQueue.push(tapIn);
+            }
+          }
+          spokenWizardIds.add(member.id);
+          lastSpeakerId = member.id;
 
           if (wantsEnd) {
-            if (nexusQueuedUserTurnsRef.current.length > 0) {
+            if (!hasTargetedNexusResponders && nexusQueuedUserTurnsRef.current.length > 0) {
               turn += 1;
               continue;
             }
-            break;
+            if (!hasTargetedNexusResponders) break;
           }
 
           turn += 1;
@@ -4432,12 +5031,23 @@ export function App() {
         nexusQueuedUserTurnsRef.current = [];
         setNexusRelayProgress(null);
         nexusMultiGroup.suppressFinalizeUntilOrchestrator = false;
-        finalizeNexusMultiResponseUiRef.current(nexusMultiGroup);
+        if (!stoppedNexusRelayRequestIdsRef.current.has(requestId)) {
+          finalizeNexusMultiResponseUiRef.current(nexusMultiGroup);
+        }
+        stoppedNexusRelayRequestIdsRef.current.delete(requestId);
       }
       return;
     }
 
-    await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
+    const finalStreamHistory =
+      nexusForStream && nexusLeader
+        ? nexusHistoryForMember(
+            nexusTeam.find((member) => member.id === nexusForStream.leaderWizardId) ?? nexusTeam[0]!,
+            streamHistory
+          )
+        : streamHistory;
+
+    await window.electronAPI.streamChat(requestId, streamSettings, finalStreamHistory, {
       workspaceRoot: nexusForStream?.workspaceRoot ?? wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current,
@@ -4446,6 +5056,7 @@ export function App() {
       wizardSystemPrompt: nexusForStream ? undefined : wizardForStream?.systemPrompt,
       wizardFullAccess: nexusForStream ? undefined : wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined,
       wizardAllowOutsideWorkspace: nexusForStream ? undefined : wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : undefined,
+      nexusTeamWorkspaces: nexusForStream ? nexusTeamWorkspaceRefs : undefined,
       mediaGenerationKind: mediaOverrideKind ?? undefined,
       ...(nexusForStream && nexusLeader
         ? {
@@ -4468,11 +5079,21 @@ export function App() {
         ? [...nexusMultiResponseGroupsRef.current.values()].find((item) => item.messageId === activeRequestId)
         : undefined;
     if (group) {
-      await Promise.all([...group.pending].map((rid) => window.electronAPI.stopChat(rid)));
+      stoppedNexusRelayRequestIdsRef.current.add(group.messageId);
+      const hiddenRouterRequestIds = [...hiddenNexusRouterRequestsRef.current.entries()]
+        .filter(([, item]) => item.parentRequestId === group.messageId)
+        .map(([rid]) => rid);
+      await Promise.all([
+        ...[...group.pending].map((rid) => window.electronAPI.stopChat(rid)),
+        ...hiddenRouterRequestIds.map((rid) => window.electronAPI.stopChat(rid))
+      ]);
       for (const rid of group.requestIds) {
         nexusMultiResponseGroupsRef.current.delete(rid);
       }
-      inFlightChatsRef.current.delete(group.messageId);
+      for (const rid of hiddenRouterRequestIds) {
+        hiddenNexusRouterRequestsRef.current.delete(rid);
+      }
+      forgetInFlight(group.messageId);
     } else {
       await window.electronAPI.stopChat(activeRequestId);
     }
@@ -4522,11 +5143,33 @@ export function App() {
       .map((w) => ({ id: w.id, name: w.wizard?.name ?? w.title }));
   }, [nexusDraft, wizardChatList]);
 
+  const nexusMentionOptions = useMemo<ChatMentionOption[]>(
+    () =>
+      activeNexus
+        ? nexusSettingsParticipants.map((participant) => ({
+            id: participant.wizardId,
+            name: participant.name,
+            role: participant.role
+          }))
+        : [],
+    [activeNexus, nexusSettingsParticipants]
+  );
+
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : undefined;
   const selectedProvider = settings?.providers[settings.selectedProvider];
   const isWizardActive = Boolean(activeWizard);
   const isNexusActive = Boolean(activeNexus);
   const chatPanelIsWizard = Boolean(isWizardActive && !showWizardHubPlaceholder);
+  const isNexusPaneWithoutRoom = Boolean(
+    sidebarTab === 'wizards' &&
+      wizardsSidebarPane === 'nexus' &&
+      activeChatMeta?.kind !== 'nexus-session'
+  );
+  const composerDisabledReason = showWizardHubPlaceholder
+    ? 'Select a Wizard before starting a session.'
+    : isNexusPaneWithoutRoom
+      ? 'Select or create a Nexus room before chatting.'
+      : null;
   /** Per-chat model override wins in the top bar and footer over the global default. */
   const effectiveHeaderModelId =
     (activeNexus
@@ -4548,6 +5191,25 @@ export function App() {
     if (!id) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id)?.contextLength ?? 131072;
   })();
+  const nexusContextMeterOptions = useMemo<ChatContextMeterOption[]>(
+    () =>
+      activeNexus
+        ? nexusSettingsParticipants.map((participant) => {
+            const wizard = chatList.find((chat) => chat.id === participant.wizardId && chat.kind === 'wizard')?.wizard;
+            const model = wizard?.model?.trim() ?? '';
+            const limit = model ? modelCatalogForLimit.find((m) => m.id === model)?.contextLength ?? 131072 : 131072;
+            return {
+              id: participant.wizardId,
+              name: participant.name,
+              role: participant.role,
+              limit,
+              model: model || undefined,
+              providerLabel: wizard ? providerLabel(wizard.provider) : undefined
+            };
+          })
+        : [],
+    [activeNexus, chatList, modelCatalogForLimit, nexusSettingsParticipants]
+  );
   const selectedProviderKind: ProviderKind =
     (activeNexus
       ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider
@@ -5563,13 +6225,18 @@ export function App() {
                                       if (!settings) return;
                                       if (activeMediaOverrideKind) return;
                                       if (e.target.checked) {
-                                        const list = await window.electronAPI.listModels(settings, overrideModelProvider);
-                                        const model = pickDefaultModel(list, list[0]?.id);
+                                        const providerModel = settings.providers[overrideModelProvider]?.model ?? '';
+                                        const model =
+                                          pickDefaultModel(overrideModels, providerModel || overrideModels[0]?.id) ||
+                                          providerModel ||
+                                          overrideModels[0]?.id;
                                         if (model) {
-                                          await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                          void saveChatModelOverride({ provider: overrideModelProvider, model });
+                                        } else {
+                                          setSettingsStatus(`Choose a ${providerLabel(overrideModelProvider)} model before enabling model override.`);
                                         }
                                       } else {
-                                        await saveChatModelOverride(null);
+                                        void saveChatModelOverride(null);
                                       }
                                     }}
                                     type="checkbox"
@@ -5602,20 +6269,37 @@ export function App() {
                                             portalDropdown
                                             onChange={async (p) => {
                                               setOverrideModelProvider(p);
+                                              setOverrideModels([]);
                                               if (!settings) return;
-                                              const list = await window.electronAPI.listModels(
-                                                settings,
-                                                p,
-                                                activeMediaOverrideKind
-                                                  ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] }
-                                                  : undefined
-                                              );
-                                              const modelList = activeMediaOverrideKind
-                                                ? list.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind))
-                                                : list;
-                                              const model = pickDefaultModel(modelList, undefined);
-                                              if (model) {
-                                                await saveChatModelOverride({ provider: p, model });
+                                              const fallbackModel = settings.providers[p]?.model ?? '';
+                                              const initialSave = fallbackModel
+                                                ? saveChatModelOverride({ provider: p, model: fallbackModel })
+                                                : Promise.resolve();
+                                              if (fallbackModel) {
+                                                void initialSave;
+                                              }
+                                              try {
+                                                const list = await window.electronAPI.listModels(
+                                                  settings,
+                                                  p,
+                                                  activeMediaOverrideKind
+                                                    ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] }
+                                                    : undefined
+                                                );
+                                                const modelList = activeMediaOverrideKind
+                                                  ? list.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind))
+                                                  : list;
+                                                setOverrideModels(modelList);
+                                                const model = pickDefaultModel(modelList, fallbackModel || modelList[0]?.id);
+                                                if (model && model !== fallbackModel) {
+                                                  await initialSave;
+                                                  await saveChatModelOverride({ provider: p, model });
+                                                }
+                                              } catch (error) {
+                                                setOverrideModels([]);
+                                                setSettingsStatus(
+                                                  error instanceof Error ? error.message : `Could not load ${providerLabel(p)} models.`
+                                                );
                                               }
                                             }}
                                             value={overrideModelProvider}
@@ -5625,7 +6309,7 @@ export function App() {
                                           <span className="chat-thread-options__field-label">Model</span>
                                           <ModelSearch
                                             models={overrideModels}
-                                            value={effectiveModelOverride.model}
+                                            value={effectiveModelOverride.provider === overrideModelProvider ? effectiveModelOverride.model : ''}
                                             favoriteIds={settings.ui.favoriteModels?.[overrideModelProvider] ?? []}
                                             portalDropdown
                                             onChange={async (model) => {
@@ -5674,10 +6358,11 @@ export function App() {
                           const mediaKind = mediaKindForOverride(chat.modelOverride);
                           const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
                           const hasModelOverride = Boolean(chat.modelOverride?.model?.trim());
+                          const chatIsWorking = inFlightChatIds.has(chat.id);
                           return (
                             <div
                               key={chat.id}
-                              className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ''} ${draggingNormalChatId === chat.id ? 'is-dragging' : ''} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ''}`}
+                              className={`chat-list__item ${activeChatId === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ''} ${draggingNormalChatId === chat.id ? 'is-dragging' : ''} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ''} ${chatIsWorking ? 'is-working' : ''}`}
                               draggable={editingTitleId !== chat.id}
                               onDragEnd={clearNormalChatDragState}
                               onDragLeave={(e) => {
@@ -5727,6 +6412,9 @@ export function App() {
                                       />
                                     ) : null}
                                     <div className="chat-list__title">{chat.title}</div>
+                                    {chatIsWorking ? (
+                                      <span className="chat-list__spinner" aria-label="Model working" role="status" />
+                                    ) : null}
                                   </div>
                                   <div className="chat-list__date">{formatRelativeDate(chat.updatedAt)}</div>
                                 </div>
@@ -5810,6 +6498,7 @@ export function App() {
                             <div className="nexus-sidebar-section__label">Nexus</div>
                             {nexusProjectList.map((project) => {
                               const sessions = nexusSessionsByNexusId.get(project.id) ?? [];
+                              const nexusAccentColor = project.nexus?.accentColor?.trim() || WIZARD_ORB_DEFAULT_COLOR;
                               const leader = project.nexus
                                 ? chatList.find((chat) => chat.id === project.nexus?.leaderWizardId)?.wizard?.name
                                 : undefined;
@@ -5817,8 +6506,9 @@ export function App() {
                                 <div className="wizard-group wizard-group--nexus" key={project.id}>
                                   <div
                                     aria-expanded={expandedNexusIds.has(project.id)}
-                                    className={`chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? 'is-active' : ''} ${project.pinned ? 'is-pinned' : ''}`}
+                                    className={`chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? 'is-active' : ''} ${project.pinned ? 'is-pinned' : ''} ${nexusColorPickerId === project.id ? 'has-open-color-picker' : ''}`}
                                     onClick={() => {
+                                      setNexusColorPickerId(null);
                                       void handleNexusSidebarRowActivate(project);
                                     }}
                                   >
@@ -5834,6 +6524,20 @@ export function App() {
                                         >
                                           <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                                         </svg>
+                                        <button
+                                          aria-label={`Change ${project.title} color`}
+                                          className="wizard-color-orb"
+                                          draggable={false}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setWizardColorPickerId(null);
+                                            setNexusColorPickerId((current) => (current === project.id ? null : project.id));
+                                          }}
+                                          onMouseDown={(e) => e.stopPropagation()}
+                                          style={wizardOrbStyle(nexusAccentColor)}
+                                          title={`Change ${project.title} color`}
+                                          type="button"
+                                        />
                                         <span title={project.title}>{project.title}</span>
                                       </div>
                                       <div className="chat-list__date">
@@ -5878,6 +6582,30 @@ export function App() {
                                         </svg>
                                       </button>
                                     </div>
+                                    {nexusColorPickerId === project.id ? (
+                                      <div
+                                        className="wizard-color-popover"
+                                        onClick={(e) => e.stopPropagation()}
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        ref={nexusColorPickerRef}
+                                      >
+                                        {WIZARD_ORB_COLORS.map((option) => (
+                                          <button
+                                            aria-label={`Use ${option.label} for ${project.title}`}
+                                            aria-pressed={nexusAccentColor.toLowerCase() === option.color.toLowerCase()}
+                                            className={`wizard-color-popover__swatch ${nexusAccentColor.toLowerCase() === option.color.toLowerCase() ? 'is-active' : ''}`}
+                                            key={option.color}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              void saveNexusAccentColor(project.id, option.color);
+                                            }}
+                                            style={wizardOrbStyle(option.color)}
+                                            title={option.label}
+                                            type="button"
+                                          />
+                                        ))}
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <motion.div
                                     aria-hidden={!expandedNexusIds.has(project.id)}
@@ -5897,9 +6625,11 @@ export function App() {
                                         </svg>
                                         New room
                                       </button>
-                                      {sessions.map((session) => (
+                                      {sessions.map((session) => {
+                                        const sessionIsWorking = inFlightChatIds.has(session.id);
+                                        return (
                                         <div
-                                          className={`wizard-session-row ${activeChatId === session.id ? 'is-active' : ''}`}
+                                          className={`wizard-session-row ${activeChatId === session.id ? 'is-active' : ''} ${sessionIsWorking ? 'is-working' : ''}`}
                                           key={session.id}
                                           onClick={() => void loadChat(session.id)}
                                           role="button"
@@ -5936,7 +6666,11 @@ export function App() {
                                             <>
                                               <span title={session.title}>{session.title}</span>
                                               <div className="wizard-session-row__meta">
-                                                <small>{formatRelativeDate(session.updatedAt)}</small>
+                                                {sessionIsWorking ? (
+                                                  <span className="wizard-session-row__spinner" aria-label="Model working" role="status" />
+                                                ) : (
+                                                  <small>{formatRelativeDate(session.updatedAt)}</small>
+                                                )}
                                                 <button
                                                   aria-label={`Rename ${session.title}`}
                                                   className="wizard-session-row__rename"
@@ -5967,7 +6701,8 @@ export function App() {
                                             </>
                                           )}
                                         </div>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   </motion.div>
                                 </div>
@@ -5991,11 +6726,13 @@ export function App() {
                       <div className="chat-list">
                         <div className="nexus-sidebar-section">
                             <div className="nexus-sidebar-section__label">Wizards</div>
-                        {wizardChatList.map((chat) => (
-                          <div className="wizard-group" key={chat.id}>
+                        {wizardChatList.map((chat) => {
+                          const wizardAccentColor = chat.wizard?.accentColor?.trim() || WIZARD_ORB_DEFAULT_COLOR;
+                          return (
+                            <div className="wizard-group" key={chat.id}>
                             <div
                               aria-expanded={expandedWizardIds.has(chat.id)}
-                              className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${draggingWizardId === chat.id ? 'is-dragging' : ''} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ''}`}
+                              className={`chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? 'is-active' : ''} ${chat.pinned ? 'is-pinned' : ''} ${draggingWizardId === chat.id ? 'is-dragging' : ''} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ''} ${wizardColorPickerId === chat.id ? 'has-open-color-picker' : ''}`}
                               draggable
                               onDragEnd={clearWizardDragState}
                               onDragLeave={(e) => {
@@ -6007,6 +6744,8 @@ export function App() {
                               onDragStart={(e) => handleWizardDragStart(e, chat.id)}
                               onDrop={(e) => void handleWizardDrop(e, chat.id)}
                               onClick={() => {
+                                setWizardColorPickerId(null);
+                                setNexusColorPickerId(null);
                                 void handleWizardSidebarRowActivate(chat);
                               }}
                             >
@@ -6022,10 +6761,24 @@ export function App() {
                                   >
                                     <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                                   </svg>
+                                  <button
+                                    aria-label={`Change ${chat.title} color`}
+                                    className="wizard-color-orb"
+                                    draggable={false}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setNexusColorPickerId(null);
+                                      setWizardColorPickerId((current) => (current === chat.id ? null : chat.id));
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    style={wizardOrbStyle(wizardAccentColor)}
+                                    title={`Change ${chat.title} color`}
+                                    type="button"
+                                  />
                                   <span title={chat.title}>{chat.title}</span>
                                 </div>
                                 <div className="chat-list__date">
-                                  Wizard · {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
+                                  {(wizardSessionsByWizardId.get(chat.id) ?? []).length} sessions
                                 </div>
                               </div>
                               <div className="chat-list__row-actions" onClick={(e) => e.stopPropagation()}>
@@ -6061,6 +6814,30 @@ export function App() {
                                   </svg>
                                 </button>
                               </div>
+                              {wizardColorPickerId === chat.id ? (
+                                <div
+                                  className="wizard-color-popover"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  ref={wizardColorPickerRef}
+                                >
+                                  {WIZARD_ORB_COLORS.map((option) => (
+                                    <button
+                                      aria-label={`Use ${option.label} for ${chat.title}`}
+                                      aria-pressed={wizardAccentColor.toLowerCase() === option.color.toLowerCase()}
+                                      className={`wizard-color-popover__swatch ${wizardAccentColor.toLowerCase() === option.color.toLowerCase() ? 'is-active' : ''}`}
+                                      key={option.color}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void saveWizardAccentColor(chat.id, option.color);
+                                      }}
+                                      style={wizardOrbStyle(option.color)}
+                                      title={option.label}
+                                      type="button"
+                                    />
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
                             <motion.div
                               aria-hidden={!expandedWizardIds.has(chat.id)}
@@ -6085,9 +6862,11 @@ export function App() {
                                   </svg>
                                   New session
                                 </button>
-                                {(wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => (
+                                {(wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => {
+                                  const sessionIsWorking = inFlightChatIds.has(session.id);
+                                  return (
                                   <div
-                                    className={`wizard-session-row ${activeChatId === session.id ? 'is-active' : ''}`}
+                                    className={`wizard-session-row ${activeChatId === session.id ? 'is-active' : ''} ${sessionIsWorking ? 'is-working' : ''}`}
                                     key={session.id}
                                     onClick={() => void loadChat(session.id)}
                                     role="button"
@@ -6124,7 +6903,11 @@ export function App() {
                                       <>
                                         <span title={session.title}>{session.title}</span>
                                         <div className="wizard-session-row__meta">
-                                          <small>{formatRelativeDate(session.updatedAt)}</small>
+                                          {sessionIsWorking ? (
+                                            <span className="wizard-session-row__spinner" aria-label="Model working" role="status" />
+                                          ) : (
+                                            <small>{formatRelativeDate(session.updatedAt)}</small>
+                                          )}
                                           <button
                                             aria-label={`Rename ${session.title}`}
                                             className="wizard-session-row__rename"
@@ -6155,11 +6938,13 @@ export function App() {
                                       </>
                                     )}
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </motion.div>
-                          </div>
-                        ))}
+                            </div>
+                          );
+                        })}
                         </div>
                       </div>
                     ) : (
@@ -6279,8 +7064,11 @@ export function App() {
             attachments={chatAttachments}
             chatMessages={chatMessages}
             contextLimit={resolvedContextLimit}
+            contextMeterOptions={nexusContextMeterOptions}
             input={chatInput}
             isStreaming={chatStreaming}
+            composerDisabled={Boolean(composerDisabledReason)}
+            composerDisabledPlaceholder={composerDisabledReason ?? undefined}
             isNexus={isNexusActive}
             isWizard={chatPanelIsWizard}
             lastTokenUsage={lastTokenUsage}
@@ -6292,6 +7080,7 @@ export function App() {
             onOpenWizardCreator={() => setShowWizardSetup(true)}
             onAttachImages={addChatAttachments}
             onInputChange={setChatInput}
+            mentionOptions={nexusMentionOptions}
             onRemoveAttachment={(id) => setChatAttachments((c) => c.filter((a) => a.id !== id))}
             onSend={sendChat}
             onSubmitQuizAnswers={(answersText) => void sendChat({ content: answersText })}

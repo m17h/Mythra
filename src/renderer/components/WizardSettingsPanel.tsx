@@ -138,9 +138,16 @@ export function WizardSettingsPanel({
             <span>Provider</span>
             <AppSelect
               onChange={async (provider) => {
-                const list = await onRefreshModels(provider);
-                setLocalModels(list);
-                onChange({ ...wizard, provider, model: list[0]?.id ?? '' });
+                const fallbackModel = settings.providers[provider]?.model ?? '';
+                setLocalModels([]);
+                onChange({ ...wizard, provider, model: fallbackModel });
+                try {
+                  const list = await onRefreshModels(provider);
+                  setLocalModels(list);
+                  onChange({ ...wizard, provider, model: list[0]?.id ?? fallbackModel });
+                } catch {
+                  setLocalModels([]);
+                }
               }}
               options={providerOptions}
               value={wizard.provider}

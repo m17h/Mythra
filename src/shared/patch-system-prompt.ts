@@ -1,4 +1,5 @@
 import type { AppSettings } from './types';
+import { syncProviderSystemPromptFields } from './provider-profile';
 
 /** Mirrors Settings → Prompt textarea behavior: switches to custom and updates linked preset if needed. */
 export function patchSystemPromptInSettings(settings: AppSettings, v: string): AppSettings {
@@ -6,7 +7,7 @@ export function patchSystemPromptInSettings(settings: AppSettings, v: string): A
   const provider = settings.providers[selected];
   if (provider.activePromptPresetId) {
     const id = provider.activePromptPresetId;
-    return {
+    return syncProviderSystemPromptFields({
       ...settings,
       providers: {
         ...settings.providers,
@@ -18,9 +19,9 @@ export function patchSystemPromptInSettings(settings: AppSettings, v: string): A
           )
         }
       }
-    };
+    });
   }
-  return {
+  return syncProviderSystemPromptFields({
     ...settings,
     providers: {
       ...settings.providers,
@@ -29,5 +30,5 @@ export function patchSystemPromptInSettings(settings: AppSettings, v: string): A
         systemPrompt: v
       }
     }
-  };
+  });
 }

@@ -47,6 +47,7 @@ import {
   type WizardPromptApprovalRequest,
   type OpenRouterCreditsResult,
   type ReadChatThreadBackgroundRequest,
+  type NexusTeamWorkspaceReference,
   type NexusSetupRequest,
   type WizardSetupRequest
 } from '@shared/types';
@@ -590,6 +591,7 @@ const sanitizeRuntime = (runtime: {
   wizardFullAccess?: boolean;
   wizardAllowOutsideWorkspace?: boolean;
   nexusTeamFullAccess?: boolean;
+  nexusTeamWorkspaces?: NexusTeamWorkspaceReference[];
   nexusLeaderApprovesTools?: boolean;
   nexusLeaderProvider?: AppSettings['selectedProvider'];
   nexusLeaderModel?: string;
@@ -617,6 +619,16 @@ const sanitizeRuntime = (runtime: {
     wizardAllowOutsideWorkspace:
       typeof runtime.wizardAllowOutsideWorkspace === 'boolean' ? runtime.wizardAllowOutsideWorkspace : undefined,
     nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === 'boolean' ? runtime.nexusTeamFullAccess : undefined,
+    nexusTeamWorkspaces: Array.isArray(runtime.nexusTeamWorkspaces)
+      ? runtime.nexusTeamWorkspaces
+          .map((member) => ({
+            wizardId: typeof member?.wizardId === 'string' ? member.wizardId : '',
+            wizardName: typeof member?.wizardName === 'string' ? member.wizardName : '',
+            role: member?.role === 'leader' ? ('leader' as const) : ('member' as const),
+            workspaceRoot: typeof member?.workspaceRoot === 'string' ? member.workspaceRoot : ''
+          }))
+          .filter((member) => member.wizardId.trim() && member.wizardName.trim() && member.workspaceRoot.trim())
+      : undefined,
     nexusLeaderApprovesTools:
       typeof runtime.nexusLeaderApprovesTools === 'boolean' ? runtime.nexusLeaderApprovesTools : undefined,
     nexusLeaderProvider:
@@ -1255,6 +1267,7 @@ ipcMain.handle(
       wizardFullAccess?: boolean;
       wizardAllowOutsideWorkspace?: boolean;
       nexusTeamFullAccess?: boolean;
+      nexusTeamWorkspaces?: NexusTeamWorkspaceReference[];
       nexusLeaderApprovesTools?: boolean;
       nexusLeaderProvider?: AppSettings['selectedProvider'];
       nexusLeaderModel?: string;

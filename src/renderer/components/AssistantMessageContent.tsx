@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lockChartDetailsScroll, useChartDetailsLayoutLock } from '@renderer/lib/chart-details-scroll';
 import type { ReactNode } from 'react';
 import type { SessionMode } from '@shared/types';
 import {
@@ -19,6 +20,7 @@ type Props = {
   webSearchDisabled?: boolean;
   quizSubmitDisabled?: boolean;
   completedQuizSelections?: Record<number, Record<number, number>>;
+  mentionNames?: string[];
   onSubmitQuizAnswers: (answersText: string) => void;
 };
 
@@ -618,10 +620,17 @@ function ChartHeader({ chart }: { chart: ChartEmbed }) {
   );
 }
 
+/** Identifies what is hovered — a single bar/point (datum), a series+label segment, or a budget row. */
+type ChartHoverSelection =
+  | { kind: 'datum'; index: number }
+  | { kind: 'segment'; seriesIndex: number; label: string }
+  | { kind: 'series'; seriesIndex: number }
+  | { kind: 'budget'; index: number };
+
 type ChartInteractiveProps = {
   chart: ChartEmbed;
-  activeIndex: number | null;
-  onActiveIndexChange: (index: number | null) => void;
+  activeSelection: ChartHoverSelection | null;
+  onActiveSelectionChange: (selection: ChartHoverSelection | null) => void;
   hiddenIndices: Set<number>;
   onToggleVisibility: (index: number) => void;
 };
@@ -644,15 +653,89 @@ function indexedLineSeries(series: ChartSeries[]): IndexedChartSeries[] {
   return series.map((item, originalIndex) => ({ series: item, originalIndex }));
 }
 
-function chartItemClass(base: string, index: number, activeIndex: number | null) {
-  return `${base} ${activeIndex === index ? 'is-active' : activeIndex != null ? 'is-muted' : ''}`;
+function chartHoverTargetsEqual(a: ChartHoverSelection, b: ChartHoverSelection): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'datum' && b.kind === 'datum') return a.index === b.index;
+  if (a.kind === 'budget' && b.kind === 'budget') return a.index === b.index;
+  if (a.kind === 'series' && b.kind === 'series') return a.seriesIndex === b.seriesIndex;
+  if (a.kind === 'segment' && b.kind === 'segment') {
+    return a.seriesIndex === b.seriesIndex && a.label === b.label;
+  }
+  return false;
+}
+
+function chartItemClass(base: string, activeSelection: ChartHoverSelection | null, target: ChartHoverSelection) {
+  const isActive = activeSelection != null && chartHoverTargetsEqual(activeSelection, target);
+  return `${base}${isActive ? ' is-active' : activeSelection != null ? ' is-muted' : ''}`;
+}
+
+function resolveChartDetailsContent(
+  chart: ChartEmbed,
+  selection: ChartHoverSelection,
+  data: IndexedChartDatum[],
+  series: IndexedChartSeries[],
+  budgetData: BudgetDatum[]
+): ReactNode | null {
+  if (selection.kind === 'budget') {
+    const item = budgetData[selection.index];
+    if (!item) return null;
+    const delta = item.actual - item.budget;
+    return (
+      <div className="chart-embed__details">
+        <strong>{item.label}</strong>
+        <span>Budget {formatChartValue(chart, item.budget)} · Actual {formatChartValue(chart, item.actual)}</span>
+        <span className={delta > 0 ? 'chart-embed__delta is-over' : 'chart-embed__delta is-under'}>
+          {delta === 0 ? 'On budget' : `${delta > 0 ? 'Over' : 'Under'} by ${formatChartValue(chart, Math.abs(delta))}`}
+        </span>
+        {item.details?.map((detail) => <span key={detail}>{detail}</span>)}
+      </div>
+    );
+  }
+
+  if (selection.kind === 'datum') {
+    const item = data.find((candidate) => candidate.originalIndex === selection.index);
+    if (!item) return null;
+    return (
+      <div className="chart-embed__details">
+        <strong>{item.datum.label}</strong>
+        <span>{formatChartValue(chart, item.datum.value)}</span>
+        {item.datum.details?.map((detail) => <span key={detail}>{detail}</span>)}
+      </div>
+    );
+  }
+
+  const seriesEntry = series.find((candidate) => candidate.originalIndex === selection.seriesIndex);
+  if (!seriesEntry) return null;
+
+  if (selection.kind === 'segment') {
+    const datum = seriesEntry.series.data.find((point) => point.label === selection.label);
+    if (!datum) return null;
+    return (
+      <div className="chart-embed__details">
+        <strong>{seriesEntry.series.name}</strong>
+        <span>
+          {datum.label}: {formatChartValue(chart, datum.value)}
+        </span>
+        {datum.details?.map((detail) => <span key={detail}>{detail}</span>)}
+      </div>
+    );
+  }
+
+  const latest = seriesEntry.series.data[seriesEntry.series.data.length - 1];
+  return (
+    <div className="chart-embed__details">
+      <strong>{seriesEntry.series.name}</strong>
+      {latest ? <span>Latest {latest.label}: {formatChartValue(chart, latest.value)}</span> : null}
+      {latest?.details?.map((detail) => <span key={detail}>{detail}</span>)}
+    </div>
+  );
 }
 
 function ChartLegend({
   chart,
   data = indexedChartData(chart.data),
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility,
   showPercent = false
@@ -664,15 +747,16 @@ function ChartLegend({
     <div className="chart-embed__legend">
       {data.map(({ datum, originalIndex }) => {
         const hidden = hiddenIndices.has(originalIndex);
+        const target: ChartHoverSelection = { kind: 'datum', index: originalIndex };
         return (
         <div
-          className={`${chartItemClass('chart-embed__legend-row', originalIndex, activeIndex)} ${hidden ? 'is-hidden' : ''}`}
+          className={`${chartItemClass('chart-embed__legend-row', activeSelection, target)} ${hidden ? 'is-hidden' : ''}`}
           key={`${datum.label}-${originalIndex}`}
-          onBlur={() => onActiveIndexChange(null)}
+          onBlur={() => onActiveSelectionChange(null)}
           onClick={() => onToggleVisibility(originalIndex)}
-          onFocus={() => onActiveIndexChange(originalIndex)}
-          onMouseEnter={() => onActiveIndexChange(originalIndex)}
-          onMouseLeave={() => onActiveIndexChange(null)}
+          onFocus={() => onActiveSelectionChange(target)}
+          onMouseEnter={() => onActiveSelectionChange(target)}
+          onMouseLeave={() => onActiveSelectionChange(null)}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
@@ -704,8 +788,8 @@ function ChartLegend({
 function LineSeriesLegend({
   chart,
   series,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility
 }: ChartInteractiveProps & { series: IndexedChartSeries[] }) {
@@ -714,15 +798,16 @@ function LineSeriesLegend({
       {series.map(({ series: item, originalIndex }) => {
         const latest = item.data[item.data.length - 1];
         const hidden = hiddenIndices.has(originalIndex);
+        const target: ChartHoverSelection = { kind: 'series', seriesIndex: originalIndex };
         return (
           <div
-            className={`${chartItemClass('chart-embed__legend-row', originalIndex, activeIndex)} ${hidden ? 'is-hidden' : ''}`}
+            className={`${chartItemClass('chart-embed__legend-row', activeSelection, target)} ${hidden ? 'is-hidden' : ''}`}
             key={`${item.name}-${originalIndex}`}
-            onBlur={() => onActiveIndexChange(null)}
+            onBlur={() => onActiveSelectionChange(null)}
             onClick={() => onToggleVisibility(originalIndex)}
-            onFocus={() => onActiveIndexChange(originalIndex)}
-            onMouseEnter={() => onActiveIndexChange(originalIndex)}
-            onMouseLeave={() => onActiveIndexChange(null)}
+            onFocus={() => onActiveSelectionChange(target)}
+            onMouseEnter={() => onActiveSelectionChange(target)}
+            onMouseLeave={() => onActiveSelectionChange(null)}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
@@ -753,8 +838,8 @@ function LineSeriesLegend({
 
 function BarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }: ChartInteractiveProps & { data: IndexedChartDatum[] }) {
   if (data.length === 0) {
@@ -798,15 +883,14 @@ function BarChart({
         const y = Math.min(valueY, zeroY);
         const h = Math.max(2, Math.abs(zeroY - valueY));
         const color = chartDatumColor(datum, originalIndex);
+        const target: ChartHoverSelection = { kind: 'datum', index: originalIndex };
         return (
           <g
             key={`${datum.label}-${originalIndex}`}
-            onMouseEnter={() => onActiveIndexChange(originalIndex)}
-            onMouseLeave={() => onActiveIndexChange(null)}
+            onMouseEnter={() => onActiveSelectionChange(target)}
+            onMouseLeave={() => onActiveSelectionChange(null)}
           >
-            <rect className={chartItemClass('chart-embed__bar', originalIndex, activeIndex)} fill={color} height={h} rx="5" width={barWidth} x={x} y={y}>
-              <title>{`${datum.label}: ${formatChartValue(chart, datum.value)}`}</title>
-            </rect>
+            <rect className={chartItemClass('chart-embed__bar', activeSelection, target)} fill={color} height={h} rx="5" width={barWidth} x={x} y={y} />
             {showValueLabels ? (
               <text className="chart-embed__value-label" textAnchor="middle" x={x + barWidth / 2} y={datum.value >= 0 ? y - 6 : y + h + 14}>
                 {formatChartValue(chart, datum.value)}
@@ -824,8 +908,8 @@ function BarChart({
 
 function StackedBarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   series
 }: ChartInteractiveProps & { series: IndexedChartSeries[] }) {
   if (series.length === 0) {
@@ -876,21 +960,20 @@ function StackedBarChart({
               if (value <= 0) return null;
               const h = Math.max(2, (value / max) * plotHeight);
               yCursor -= h;
+              const target: ChartHoverSelection = { kind: 'segment', seriesIndex: originalIndex, label };
               return (
                 <rect
-                  className={chartItemClass('chart-embed__bar', originalIndex, activeIndex)}
+                  className={chartItemClass('chart-embed__bar', activeSelection, target)}
                   fill={chartSeriesColor(item, originalIndex)}
                   height={h}
                   key={`${label}-${item.name}`}
-                  onMouseEnter={() => onActiveIndexChange(originalIndex)}
-                  onMouseLeave={() => onActiveIndexChange(null)}
+                  onMouseEnter={() => onActiveSelectionChange(target)}
+                  onMouseLeave={() => onActiveSelectionChange(null)}
                   rx="3"
                   width={barWidth}
                   x={x}
                   y={yCursor}
-                >
-                  <title>{`${label} - ${item.name}: ${formatChartValue(chart, value)}`}</title>
-                </rect>
+                />
               );
             })}
             {labelIndex % xLabelEvery === 0 || labelIndex === labels.length - 1 ? (
@@ -907,8 +990,8 @@ function StackedBarChart({
 
 function GroupedBarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   series
 }: ChartInteractiveProps & { series: IndexedChartSeries[] }) {
   if (series.length === 0) {
@@ -962,21 +1045,20 @@ function GroupedBarChart({
               const y = Math.min(valueY, zeroY);
               const h = Math.max(2, Math.abs(zeroY - valueY));
               const x = groupX + seriesIndex * barWidth;
+              const target: ChartHoverSelection = { kind: 'segment', seriesIndex: originalIndex, label };
               return (
                 <rect
-                  className={chartItemClass('chart-embed__bar', originalIndex, activeIndex)}
+                  className={chartItemClass('chart-embed__bar', activeSelection, target)}
                   fill={chartSeriesColor(item, originalIndex)}
                   height={h}
                   key={`${label}-${item.name}`}
-                  onMouseEnter={() => onActiveIndexChange(originalIndex)}
-                  onMouseLeave={() => onActiveIndexChange(null)}
+                  onMouseEnter={() => onActiveSelectionChange(target)}
+                  onMouseLeave={() => onActiveSelectionChange(null)}
                   rx="3"
                   width={Math.max(4, barWidth - 2)}
                   x={x}
                   y={y}
-                >
-                  <title>{`${label} - ${item.name}: ${formatChartValue(chart, value)}`}</title>
-                </rect>
+                />
               );
             })}
             {labelIndex % xLabelEvery === 0 || labelIndex === labels.length - 1 ? (
@@ -993,8 +1075,8 @@ function GroupedBarChart({
 
 function BudgetChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }: ChartInteractiveProps & { data: BudgetDatum[] }) {
   if (data.length === 0) {
@@ -1035,36 +1117,33 @@ function BudgetChart({
         const actualX = center + groupGap / 2;
         const budgetY = yFor(datum.budget);
         const actualY = yFor(datum.actual);
-        const active = activeIndex === index;
+        const target: ChartHoverSelection = { kind: 'budget', index };
+        const active = activeSelection != null && chartHoverTargetsEqual(activeSelection, target);
         const overBudget = datum.actual > datum.budget;
         return (
           <g
             key={`${datum.label}-${index}`}
-            onMouseEnter={() => onActiveIndexChange(index)}
-            onMouseLeave={() => onActiveIndexChange(null)}
+            onMouseEnter={() => onActiveSelectionChange(target)}
+            onMouseLeave={() => onActiveSelectionChange(null)}
           >
             <rect
-              className={`chart-embed__bar chart-embed__bar--budget ${active ? 'is-active' : activeIndex != null ? 'is-muted' : ''}`}
+              className={`chart-embed__bar chart-embed__bar--budget ${active ? 'is-active' : activeSelection != null ? 'is-muted' : ''}`}
               fill="#818cf8"
               height={Math.max(2, top + plotHeight - budgetY)}
               rx="4"
               width={barWidth}
               x={budgetX}
               y={budgetY}
-            >
-              <title>{`${datum.label} budget: ${formatChartValue(chart, datum.budget)}`}</title>
-            </rect>
+            />
             <rect
-              className={`chart-embed__bar chart-embed__bar--actual ${active ? 'is-active' : activeIndex != null ? 'is-muted' : ''}`}
+              className={`chart-embed__bar chart-embed__bar--actual ${active ? 'is-active' : activeSelection != null ? 'is-muted' : ''}`}
               fill={overBudget ? '#f43f5e' : '#22c55e'}
               height={Math.max(2, top + plotHeight - actualY)}
               rx="4"
               width={barWidth}
               x={actualX}
               y={actualY}
-            >
-              <title>{`${datum.label} actual: ${formatChartValue(chart, datum.actual)}`}</title>
-            </rect>
+            />
             {index % xLabelEvery === 0 || index === data.length - 1 ? (
               <text className="chart-embed__x-label" textAnchor="middle" x={center} y={height - 24}>
                 {datum.label}
@@ -1079,8 +1158,8 @@ function BudgetChart({
 
 function LineChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data,
   series
 }: ChartInteractiveProps & { data: IndexedChartDatum[]; series: IndexedChartSeries[] }) {
@@ -1127,20 +1206,26 @@ function LineChart({
         const points = item.data.map((datum, index) => `${xFor(index)},${yFor(datum.value)}`).join(' ');
         return (
           <polyline
-            className={multiSeries ? chartItemClass('chart-embed__line', originalIndex, activeIndex) : 'chart-embed__line'}
+            className={
+              multiSeries
+                ? chartItemClass('chart-embed__line', activeSelection, { kind: 'series', seriesIndex: originalIndex })
+                : 'chart-embed__line'
+            }
             key={`${item.name}-line-${originalIndex}`}
-            onMouseEnter={() => (multiSeries ? onActiveIndexChange(originalIndex) : undefined)}
-            onMouseLeave={() => (multiSeries ? onActiveIndexChange(null) : undefined)}
+            onMouseEnter={() =>
+              multiSeries ? onActiveSelectionChange({ kind: 'series', seriesIndex: originalIndex }) : undefined
+            }
+            onMouseLeave={() => (multiSeries ? onActiveSelectionChange(null) : undefined)}
             points={points}
             style={color ? { stroke: color } : undefined}
           />
         );
       })}
-      {!multiSeries && activeIndex != null && pointOriginalIndices.includes(activeIndex) ? (
+      {!multiSeries && activeSelection?.kind === 'datum' && pointOriginalIndices.includes(activeSelection.index) ? (
         <line
           className="chart-embed__hover-line"
-          x1={xFor(pointOriginalIndices.indexOf(activeIndex))}
-          x2={xFor(pointOriginalIndices.indexOf(activeIndex))}
+          x1={xFor(pointOriginalIndices.indexOf(activeSelection.index))}
+          x2={xFor(pointOriginalIndices.indexOf(activeSelection.index))}
           y1={top}
           y2={top + plotHeight}
         />
@@ -1154,23 +1239,23 @@ function LineChart({
       )}
       {renderSeries.map(({ series: item, originalIndex }) =>
         item.data.map((datum, index) => {
-          const activeTarget = multiSeries ? originalIndex : pointOriginalIndices[index] ?? index;
+          const target: ChartHoverSelection = multiSeries
+            ? { kind: 'segment', seriesIndex: originalIndex, label: datum.label }
+            : { kind: 'datum', index: pointOriginalIndices[index] ?? index };
           const color = multiSeries ? chartSeriesColor(item, originalIndex) : undefined;
           return (
             <g
-              key={`${item.name}-${datum.label}-${activeTarget}`}
-              onMouseEnter={() => onActiveIndexChange(activeTarget)}
-              onMouseLeave={() => onActiveIndexChange(null)}
+              key={`${item.name}-${datum.label}-${originalIndex}-${datum.label}`}
+              onMouseEnter={() => onActiveSelectionChange(target)}
+              onMouseLeave={() => onActiveSelectionChange(null)}
             >
               <circle
-                className={chartItemClass('chart-embed__point', activeTarget, activeIndex)}
+                className={chartItemClass('chart-embed__point', activeSelection, target)}
                 cx={xFor(index)}
                 cy={yFor(datum.value)}
                 r="4.5"
                 style={color ? { stroke: color } : undefined}
-              >
-                <title>{`${multiSeries ? `${item.name} - ` : ''}${datum.label}: ${formatChartValue(chart, datum.value)}`}</title>
-              </circle>
+              />
             </g>
           );
         })
@@ -1193,8 +1278,8 @@ function arcPath(cx: number, cy: number, r: number, startAngle: number, endAngle
 
 function PieChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }: ChartInteractiveProps & { data: IndexedChartDatum[] }) {
   const positiveData = data.filter((item) => item.datum.value > 0);
@@ -1207,17 +1292,20 @@ function PieChart({
   return (
     <svg className="chart-embed__pie" role="img" viewBox="0 0 240 240">
       {positiveData.length === 1 ? (
+        (() => {
+          const target: ChartHoverSelection = { kind: 'datum', index: positiveData[0]!.originalIndex };
+          return (
         <circle
-          className={chartItemClass('chart-embed__slice', positiveData[0]!.originalIndex, activeIndex)}
+          className={chartItemClass('chart-embed__slice', activeSelection, target)}
           cx="120"
           cy="120"
           fill={chartDatumColor(positiveData[0]!.datum, positiveData[0]!.originalIndex)}
-          onMouseEnter={() => onActiveIndexChange(positiveData[0]!.originalIndex)}
-          onMouseLeave={() => onActiveIndexChange(null)}
+          onMouseEnter={() => onActiveSelectionChange(target)}
+          onMouseLeave={() => onActiveSelectionChange(null)}
           r="104"
-        >
-          <title>{`${positiveData[0]!.datum.label}: ${formatChartValue(chart, positiveData[0]!.datum.value)} (100%)`}</title>
-        </circle>
+        />
+          );
+        })()
       ) : (
         positiveData.map(({ datum, originalIndex }) => {
           const span = (datum.value / total) * 360;
@@ -1225,17 +1313,16 @@ function PieChart({
           const end = angle + span;
           angle = end;
           const color = chartDatumColor(datum, originalIndex);
+          const target: ChartHoverSelection = { kind: 'datum', index: originalIndex };
           return (
             <path
-              className={chartItemClass('chart-embed__slice', originalIndex, activeIndex)}
+              className={chartItemClass('chart-embed__slice', activeSelection, target)}
               d={arcPath(120, 120, 104, start, end)}
               fill={color}
               key={`${datum.label}-${originalIndex}`}
-              onMouseEnter={() => onActiveIndexChange(originalIndex)}
-              onMouseLeave={() => onActiveIndexChange(null)}
-            >
-              <title>{`${datum.label}: ${formatChartValue(chart, datum.value)} (${Math.round((datum.value / total) * 100)}%)`}</title>
-            </path>
+              onMouseEnter={() => onActiveSelectionChange(target)}
+              onMouseLeave={() => onActiveSelectionChange(null)}
+            />
           );
         })
       )}
@@ -1247,8 +1334,8 @@ function PieChart({
 function BudgetLegend({
   chart,
   data,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility
 }: ChartInteractiveProps & { data: BudgetDatum[] }) {
@@ -1257,15 +1344,16 @@ function BudgetLegend({
       {data.map((datum, index) => {
         const hidden = hiddenIndices.has(index);
         const delta = datum.actual - datum.budget;
+        const target: ChartHoverSelection = { kind: 'budget', index };
         return (
           <div
-            className={`${chartItemClass('chart-embed__legend-row', index, activeIndex)} ${hidden ? 'is-hidden' : ''}`}
+            className={`${chartItemClass('chart-embed__legend-row', activeSelection, target)} ${hidden ? 'is-hidden' : ''}`}
             key={`${datum.label}-${index}`}
-            onBlur={() => onActiveIndexChange(null)}
+            onBlur={() => onActiveSelectionChange(null)}
             onClick={() => onToggleVisibility(index)}
-            onFocus={() => onActiveIndexChange(index)}
-            onMouseEnter={() => onActiveIndexChange(index)}
-            onMouseLeave={() => onActiveIndexChange(null)}
+            onFocus={() => onActiveSelectionChange(target)}
+            onMouseEnter={() => onActiveSelectionChange(target)}
+            onMouseLeave={() => onActiveSelectionChange(null)}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
@@ -1328,92 +1416,56 @@ function ChartTimeRangeControls({
 
 function ChartDetails({
   chart,
-  activeIndex,
+  activeSelection,
   data,
   series,
   budgetData
 }: {
   chart: ChartEmbed;
-  activeIndex: number | null;
+  activeSelection: ChartHoverSelection | null;
   data: IndexedChartDatum[];
   series: IndexedChartSeries[];
   budgetData: BudgetDatum[];
 }) {
-  const [renderedActiveIndex, setRenderedActiveIndex] = useState<number | null>(activeIndex);
-  const [isVisible, setIsVisible] = useState(activeIndex != null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const [contentHeight, setContentHeight] = useState(0);
+  const [renderedSelection, setRenderedSelection] = useState<ChartHoverSelection | null>(activeSelection);
+  const [isVisible, setIsVisible] = useState(activeSelection != null);
 
   useEffect(() => {
-    if (activeIndex != null) {
-      setRenderedActiveIndex(activeIndex);
+    if (activeSelection != null) {
+      setRenderedSelection(activeSelection);
       const id = window.setTimeout(() => setIsVisible(true), 10);
       return () => window.clearTimeout(id);
     }
     setIsVisible(false);
-    const id = window.setTimeout(() => setRenderedActiveIndex(null), 180);
+    const id = window.setTimeout(() => setRenderedSelection(null), 180);
     return () => window.clearTimeout(id);
-  }, [activeIndex]);
+  }, [activeSelection]);
 
-  useEffect(() => {
-    if (!contentRef.current) return;
-    setContentHeight(contentRef.current.scrollHeight);
-  }, [renderedActiveIndex]);
-
-  if (renderedActiveIndex == null) return null;
-  let content: ReactNode = null;
-  if (chart.type === 'budget') {
-    const item = budgetData[renderedActiveIndex];
-    if (!item) return null;
-    const delta = item.actual - item.budget;
-    content = (
-      <div className="chart-embed__details">
-        <strong>{item.label}</strong>
-        <span>Budget {formatChartValue(chart, item.budget)} · Actual {formatChartValue(chart, item.actual)}</span>
-        <span className={delta > 0 ? 'chart-embed__delta is-over' : 'chart-embed__delta is-under'}>
-          {delta === 0 ? 'On budget' : `${delta > 0 ? 'Over' : 'Under'} by ${formatChartValue(chart, Math.abs(delta))}`}
-        </span>
-        {item.details?.map((detail) => <span key={detail}>{detail}</span>)}
-      </div>
-    );
-  } else if (chart.type === 'line' || chart.type === 'stacked-bar') {
-    const item = series.find((candidate) => candidate.originalIndex === renderedActiveIndex);
-    if (!item) return null;
-    const latest = item.series.data[item.series.data.length - 1];
-    content = (
-      <div className="chart-embed__details">
-        <strong>{item.series.name}</strong>
-        {latest ? <span>Latest {latest.label}: {formatChartValue(chart, latest.value)}</span> : null}
-        {latest?.details?.map((detail) => <span key={detail}>{detail}</span>)}
-      </div>
-    );
-  } else {
-    const item = data.find((candidate) => candidate.originalIndex === renderedActiveIndex);
-    if (!item) return null;
-    content = (
-      <div className="chart-embed__details">
-        <strong>{item.datum.label}</strong>
-        <span>{formatChartValue(chart, item.datum.value)}</span>
-        {item.datum.details?.map((detail) => <span key={detail}>{detail}</span>)}
-      </div>
-    );
-  }
+  if (renderedSelection == null) return null;
+  const content = resolveChartDetailsContent(chart, renderedSelection, data, series, budgetData);
+  if (!content) return null;
 
   return (
     <div
       className={`chart-embed__details-shell${isVisible ? ' is-open' : ''}`}
       aria-hidden={!isVisible}
-      style={{ height: isVisible ? contentHeight : 0 }}
     >
-      <div className="chart-embed__details-measure" ref={contentRef}>
-        {content}
-      </div>
+      {content}
     </div>
   );
 }
 
+const CHART_DETAILS_SHOW_MS = 90;
+const CHART_DETAILS_HIDE_MS = 140;
+
 function ChartMessageEmbed({ chart }: { chart: ChartEmbed }) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [activeSelection, setActiveSelection] = useState<ChartHoverSelection | null>(null);
+  const [panelSelection, setPanelSelection] = useState<ChartHoverSelection | null>(null);
+  const panelShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelVisibleRef = useRef(false);
+  const detailsSlotRef = useRef<HTMLDivElement | null>(null);
+  useChartDetailsLayoutLock(detailsSlotRef);
   const [hiddenIndices, setHiddenIndices] = useState<Set<number>>(() => new Set());
   const maxRangePoints =
     chart.type === 'budget'
@@ -1443,6 +1495,49 @@ function ChartMessageEmbed({ chart }: { chart: ChartEmbed }) {
   const stackedHasSeries = chart.type === 'stacked-bar' && series.length > 0;
   const groupedBarHasSeries = chart.type === 'bar' && series.length > 1;
   const legendData = chart.type === 'pie' || chart.type === 'donut' ? allData.filter((item) => item.datum.value > 0) : allData;
+  const hasLegend =
+    chart.type === 'budget' ||
+    lineHasMultipleSeries ||
+    stackedHasSeries ||
+    groupedBarHasSeries ||
+    legendData.length > 0;
+
+  const onActiveSelectionChange = useCallback((selection: ChartHoverSelection | null) => {
+    setActiveSelection(selection);
+    if (panelShowTimerRef.current != null) {
+      clearTimeout(panelShowTimerRef.current);
+      panelShowTimerRef.current = null;
+    }
+    if (panelHideTimerRef.current != null) {
+      clearTimeout(panelHideTimerRef.current);
+      panelHideTimerRef.current = null;
+    }
+    if (selection != null) {
+      const delay = panelVisibleRef.current ? 0 : CHART_DETAILS_SHOW_MS;
+      panelShowTimerRef.current = setTimeout(() => {
+        panelShowTimerRef.current = null;
+        panelVisibleRef.current = true;
+        lockChartDetailsScroll(detailsSlotRef.current);
+        setPanelSelection(selection);
+      }, delay);
+      return;
+    }
+    panelHideTimerRef.current = setTimeout(() => {
+      panelHideTimerRef.current = null;
+      panelVisibleRef.current = false;
+      lockChartDetailsScroll(detailsSlotRef.current);
+      setPanelSelection(null);
+    }, CHART_DETAILS_HIDE_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (panelShowTimerRef.current != null) clearTimeout(panelShowTimerRef.current);
+      if (panelHideTimerRef.current != null) clearTimeout(panelHideTimerRef.current);
+    },
+    []
+  );
+
   const onToggleVisibility = (index: number) => {
     setHiddenIndices((current) => {
       const next = new Set(current);
@@ -1451,17 +1546,19 @@ function ChartMessageEmbed({ chart }: { chart: ChartEmbed }) {
       } else {
         next.add(index);
       }
-      setActiveIndex(null);
+      onActiveSelectionChange(null);
       return next;
     });
   };
-  const chartProps = { chart, activeIndex, onActiveIndexChange: setActiveIndex, hiddenIndices, onToggleVisibility };
+  const chartProps = { chart, activeSelection, onActiveSelectionChange, hiddenIndices, onToggleVisibility };
 
   return (
     <div className="message-embed message-embed--chart">
       <ChartHeader chart={chart} />
       <ChartTimeRangeControls maxPoints={maxRangePoints} value={range} onChange={setRange} />
-      <div className={`chart-embed__body chart-embed__body--${chart.type}`}>
+      <div
+        className={`chart-embed__body chart-embed__body--${chart.type}${hasLegend ? '' : ' chart-embed__body--solo'}`}
+      >
         <div className="chart-embed__visual">
           {chart.type === 'bar' && groupedBarHasSeries ? <GroupedBarChart {...chartProps} series={visibleSeries} /> : null}
           {chart.type === 'bar' && !groupedBarHasSeries ? <BarChart {...chartProps} data={visibleData} /> : null}
@@ -1470,19 +1567,33 @@ function ChartMessageEmbed({ chart }: { chart: ChartEmbed }) {
           {chart.type === 'budget' ? <BudgetChart {...chartProps} data={visibleBudgetData} /> : null}
           {chart.type === 'pie' || chart.type === 'donut' ? <PieChart {...chartProps} data={visibleData} /> : null}
         </div>
+        <div
+          ref={detailsSlotRef}
+          className={`chart-embed__details-slot${panelSelection != null ? ' is-open' : ''}`}
+          aria-live="polite"
+        >
+          <div className="chart-embed__details-slot-inner">
+            <ChartDetails chart={chart} activeSelection={panelSelection} data={allData} series={series} budgetData={budgetData} />
+          </div>
+        </div>
         {chart.type === 'budget' ? (
-          <BudgetLegend {...chartProps} data={budgetData} />
+          <div className="chart-embed__legend-slot">
+            <BudgetLegend {...chartProps} data={budgetData} />
+          </div>
         ) : lineHasMultipleSeries || stackedHasSeries || groupedBarHasSeries ? (
-          <LineSeriesLegend {...chartProps} series={series} />
+          <div className="chart-embed__legend-slot">
+            <LineSeriesLegend {...chartProps} series={series} />
+          </div>
         ) : legendData.length ? (
-          <ChartLegend
-            {...chartProps}
-            data={legendData}
-            showPercent={chart.type === 'pie' || chart.type === 'donut'}
-          />
+          <div className="chart-embed__legend-slot">
+            <ChartLegend
+              {...chartProps}
+              data={legendData}
+              showPercent={chart.type === 'pie' || chart.type === 'donut'}
+            />
+          </div>
         ) : null}
       </div>
-      <ChartDetails chart={chart} activeIndex={activeIndex} data={allData} series={series} budgetData={budgetData} />
     </div>
   );
 }
@@ -1728,18 +1839,19 @@ export function AssistantMessageContent({
   webSearchDisabled = false,
   quizSubmitDisabled = false,
   completedQuizSelections,
+  mentionNames = [],
   onSubmitQuizAnswers
 }: Props) {
   const segments = parseAssistantEmbeds(text);
   if (segments.length === 1 && segments[0]!.type === 'md') {
-    return <ChatMarkdown text={segments[0]!.text} />;
+    return <ChatMarkdown mentionNames={mentionNames} text={segments[0]!.text} />;
   }
 
   return (
     <>
       {segments.map((seg, i) => {
         if (seg.type === 'md') {
-          return <Fragment key={i}>{seg.text ? <ChatMarkdown text={seg.text} /> : null}</Fragment>;
+          return <Fragment key={i}>{seg.text ? <ChatMarkdown mentionNames={mentionNames} text={seg.text} /> : null}</Fragment>;
         }
         if (seg.type === 'session') {
           return (

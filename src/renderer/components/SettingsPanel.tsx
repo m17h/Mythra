@@ -12,6 +12,7 @@ import { themes } from '@renderer/lib/themes';
 import { getThemeName } from '@shared/themes';
 import { CHAT_THREAD_BUILTIN_PRESETS } from '@shared/chat-thread-backgrounds';
 import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
+import { syncProviderSystemPromptFields } from '@shared/provider-profile';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
 import { PromptPresetMenu, type PresetPatchOptions } from './PromptPresetMenu';
@@ -127,13 +128,18 @@ export function SettingsPanel({
         : 'none';
 
   const updateProvider = (patch: Partial<typeof provider>, opts?: PresetPatchOptions) => {
-    const next: AppSettings = {
+    const promptPatch =
+      Object.prototype.hasOwnProperty.call(patch, 'systemPrompt') ||
+      Object.prototype.hasOwnProperty.call(patch, 'activePromptPresetId') ||
+      Object.prototype.hasOwnProperty.call(patch, 'promptPresets');
+    const patched: AppSettings = {
       ...settings,
       providers: {
         ...settings.providers,
         [settings.selectedProvider]: { ...provider, ...patch }
       }
     };
+    const next = promptPatch ? syncProviderSystemPromptFields(patched) : patched;
     onChange(next);
     if (opts?.persist) void onPresetPersist(next);
   };
@@ -343,7 +349,9 @@ export function SettingsPanel({
                         ariaLabelledBy="settings-connection-provider-label"
                         options={providerOptions}
                         value={settings.selectedProvider}
-                        onChange={(providerKind) => onChange({ ...settings, selectedProvider: providerKind })}
+                        onChange={(providerKind) =>
+                          onChange(syncProviderSystemPromptFields({ ...settings, selectedProvider: providerKind }, settings.selectedProvider))
+                        }
                       />
                     </div>
 
@@ -462,7 +470,7 @@ export function SettingsPanel({
 
           {provider.promptPresets.length === 0 ? (
             <div className="inline-hint">
-              Add presets to save reusable system prompts for this provider. Use <strong>New preset…</strong> or{' '}
+              Add presets to save reusable system prompts across all providers. Use <strong>New preset…</strong> or{' '}
               <strong>Save as new…</strong> from the menu.
             </div>
           ) : null}

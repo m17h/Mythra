@@ -20716,6 +20716,63 @@ const SESSION_MODE_EMBED_STRINGS = [
 ];
 const WEB_SEARCH_EMBED_STRINGS = [MYTHRA_WEB_SEARCH_TOGGLE, LEGACY_OPENKIWI_WEB_SEARCH_TOGGLE];
 const ALL_EMBED_STRIP_STRINGS = [...SESSION_MODE_EMBED_STRINGS, ...WEB_SEARCH_EMBED_STRINGS];
+const CHART_DETAILS_LAYOUT_LOCK_MS = 280;
+function getPinnedScrollTop(scroll) {
+  const pinned = Number(scroll.dataset.chartDetailsPinnedTop);
+  return Number.isFinite(pinned) ? pinned : scroll.scrollTop;
+}
+function restorePinnedScrollTop(scroll) {
+  const pinned = getPinnedScrollTop(scroll);
+  const max = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+  scroll.scrollTop = Math.min(Math.max(0, pinned), max);
+}
+function lockChartDetailsScroll(slot) {
+  const scroll = slot?.closest(".chat-scroll");
+  if (!scroll) return;
+  scroll.dataset.chartDetailsPinnedTop = String(scroll.scrollTop);
+  scroll.dataset.chartDetailsLayoutLockUntil = String(Date.now() + CHART_DETAILS_LAYOUT_LOCK_MS);
+}
+function useChartDetailsLayoutLock(slotRef) {
+  const lastHeightRef = reactExports.useRef(0);
+  const lastScrollTopRef = reactExports.useRef(0);
+  reactExports.useLayoutEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    const scroll = slot.closest(".chat-scroll");
+    if (!scroll) return;
+    lastHeightRef.current = slot.getBoundingClientRect().height;
+    lastScrollTopRef.current = scroll.scrollTop;
+    const rememberScrollTop = () => {
+      if (isChartDetailsLayoutLocked(scroll)) return;
+      lastScrollTopRef.current = scroll.scrollTop;
+    };
+    const ro = new ResizeObserver(() => {
+      const nextHeight = slot.getBoundingClientRect().height;
+      const delta = nextHeight - lastHeightRef.current;
+      lastHeightRef.current = nextHeight;
+      if (Math.abs(delta) < 0.5) return;
+      if (scroll.dataset.chartDetailsPinnedTop == null) {
+        scroll.dataset.chartDetailsPinnedTop = String(lastScrollTopRef.current);
+      }
+      scroll.dataset.chartDetailsLayoutLockUntil = String(Date.now() + CHART_DETAILS_LAYOUT_LOCK_MS);
+      restorePinnedScrollTop(scroll);
+      requestAnimationFrame(() => {
+        restorePinnedScrollTop(scroll);
+        lastScrollTopRef.current = scroll.scrollTop;
+      });
+    });
+    scroll.addEventListener("scroll", rememberScrollTop, { passive: true });
+    ro.observe(slot);
+    return () => {
+      scroll.removeEventListener("scroll", rememberScrollTop);
+      ro.disconnect();
+    };
+  }, [slotRef]);
+}
+function isChartDetailsLayoutLocked(scroll) {
+  const raw = scroll.dataset.chartDetailsLayoutLockUntil;
+  return raw != null && raw !== "" && Number(raw) > Date.now();
+}
 function ok$1() {
 }
 function unreachable() {
@@ -33365,6 +33422,71 @@ function remarkChatColorText() {
     visit2(tree);
   };
 }
+function mentionRanges(value, names) {
+  const ranges = [];
+  for (const rawName of names) {
+    const name2 = rawName.trim();
+    if (name2.length < 2) continue;
+    const escaped = name2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, "gi");
+    for (const match of value.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      ranges.push({ start, end: start + match[0].length });
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const range of ranges) {
+    const previous2 = merged[merged.length - 1];
+    if (previous2 && range.start < previous2.end) continue;
+    merged.push(range);
+  }
+  return merged;
+}
+function parseMentionText(value, names) {
+  const ranges = mentionRanges(value, names);
+  if (ranges.length === 0) return [{ type: "text", value }];
+  const nodes = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) nodes.push({ type: "text", value: value.slice(cursor, range.start) });
+    nodes.push({
+      type: "chatMention",
+      data: {
+        hName: "span",
+        hProperties: {
+          className: ["chat-mention-text"]
+        }
+      },
+      children: [{ type: "text", value: value.slice(range.start, range.end) }]
+    });
+    cursor = range.end;
+  }
+  if (cursor < value.length) nodes.push({ type: "text", value: value.slice(cursor) });
+  return nodes;
+}
+function remarkChatMentionText(names) {
+  return () => {
+    const mentionNames = names.map((name2) => name2.trim()).filter((name2) => name2.length >= 2);
+    return (tree) => {
+      if (mentionNames.length === 0) return;
+      const visit2 = (node2) => {
+        if (!node2.children) return;
+        const nextChildren = [];
+        for (const child of node2.children) {
+          if (child.type === "text" && typeof child.value === "string" && child.value.includes("@")) {
+            nextChildren.push(...parseMentionText(child.value, mentionNames));
+          } else {
+            visit2(child);
+            nextChildren.push(child);
+          }
+        }
+        node2.children = nextChildren;
+      };
+      visit2(tree);
+    };
+  };
+}
 function mediaKindFromHref(rawHref) {
   if (typeof rawHref !== "string") return null;
   const href = rawHref.trim();
@@ -33412,8 +33534,9 @@ const markdownComponents = {
   a: ({ children, node: node2, href, ...rest }) => href ? /* @__PURE__ */ jsxRuntimeExports.jsx(MediaMarkdownLink, { href, children }) : /* @__PURE__ */ jsxRuntimeExports.jsx("a", { ...rest, rel: "noopener noreferrer", target: "_blank", children }),
   table: ({ children, node: node2, ...rest }) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "table-wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("table", { ...rest, children }) })
 };
-function ChatMarkdown({ text: text2 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-markdown", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { components: markdownComponents, remarkPlugins: [remarkGfm, remarkBreaks, remarkChatColorText], children: text2 }) });
+function ChatMarkdown({ text: text2, mentionNames = [] }) {
+  const mentionPlugin = reactExports.useMemo(() => remarkChatMentionText(mentionNames), [mentionNames]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-markdown", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { components: markdownComponents, remarkPlugins: [remarkGfm, remarkBreaks, remarkChatColorText, mentionPlugin], children: text2 }) });
 }
 function SessionModeMessageEmbed({ sessionMode, onSessionModeToggle, disabled }) {
   const isChat = sessionMode === "talk";
@@ -33886,14 +34009,78 @@ function indexedChartData(data) {
 function indexedLineSeries(series) {
   return series.map((item, originalIndex) => ({ series: item, originalIndex }));
 }
-function chartItemClass(base, index2, activeIndex) {
-  return `${base} ${activeIndex === index2 ? "is-active" : activeIndex != null ? "is-muted" : ""}`;
+function chartHoverTargetsEqual(a, b) {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "datum" && b.kind === "datum") return a.index === b.index;
+  if (a.kind === "budget" && b.kind === "budget") return a.index === b.index;
+  if (a.kind === "series" && b.kind === "series") return a.seriesIndex === b.seriesIndex;
+  if (a.kind === "segment" && b.kind === "segment") {
+    return a.seriesIndex === b.seriesIndex && a.label === b.label;
+  }
+  return false;
+}
+function chartItemClass(base, activeSelection, target) {
+  const isActive = activeSelection != null && chartHoverTargetsEqual(activeSelection, target);
+  return `${base}${isActive ? " is-active" : activeSelection != null ? " is-muted" : ""}`;
+}
+function resolveChartDetailsContent(chart, selection, data, series, budgetData) {
+  if (selection.kind === "budget") {
+    const item = budgetData[selection.index];
+    if (!item) return null;
+    const delta = item.actual - item.budget;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        "Budget ",
+        formatChartValue(chart, item.budget),
+        " · Actual ",
+        formatChartValue(chart, item.actual)
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: delta > 0 ? "chart-embed__delta is-over" : "chart-embed__delta is-under", children: delta === 0 ? "On budget" : `${delta > 0 ? "Over" : "Under"} by ${formatChartValue(chart, Math.abs(delta))}` }),
+      item.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  }
+  if (selection.kind === "datum") {
+    const item = data.find((candidate) => candidate.originalIndex === selection.index);
+    if (!item) return null;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.datum.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: formatChartValue(chart, item.datum.value) }),
+      item.datum.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  }
+  const seriesEntry = series.find((candidate) => candidate.originalIndex === selection.seriesIndex);
+  if (!seriesEntry) return null;
+  if (selection.kind === "segment") {
+    const datum = seriesEntry.series.data.find((point2) => point2.label === selection.label);
+    if (!datum) return null;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: seriesEntry.series.name }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        datum.label,
+        ": ",
+        formatChartValue(chart, datum.value)
+      ] }),
+      datum.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+    ] });
+  }
+  const latest = seriesEntry.series.data[seriesEntry.series.data.length - 1];
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: seriesEntry.series.name }),
+    latest ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+      "Latest ",
+      latest.label,
+      ": ",
+      formatChartValue(chart, latest.value)
+    ] }) : null,
+    latest?.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
+  ] });
 }
 function ChartLegend({
   chart,
   data = indexedChartData(chart.data),
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility,
   showPercent = false
@@ -33901,15 +34088,16 @@ function ChartLegend({
   const total = data.filter((item) => !hiddenIndices.has(item.originalIndex)).reduce((sum, item) => sum + Math.max(0, item.datum.value), 0);
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: data.map(({ datum, originalIndex }) => {
     const hidden = hiddenIndices.has(originalIndex);
+    const target = { kind: "datum", index: originalIndex };
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `${chartItemClass("chart-embed__legend-row", originalIndex, activeIndex)} ${hidden ? "is-hidden" : ""}`,
-        onBlur: () => onActiveIndexChange(null),
+        className: `${chartItemClass("chart-embed__legend-row", activeSelection, target)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveSelectionChange(null),
         onClick: () => onToggleVisibility(originalIndex),
-        onFocus: () => onActiveIndexChange(originalIndex),
-        onMouseEnter: () => onActiveIndexChange(originalIndex),
-        onMouseLeave: () => onActiveIndexChange(null),
+        onFocus: () => onActiveSelectionChange(target),
+        onMouseEnter: () => onActiveSelectionChange(target),
+        onMouseLeave: () => onActiveSelectionChange(null),
         role: "button",
         tabIndex: 0,
         onKeyDown: (e) => {
@@ -33943,23 +34131,24 @@ function ChartLegend({
 function LineSeriesLegend({
   chart,
   series,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: series.map(({ series: item, originalIndex }) => {
     const latest = item.data[item.data.length - 1];
     const hidden = hiddenIndices.has(originalIndex);
+    const target = { kind: "series", seriesIndex: originalIndex };
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `${chartItemClass("chart-embed__legend-row", originalIndex, activeIndex)} ${hidden ? "is-hidden" : ""}`,
-        onBlur: () => onActiveIndexChange(null),
+        className: `${chartItemClass("chart-embed__legend-row", activeSelection, target)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveSelectionChange(null),
         onClick: () => onToggleVisibility(originalIndex),
-        onFocus: () => onActiveIndexChange(originalIndex),
-        onMouseEnter: () => onActiveIndexChange(originalIndex),
-        onMouseLeave: () => onActiveIndexChange(null),
+        onFocus: () => onActiveSelectionChange(target),
+        onMouseEnter: () => onActiveSelectionChange(target),
+        onMouseLeave: () => onActiveSelectionChange(null),
         role: "button",
         tabIndex: 0,
         onKeyDown: (e) => {
@@ -33992,8 +34181,8 @@ function LineSeriesLegend({
 }
 function BarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }) {
   if (data.length === 0) {
@@ -34031,13 +34220,14 @@ function BarChart({
       const y = Math.min(valueY, zeroY);
       const h2 = Math.max(2, Math.abs(zeroY - valueY));
       const color2 = chartDatumColor(datum, originalIndex);
+      const target = { kind: "datum", index: originalIndex };
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "g",
         {
-          onMouseEnter: () => onActiveIndexChange(originalIndex),
-          onMouseLeave: () => onActiveIndexChange(null),
+          onMouseEnter: () => onActiveSelectionChange(target),
+          onMouseLeave: () => onActiveSelectionChange(null),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: chartItemClass("chart-embed__bar", originalIndex, activeIndex), fill: color2, height: h2, rx: "5", width: barWidth, x, y, children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label}: ${formatChartValue(chart, datum.value)}` }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: chartItemClass("chart-embed__bar", activeSelection, target), fill: color2, height: h2, rx: "5", width: barWidth, x, y }),
             showValueLabels ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__value-label", textAnchor: "middle", x: x + barWidth / 2, y: datum.value >= 0 ? y - 6 : y + h2 + 14, children: formatChartValue(chart, datum.value) }) : null,
             /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: x + barWidth / 2, y: height - 24, children: datum.label })
           ]
@@ -34049,8 +34239,8 @@ function BarChart({
 }
 function StackedBarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   series
 }) {
   if (series.length === 0) {
@@ -34094,19 +34284,19 @@ function StackedBarChart({
           if (value <= 0) return null;
           const h2 = Math.max(2, value / max * plotHeight);
           yCursor -= h2;
+          const target = { kind: "segment", seriesIndex: originalIndex, label };
           return /* @__PURE__ */ jsxRuntimeExports.jsx(
             "rect",
             {
-              className: chartItemClass("chart-embed__bar", originalIndex, activeIndex),
+              className: chartItemClass("chart-embed__bar", activeSelection, target),
               fill: chartSeriesColor(item, originalIndex),
               height: h2,
-              onMouseEnter: () => onActiveIndexChange(originalIndex),
-              onMouseLeave: () => onActiveIndexChange(null),
+              onMouseEnter: () => onActiveSelectionChange(target),
+              onMouseLeave: () => onActiveSelectionChange(null),
               rx: "3",
               width: barWidth,
               x,
-              y: yCursor,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${label} - ${item.name}: ${formatChartValue(chart, value)}` })
+              y: yCursor
             },
             `${label}-${item.name}`
           );
@@ -34118,8 +34308,8 @@ function StackedBarChart({
 }
 function GroupedBarChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   series
 }) {
   if (series.length === 0) {
@@ -34166,19 +34356,19 @@ function GroupedBarChart({
           const y = Math.min(valueY, zeroY);
           const h2 = Math.max(2, Math.abs(zeroY - valueY));
           const x = groupX + seriesIndex * barWidth;
+          const target = { kind: "segment", seriesIndex: originalIndex, label };
           return /* @__PURE__ */ jsxRuntimeExports.jsx(
             "rect",
             {
-              className: chartItemClass("chart-embed__bar", originalIndex, activeIndex),
+              className: chartItemClass("chart-embed__bar", activeSelection, target),
               fill: chartSeriesColor(item, originalIndex),
               height: h2,
-              onMouseEnter: () => onActiveIndexChange(originalIndex),
-              onMouseLeave: () => onActiveIndexChange(null),
+              onMouseEnter: () => onActiveSelectionChange(target),
+              onMouseLeave: () => onActiveSelectionChange(null),
               rx: "3",
               width: Math.max(4, barWidth - 2),
               x,
-              y,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${label} - ${item.name}: ${formatChartValue(chart, value)}` })
+              y
             },
             `${label}-${item.name}`
           );
@@ -34190,8 +34380,8 @@ function GroupedBarChart({
 }
 function BudgetChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }) {
   if (data.length === 0) {
@@ -34226,38 +34416,37 @@ function BudgetChart({
       const actualX = center + groupGap / 2;
       const budgetY = yFor(datum.budget);
       const actualY = yFor(datum.actual);
-      const active = activeIndex === index2;
+      const target = { kind: "budget", index: index2 };
+      const active = activeSelection != null && chartHoverTargetsEqual(activeSelection, target);
       const overBudget = datum.actual > datum.budget;
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "g",
         {
-          onMouseEnter: () => onActiveIndexChange(index2),
-          onMouseLeave: () => onActiveIndexChange(null),
+          onMouseEnter: () => onActiveSelectionChange(target),
+          onMouseLeave: () => onActiveSelectionChange(null),
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "rect",
               {
-                className: `chart-embed__bar chart-embed__bar--budget ${active ? "is-active" : activeIndex != null ? "is-muted" : ""}`,
+                className: `chart-embed__bar chart-embed__bar--budget ${active ? "is-active" : activeSelection != null ? "is-muted" : ""}`,
                 fill: "#818cf8",
                 height: Math.max(2, top + plotHeight - budgetY),
                 rx: "4",
                 width: barWidth,
                 x: budgetX,
-                y: budgetY,
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label} budget: ${formatChartValue(chart, datum.budget)}` })
+                y: budgetY
               }
             ),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "rect",
               {
-                className: `chart-embed__bar chart-embed__bar--actual ${active ? "is-active" : activeIndex != null ? "is-muted" : ""}`,
+                className: `chart-embed__bar chart-embed__bar--actual ${active ? "is-active" : activeSelection != null ? "is-muted" : ""}`,
                 fill: overBudget ? "#f43f5e" : "#22c55e",
                 height: Math.max(2, top + plotHeight - actualY),
                 rx: "4",
                 width: barWidth,
                 x: actualX,
-                y: actualY,
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label} actual: ${formatChartValue(chart, datum.actual)}` })
+                y: actualY
               }
             ),
             index2 % xLabelEvery === 0 || index2 === data.length - 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "chart-embed__x-label", textAnchor: "middle", x: center, y: height - 24, children: datum.label }) : null
@@ -34270,8 +34459,8 @@ function BudgetChart({
 }
 function LineChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data,
   series
 }) {
@@ -34311,21 +34500,21 @@ function LineChart({
       return /* @__PURE__ */ jsxRuntimeExports.jsx(
         "polyline",
         {
-          className: multiSeries ? chartItemClass("chart-embed__line", originalIndex, activeIndex) : "chart-embed__line",
-          onMouseEnter: () => multiSeries ? onActiveIndexChange(originalIndex) : void 0,
-          onMouseLeave: () => multiSeries ? onActiveIndexChange(null) : void 0,
+          className: multiSeries ? chartItemClass("chart-embed__line", activeSelection, { kind: "series", seriesIndex: originalIndex }) : "chart-embed__line",
+          onMouseEnter: () => multiSeries ? onActiveSelectionChange({ kind: "series", seriesIndex: originalIndex }) : void 0,
+          onMouseLeave: () => multiSeries ? onActiveSelectionChange(null) : void 0,
           points,
           style: color2 ? { stroke: color2 } : void 0
         },
         `${item.name}-line-${originalIndex}`
       );
     }),
-    !multiSeries && activeIndex != null && pointOriginalIndices.includes(activeIndex) ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    !multiSeries && activeSelection?.kind === "datum" && pointOriginalIndices.includes(activeSelection.index) ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       "line",
       {
         className: "chart-embed__hover-line",
-        x1: xFor(pointOriginalIndices.indexOf(activeIndex)),
-        x2: xFor(pointOriginalIndices.indexOf(activeIndex)),
+        x1: xFor(pointOriginalIndices.indexOf(activeSelection.index)),
+        x2: xFor(pointOriginalIndices.indexOf(activeSelection.index)),
         y1: top,
         y2: top + plotHeight
       }
@@ -34335,26 +34524,25 @@ function LineChart({
     ),
     renderSeries.map(
       ({ series: item, originalIndex }) => item.data.map((datum, index2) => {
-        const activeTarget = multiSeries ? originalIndex : pointOriginalIndices[index2] ?? index2;
+        const target = multiSeries ? { kind: "segment", seriesIndex: originalIndex, label: datum.label } : { kind: "datum", index: pointOriginalIndices[index2] ?? index2 };
         const color2 = multiSeries ? chartSeriesColor(item, originalIndex) : void 0;
         return /* @__PURE__ */ jsxRuntimeExports.jsx(
           "g",
           {
-            onMouseEnter: () => onActiveIndexChange(activeTarget),
-            onMouseLeave: () => onActiveIndexChange(null),
+            onMouseEnter: () => onActiveSelectionChange(target),
+            onMouseLeave: () => onActiveSelectionChange(null),
             children: /* @__PURE__ */ jsxRuntimeExports.jsx(
               "circle",
               {
-                className: chartItemClass("chart-embed__point", activeTarget, activeIndex),
+                className: chartItemClass("chart-embed__point", activeSelection, target),
                 cx: xFor(index2),
                 cy: yFor(datum.value),
                 r: "4.5",
-                style: color2 ? { stroke: color2 } : void 0,
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${multiSeries ? `${item.name} - ` : ""}${datum.label}: ${formatChartValue(chart, datum.value)}` })
+                style: color2 ? { stroke: color2 } : void 0
               }
             )
           },
-          `${item.name}-${datum.label}-${activeTarget}`
+          `${item.name}-${datum.label}-${originalIndex}-${datum.label}`
         );
       })
     )
@@ -34372,8 +34560,8 @@ function arcPath(cx, cy, r, startAngle, endAngle) {
 }
 function PieChart({
   chart,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   data
 }) {
   const positiveData = data.filter((item) => item.datum.value > 0);
@@ -34383,33 +34571,35 @@ function PieChart({
   const total = positiveData.reduce((sum, item) => sum + item.datum.value, 0);
   let angle = 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { className: "chart-embed__pie", role: "img", viewBox: "0 0 240 240", children: [
-    positiveData.length === 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "circle",
-      {
-        className: chartItemClass("chart-embed__slice", positiveData[0].originalIndex, activeIndex),
-        cx: "120",
-        cy: "120",
-        fill: chartDatumColor(positiveData[0].datum, positiveData[0].originalIndex),
-        onMouseEnter: () => onActiveIndexChange(positiveData[0].originalIndex),
-        onMouseLeave: () => onActiveIndexChange(null),
-        r: "104",
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${positiveData[0].datum.label}: ${formatChartValue(chart, positiveData[0].datum.value)} (100%)` })
-      }
-    ) : positiveData.map(({ datum, originalIndex }) => {
+    positiveData.length === 1 ? (() => {
+      const target = { kind: "datum", index: positiveData[0].originalIndex };
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "circle",
+        {
+          className: chartItemClass("chart-embed__slice", activeSelection, target),
+          cx: "120",
+          cy: "120",
+          fill: chartDatumColor(positiveData[0].datum, positiveData[0].originalIndex),
+          onMouseEnter: () => onActiveSelectionChange(target),
+          onMouseLeave: () => onActiveSelectionChange(null),
+          r: "104"
+        }
+      );
+    })() : positiveData.map(({ datum, originalIndex }) => {
       const span = datum.value / total * 360;
       const start = angle;
       const end = angle + span;
       angle = end;
       const color2 = chartDatumColor(datum, originalIndex);
+      const target = { kind: "datum", index: originalIndex };
       return /* @__PURE__ */ jsxRuntimeExports.jsx(
         "path",
         {
-          className: chartItemClass("chart-embed__slice", originalIndex, activeIndex),
+          className: chartItemClass("chart-embed__slice", activeSelection, target),
           d: arcPath(120, 120, 104, start, end),
           fill: color2,
-          onMouseEnter: () => onActiveIndexChange(originalIndex),
-          onMouseLeave: () => onActiveIndexChange(null),
-          children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `${datum.label}: ${formatChartValue(chart, datum.value)} (${Math.round(datum.value / total * 100)}%)` })
+          onMouseEnter: () => onActiveSelectionChange(target),
+          onMouseLeave: () => onActiveSelectionChange(null)
         },
         `${datum.label}-${originalIndex}`
       );
@@ -34420,23 +34610,24 @@ function PieChart({
 function BudgetLegend({
   chart,
   data,
-  activeIndex,
-  onActiveIndexChange,
+  activeSelection,
+  onActiveSelectionChange,
   hiddenIndices,
   onToggleVisibility
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend", children: data.map((datum, index2) => {
     const hidden = hiddenIndices.has(index2);
     const delta = datum.actual - datum.budget;
+    const target = { kind: "budget", index: index2 };
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `${chartItemClass("chart-embed__legend-row", index2, activeIndex)} ${hidden ? "is-hidden" : ""}`,
-        onBlur: () => onActiveIndexChange(null),
+        className: `${chartItemClass("chart-embed__legend-row", activeSelection, target)} ${hidden ? "is-hidden" : ""}`,
+        onBlur: () => onActiveSelectionChange(null),
         onClick: () => onToggleVisibility(index2),
-        onFocus: () => onActiveIndexChange(index2),
-        onMouseEnter: () => onActiveIndexChange(index2),
-        onMouseLeave: () => onActiveIndexChange(null),
+        onFocus: () => onActiveSelectionChange(target),
+        onMouseEnter: () => onActiveSelectionChange(target),
+        onMouseLeave: () => onActiveSelectionChange(null),
         role: "button",
         tabIndex: 0,
         onKeyDown: (e) => {
@@ -34493,81 +34684,45 @@ function ChartTimeRangeControls({
 }
 function ChartDetails({
   chart,
-  activeIndex,
+  activeSelection,
   data,
   series,
   budgetData
 }) {
-  const [renderedActiveIndex, setRenderedActiveIndex] = reactExports.useState(activeIndex);
-  const [isVisible, setIsVisible] = reactExports.useState(activeIndex != null);
-  const contentRef = reactExports.useRef(null);
-  const [contentHeight, setContentHeight] = reactExports.useState(0);
+  const [renderedSelection, setRenderedSelection] = reactExports.useState(activeSelection);
+  const [isVisible, setIsVisible] = reactExports.useState(activeSelection != null);
   reactExports.useEffect(() => {
-    if (activeIndex != null) {
-      setRenderedActiveIndex(activeIndex);
+    if (activeSelection != null) {
+      setRenderedSelection(activeSelection);
       const id22 = window.setTimeout(() => setIsVisible(true), 10);
       return () => window.clearTimeout(id22);
     }
     setIsVisible(false);
-    const id2 = window.setTimeout(() => setRenderedActiveIndex(null), 180);
+    const id2 = window.setTimeout(() => setRenderedSelection(null), 180);
     return () => window.clearTimeout(id2);
-  }, [activeIndex]);
-  reactExports.useEffect(() => {
-    if (!contentRef.current) return;
-    setContentHeight(contentRef.current.scrollHeight);
-  }, [renderedActiveIndex]);
-  if (renderedActiveIndex == null) return null;
-  let content2 = null;
-  if (chart.type === "budget") {
-    const item = budgetData[renderedActiveIndex];
-    if (!item) return null;
-    const delta = item.actual - item.budget;
-    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        "Budget ",
-        formatChartValue(chart, item.budget),
-        " · Actual ",
-        formatChartValue(chart, item.actual)
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: delta > 0 ? "chart-embed__delta is-over" : "chart-embed__delta is-under", children: delta === 0 ? "On budget" : `${delta > 0 ? "Over" : "Under"} by ${formatChartValue(chart, Math.abs(delta))}` }),
-      item.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
-    ] });
-  } else if (chart.type === "line" || chart.type === "stacked-bar") {
-    const item = series.find((candidate) => candidate.originalIndex === renderedActiveIndex);
-    if (!item) return null;
-    const latest = item.series.data[item.series.data.length - 1];
-    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.series.name }),
-      latest ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        "Latest ",
-        latest.label,
-        ": ",
-        formatChartValue(chart, latest.value)
-      ] }) : null,
-      latest?.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
-    ] });
-  } else {
-    const item = data.find((candidate) => candidate.originalIndex === renderedActiveIndex);
-    if (!item) return null;
-    content2 = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__details", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.datum.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: formatChartValue(chart, item.datum.value) }),
-      item.datum.details?.map((detail) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detail }, detail))
-    ] });
-  }
+  }, [activeSelection]);
+  if (renderedSelection == null) return null;
+  const content2 = resolveChartDetailsContent(chart, renderedSelection, data, series, budgetData);
+  if (!content2) return null;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     "div",
     {
       className: `chart-embed__details-shell${isVisible ? " is-open" : ""}`,
       "aria-hidden": !isVisible,
-      style: { height: isVisible ? contentHeight : 0 },
-      children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__details-measure", ref: contentRef, children: content2 })
+      children: content2
     }
   );
 }
+const CHART_DETAILS_SHOW_MS = 90;
+const CHART_DETAILS_HIDE_MS = 140;
 function ChartMessageEmbed({ chart }) {
-  const [activeIndex, setActiveIndex] = reactExports.useState(null);
+  const [activeSelection, setActiveSelection] = reactExports.useState(null);
+  const [panelSelection, setPanelSelection] = reactExports.useState(null);
+  const panelShowTimerRef = reactExports.useRef(null);
+  const panelHideTimerRef = reactExports.useRef(null);
+  const panelVisibleRef = reactExports.useRef(false);
+  const detailsSlotRef = reactExports.useRef(null);
+  useChartDetailsLayoutLock(detailsSlotRef);
   const [hiddenIndices, setHiddenIndices] = reactExports.useState(() => /* @__PURE__ */ new Set());
   const maxRangePoints = chart.type === "budget" ? chart.budgetData?.length ?? 0 : chart.type === "line" || chart.type === "stacked-bar" || chart.series?.length ? Math.max(...lineSeries(chart).map((item) => item.data.length), 0) : chart.data.length;
   const [range, setRange] = reactExports.useState("all");
@@ -34589,6 +34744,41 @@ function ChartMessageEmbed({ chart }) {
   const stackedHasSeries = chart.type === "stacked-bar" && series.length > 0;
   const groupedBarHasSeries = chart.type === "bar" && series.length > 1;
   const legendData = chart.type === "pie" || chart.type === "donut" ? allData.filter((item) => item.datum.value > 0) : allData;
+  const hasLegend = chart.type === "budget" || lineHasMultipleSeries || stackedHasSeries || groupedBarHasSeries || legendData.length > 0;
+  const onActiveSelectionChange = reactExports.useCallback((selection) => {
+    setActiveSelection(selection);
+    if (panelShowTimerRef.current != null) {
+      clearTimeout(panelShowTimerRef.current);
+      panelShowTimerRef.current = null;
+    }
+    if (panelHideTimerRef.current != null) {
+      clearTimeout(panelHideTimerRef.current);
+      panelHideTimerRef.current = null;
+    }
+    if (selection != null) {
+      const delay2 = panelVisibleRef.current ? 0 : CHART_DETAILS_SHOW_MS;
+      panelShowTimerRef.current = setTimeout(() => {
+        panelShowTimerRef.current = null;
+        panelVisibleRef.current = true;
+        lockChartDetailsScroll(detailsSlotRef.current);
+        setPanelSelection(selection);
+      }, delay2);
+      return;
+    }
+    panelHideTimerRef.current = setTimeout(() => {
+      panelHideTimerRef.current = null;
+      panelVisibleRef.current = false;
+      lockChartDetailsScroll(detailsSlotRef.current);
+      setPanelSelection(null);
+    }, CHART_DETAILS_HIDE_MS);
+  }, []);
+  reactExports.useEffect(
+    () => () => {
+      if (panelShowTimerRef.current != null) clearTimeout(panelShowTimerRef.current);
+      if (panelHideTimerRef.current != null) clearTimeout(panelHideTimerRef.current);
+    },
+    []
+  );
   const onToggleVisibility = (index2) => {
     setHiddenIndices((current) => {
       const next = new Set(current);
@@ -34597,33 +34787,47 @@ function ChartMessageEmbed({ chart }) {
       } else {
         next.add(index2);
       }
-      setActiveIndex(null);
+      onActiveSelectionChange(null);
       return next;
     });
   };
-  const chartProps = { chart, activeIndex, onActiveIndexChange: setActiveIndex, hiddenIndices, onToggleVisibility };
+  const chartProps = { chart, activeSelection, onActiveSelectionChange, hiddenIndices, onToggleVisibility };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-embed message-embed--chart", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(ChartHeader, { chart }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(ChartTimeRangeControls, { maxPoints: maxRangePoints, value: range, onChange: setRange }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chart-embed__body chart-embed__body--${chart.type}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__visual", children: [
-        chart.type === "bar" && groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(GroupedBarChart, { ...chartProps, series: visibleSeries }) : null,
-        chart.type === "bar" && !groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(BarChart, { ...chartProps, data: visibleData }) : null,
-        chart.type === "line" ? /* @__PURE__ */ jsxRuntimeExports.jsx(LineChart, { ...chartProps, data: visibleData, series: visibleSeries }) : null,
-        chart.type === "stacked-bar" ? /* @__PURE__ */ jsxRuntimeExports.jsx(StackedBarChart, { ...chartProps, series: visibleSeries }) : null,
-        chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetChart, { ...chartProps, data: visibleBudgetData }) : null,
-        chart.type === "pie" || chart.type === "donut" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PieChart, { ...chartProps, data: visibleData }) : null
-      ] }),
-      chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetLegend, { ...chartProps, data: budgetData }) : lineHasMultipleSeries || stackedHasSeries || groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(LineSeriesLegend, { ...chartProps, series }) : legendData.length ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-        ChartLegend,
-        {
-          ...chartProps,
-          data: legendData,
-          showPercent: chart.type === "pie" || chart.type === "donut"
-        }
-      ) : null
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(ChartDetails, { chart, activeIndex, data: allData, series, budgetData })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: `chart-embed__body chart-embed__body--${chart.type}${hasLegend ? "" : " chart-embed__body--solo"}`,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chart-embed__visual", children: [
+            chart.type === "bar" && groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(GroupedBarChart, { ...chartProps, series: visibleSeries }) : null,
+            chart.type === "bar" && !groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx(BarChart, { ...chartProps, data: visibleData }) : null,
+            chart.type === "line" ? /* @__PURE__ */ jsxRuntimeExports.jsx(LineChart, { ...chartProps, data: visibleData, series: visibleSeries }) : null,
+            chart.type === "stacked-bar" ? /* @__PURE__ */ jsxRuntimeExports.jsx(StackedBarChart, { ...chartProps, series: visibleSeries }) : null,
+            chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetChart, { ...chartProps, data: visibleBudgetData }) : null,
+            chart.type === "pie" || chart.type === "donut" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PieChart, { ...chartProps, data: visibleData }) : null
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              ref: detailsSlotRef,
+              className: `chart-embed__details-slot${panelSelection != null ? " is-open" : ""}`,
+              "aria-live": "polite",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__details-slot-inner", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ChartDetails, { chart, activeSelection: panelSelection, data: allData, series, budgetData }) })
+            }
+          ),
+          chart.type === "budget" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend-slot", children: /* @__PURE__ */ jsxRuntimeExports.jsx(BudgetLegend, { ...chartProps, data: budgetData }) }) : lineHasMultipleSeries || stackedHasSeries || groupedBarHasSeries ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend-slot", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LineSeriesLegend, { ...chartProps, series }) }) : legendData.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chart-embed__legend-slot", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ChartLegend,
+            {
+              ...chartProps,
+              data: legendData,
+              showPercent: chart.type === "pie" || chart.type === "donut"
+            }
+          ) }) : null
+        ]
+      }
+    )
   ] });
 }
 function formatTableCell(value) {
@@ -34807,15 +35011,16 @@ function AssistantMessageContent({
   webSearchDisabled = false,
   quizSubmitDisabled = false,
   completedQuizSelections,
+  mentionNames = [],
   onSubmitQuizAnswers
 }) {
   const segments = parseAssistantEmbeds(text2);
   if (segments.length === 1 && segments[0].type === "md") {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: segments[0].text });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { mentionNames, text: segments[0].text });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: segments.map((seg, i) => {
     if (seg.type === "md") {
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Fragment, { children: seg.text ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: seg.text }) : null }, i);
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Fragment, { children: seg.text ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { mentionNames, text: seg.text }) : null }, i);
     }
     if (seg.type === "session") {
       return /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -34865,6 +35070,7 @@ function AssistantMessageContent({
   }) });
 }
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
 const reasoningEffortOptions = [
   { value: "auto", label: "Auto", hint: "Use the model default" },
   { value: "none", label: "Off", hint: "Disable reasoning" },
@@ -34877,28 +35083,66 @@ const reasoningEffortOptions = [
 function reasoningEffortLabel(value) {
   return reasoningEffortOptions.find((option) => option.value === value)?.label ?? "Auto";
 }
+function findMentionTrigger(value, caret) {
+  const beforeCaret = value.slice(0, caret);
+  const at = beforeCaret.lastIndexOf("@");
+  if (at < 0) return null;
+  if (at > 0 && !/[\s([{]/.test(value[at - 1] ?? "")) return null;
+  const query = beforeCaret.slice(at + 1);
+  if (query.includes("@") || query.includes("\n")) return null;
+  return { start: at, end: caret, query };
+}
+function normalizedMentionText(value) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+function mentionHighlightRanges(value, options) {
+  const ranges = [];
+  for (const option of options) {
+    const name2 = option.name.trim();
+    if (name2.length < 2) continue;
+    const escaped = name2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, "gi");
+    for (const match of value.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      ranges.push({ start, end: start + match[0].length });
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged = [];
+  for (const range of ranges) {
+    const prev = merged[merged.length - 1];
+    if (prev && range.start < prev.end) continue;
+    merged.push(range);
+  }
+  return merged;
+}
 function NexusRelayProgressBar(props) {
   const [, setTick] = reactExports.useState(0);
   reactExports.useEffect(() => {
     const id2 = window.setInterval(() => setTick((x) => x + 1), 1e3);
     return () => window.clearInterval(id2);
-  }, [props.segmentStartedAt, props.wizardName]);
+  }, [props.segmentStartedAt, props.wizardName, props.phase]);
   const sec = Math.max(0, Math.floor((Date.now() - props.segmentStartedAt) / 1e3));
   const mm = Math.floor(sec / 60);
   const ss = sec % 60;
   const elapsed = mm > 0 ? `${mm}:${String(ss).padStart(2, "0")}` : `${sec}s`;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-compose__relay-status", role: "status", children: [
+  const isRouting = props.phase === "routing";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-compose__relay-status ${isRouting ? "is-routing" : ""}`, role: "status", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-pulse", "aria-hidden": true }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-compose__relay-primary", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: props.wizardName }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-muted", children: " · responding" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-muted", children: isRouting ? " · choosing next wizard" : " · responding" })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-elapsed", children: elapsed }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-compose__relay-hint", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__relay-hint", children: isRouting ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      "Deciding whether another teammate should speak next. You can queue a follow-up or name someone (",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "@WizardName" }),
+      " or their display name) to route the next reply."
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       "Still working — queue a message for the next teammate. Name someone (",
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "@WizardName" }),
       " or their display name) so Mythra routes the next reply to them."
-    ] })
+    ] }) })
   ] });
 }
 function distanceFromChatBottom(node2) {
@@ -34914,6 +35158,12 @@ function getCopyableMessageText(content2) {
     s = s.replaceAll(token, "");
   }
   return s.trim();
+}
+function isImageFile(file) {
+  return file.type.startsWith("image/") || IMAGE_FILE_EXT_RE.test(file.name);
+}
+function hasFileDrag(event) {
+  return Array.from(event.dataTransfer.types).includes("Files");
 }
 function parseSubmittedQuizSelections(content2) {
   if (!content2.trimStart().startsWith("Quiz answers:")) return null;
@@ -35003,15 +35253,24 @@ function messageCostTitle(cost) {
     cost.note
   ].filter(Boolean).join("\n");
 }
-function ChatContextMeter({ used, limit }) {
-  const safeLimit = Math.max(limit, 1);
+function ChatContextMeter({
+  used,
+  limit,
+  options = []
+}) {
+  const [selectedOptionId, setSelectedOptionId] = reactExports.useState(null);
+  const selectedOption = options.find((option) => option.id === selectedOptionId) ?? options[0] ?? null;
+  const activeLimit = selectedOption?.limit ?? limit;
+  const safeLimit = Math.max(activeLimit, 1);
   const usedRounded = Math.max(0, Math.round(used));
   const available = Math.max(0, safeLimit - usedRounded);
   const pct = Math.min(100, Math.max(0, usedRounded / safeLimit * 100));
   const r = 9;
   const c = 2 * Math.PI * r;
   const dashOffset = c * (1 - pct / 100);
-  const ariaSummary = `${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
+  const activeName = selectedOption?.name ?? "Current chat";
+  const activeRole = selectedOption?.role === "leader" ? "Leader" : selectedOption?.role === "member" ? "Member" : null;
+  const ariaSummary = `${activeName}: ${pct.toFixed(1)}% context used. ${formatTokensExact(usedRounded)} of ${formatTokensExact(safeLimit)} tokens.`;
   const warn = pct >= 88;
   const tooltipId = reactExports.useId();
   const triggerRef = reactExports.useRef(null);
@@ -35054,6 +35313,13 @@ function ChatContextMeter({ used, limit }) {
     return () => clearCloseTimer();
   }, [clearCloseTimer]);
   reactExports.useEffect(() => {
+    if (options.length === 0) {
+      setSelectedOptionId(null);
+      return;
+    }
+    setSelectedOptionId((current) => current && options.some((option) => option.id === current) ? current : options[0].id);
+  }, [options]);
+  reactExports.useEffect(() => {
     if (!open) return;
     const onKeyDown = (e) => {
       if (e.key === "Escape") {
@@ -35064,12 +35330,15 @@ function ChatContextMeter({ used, limit }) {
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [open]);
-  const popover = open && typeof document !== "undefined" && reactDomExports.createPortal(
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "div",
+  const popover = typeof document !== "undefined" && reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      motion.div,
       {
+        animate: { opacity: 1 },
         className: "chat-context-meter__popup",
+        exit: { opacity: 0 },
         id: tooltipId,
+        initial: { opacity: 0 },
         onMouseEnter: handleOpen,
         onMouseLeave: handleScheduleClose,
         role: "tooltip",
@@ -35078,7 +35347,15 @@ function ChatContextMeter({ used, limit }) {
           top: anchor.top - 8,
           transform: "translate(-50%, -100%)"
         },
+        transition: { duration: 0.14, ease: "easeOut" },
         children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__popup-inner", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__heading", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__label", children: "Viewing" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-context-meter__name", children: [
+              activeName,
+              activeRole ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: activeRole }) : null
+            ] })
+          ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-context-meter__row", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__label", children: "Used" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-context-meter__value", children: formatTokensExact(usedRounded) })
@@ -35091,11 +35368,39 @@ function ChatContextMeter({ used, limit }) {
             pct.toFixed(1),
             "% · ",
             formatTokensShort(safeLimit),
-            " context window"
-          ] })
+            " context window",
+            selectedOption?.model ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+              selectedOption.providerLabel ? `${selectedOption.providerLabel} · ` : "",
+              selectedOption.model
+            ] }) : null
+          ] }),
+          options.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-context-meter__options", "aria-label": "Choose wizard context display", children: options.map((option) => {
+            const optionLimit = Math.max(option.limit, 1);
+            const optionPct = Math.min(100, Math.max(0, usedRounded / optionLimit * 100));
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                className: `chat-context-meter__option ${option.id === selectedOption?.id ? "is-active" : ""}`,
+                onClick: () => setSelectedOptionId(option.id),
+                type: "button",
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-context-meter__option-name", children: [
+                    option.name,
+                    option.role === "leader" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Leader" }) : null
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-context-meter__option-value", children: [
+                    optionPct.toFixed(0),
+                    "%"
+                  ] })
+                ]
+              },
+              option.id
+            );
+          }) }) : null
         ] })
       }
-    ),
+    ) : null }),
     document.body
   );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -35494,10 +35799,13 @@ function ChatPanel({
   modelCatalogSettled,
   providerConnected,
   isStreaming,
+  composerDisabled = false,
+  composerDisabledPlaceholder,
   webSearch,
   onWebSearchChange,
   webSearchDisabled = false,
   onInputChange,
+  mentionOptions = [],
   onAttachImages,
   onRemoveAttachment,
   onSend,
@@ -35505,6 +35813,7 @@ function ChatPanel({
   onStop,
   chatMessages,
   contextLimit,
+  contextMeterOptions = [],
   lastTokenUsage,
   onSessionModeToggle,
   sessionModeToggleDisabled = false,
@@ -35524,12 +35833,82 @@ function ChatPanel({
   const innerRef = reactExports.useRef(null);
   const bottomRef = reactExports.useRef(null);
   const textareaRef = reactExports.useRef(null);
+  const mentionBackdropRef = reactExports.useRef(null);
   const sendButtonRef = reactExports.useRef(null);
   const copyToastTimerRef = reactExports.useRef(null);
   const sendCostTooltipTimerRef = reactExports.useRef(null);
+  const composerDragDepthRef = reactExports.useRef(0);
   const [copiedMessageId, setCopiedMessageId] = reactExports.useState(null);
   const [sendCostTooltipOpen, setSendCostTooltipOpen] = reactExports.useState(false);
   const [sendCostTooltipAnchor, setSendCostTooltipAnchor] = reactExports.useState({ top: 0, left: 0 });
+  const [composerDragActive, setComposerDragActive] = reactExports.useState(false);
+  const [mentionCaret, setMentionCaret] = reactExports.useState(0);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = reactExports.useState(0);
+  const [dismissedMentionStart, setDismissedMentionStart] = reactExports.useState(null);
+  const rawMentionTrigger = reactExports.useMemo(
+    () => isNexus && mentionOptions.length > 0 ? findMentionTrigger(input, mentionCaret) : null,
+    [input, isNexus, mentionCaret, mentionOptions.length]
+  );
+  const mentionTrigger = rawMentionTrigger && rawMentionTrigger.start !== dismissedMentionStart ? rawMentionTrigger : null;
+  const filteredMentionOptions = reactExports.useMemo(() => {
+    if (!mentionTrigger) return [];
+    const needle = normalizedMentionText(mentionTrigger.query);
+    if (!needle) return mentionOptions;
+    return mentionOptions.filter((option) => normalizedMentionText(option.name).includes(needle));
+  }, [mentionOptions, mentionTrigger]);
+  const visibleMentionOptions = reactExports.useMemo(() => filteredMentionOptions.slice(0, 8), [filteredMentionOptions]);
+  const mentionMenuOpen = Boolean(mentionTrigger && visibleMentionOptions.length > 0);
+  const mentionNames = reactExports.useMemo(() => mentionOptions.map((option) => option.name), [mentionOptions]);
+  const mentionHighlightNodes = reactExports.useMemo(() => {
+    if (!isNexus || mentionOptions.length === 0 || input.length === 0) return null;
+    const ranges = mentionHighlightRanges(input, mentionOptions);
+    if (ranges.length === 0) return null;
+    const nodes = [];
+    let cursor = 0;
+    ranges.forEach((range, index2) => {
+      if (range.start > cursor) nodes.push(input.slice(cursor, range.start));
+      nodes.push(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("mark", { className: "chat-compose__mention-highlight", children: input.slice(range.start, range.end) }, `${range.start}-${range.end}-${index2}`)
+      );
+      cursor = range.end;
+    });
+    if (cursor < input.length) nodes.push(input.slice(cursor));
+    return nodes;
+  }, [input, isNexus, mentionOptions]);
+  const shouldShowMentionBackdrop = Boolean(mentionHighlightNodes);
+  reactExports.useEffect(() => {
+    setMentionSelectedIndex(0);
+  }, [mentionTrigger?.query, visibleMentionOptions.length]);
+  const updateMentionCaretFromTextarea = reactExports.useCallback(() => {
+    const el = textareaRef.current;
+    if (el) setMentionCaret(el.selectionStart);
+  }, []);
+  const insertMention = reactExports.useCallback(
+    (option) => {
+      const trigger = mentionTrigger;
+      if (!trigger) return;
+      const mention = `@${option.name} `;
+      const next = `${input.slice(0, trigger.start)}${mention}${input.slice(trigger.end)}`;
+      const nextCaret = trigger.start + mention.length;
+      onInputChange(next);
+      setMentionCaret(nextCaret);
+      setDismissedMentionStart(null);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [input, mentionTrigger, onInputChange]
+  );
+  const syncMentionBackdropScroll = reactExports.useCallback(() => {
+    const textarea = textareaRef.current;
+    const backdrop = mentionBackdropRef.current;
+    if (!textarea || !backdrop) return;
+    backdrop.scrollTop = textarea.scrollTop;
+    backdrop.scrollLeft = textarea.scrollLeft;
+  }, []);
   const contextUsedEstimate = reactExports.useMemo(() => {
     const threadRough = roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS;
     const draftRough = roughTokensForDraft(input, attachments);
@@ -35602,6 +35981,40 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
     clearSendCostTooltipTimer();
     sendCostTooltipTimerRef.current = setTimeout(() => setSendCostTooltipOpen(false), 120);
   }, [clearSendCostTooltipTimer]);
+  const handleComposerDragEnter = reactExports.useCallback((event) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current += 1;
+    setComposerDragActive(true);
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+  const handleComposerDragOver = reactExports.useCallback((event) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+  const handleComposerDragLeave = reactExports.useCallback((event) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current = Math.max(0, composerDragDepthRef.current - 1);
+    if (composerDragDepthRef.current === 0) {
+      setComposerDragActive(false);
+    }
+  }, []);
+  const handleComposerDrop = reactExports.useCallback((event) => {
+    if (!hasFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    composerDragDepthRef.current = 0;
+    setComposerDragActive(false);
+    const imageFiles = Array.from(event.dataTransfer.files).filter(isImageFile);
+    if (imageFiles.length) {
+      onAttachImages(imageFiles);
+    }
+  }, [onAttachImages]);
   reactExports.useLayoutEffect(() => {
     if (!sendCostTooltipOpen) return;
     updateSendCostTooltipAnchor();
@@ -35727,6 +36140,9 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
       if (lockUntilRaw != null && lockUntilRaw !== "" && Number(lockUntilRaw) > Date.now()) {
         return;
       }
+      if (isChartDetailsLayoutLocked(scroll)) {
+        return;
+      }
       if (isStreaming) {
         cancelAnimationFrame(raf);
         raf = requestAnimationFrame(() => {
@@ -35817,7 +36233,7 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
     setTerminalOpen((v2) => !v2);
   }, [hasWorkspace, showWorkspaceGateNotice]);
   const isTalk = !isWizard && !isNexus && sessionMode === "talk";
-  const statusLabel = isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
+  const statusLabel = nexusRelayProgress?.phase === "routing" ? "Routing" : isStreaming ? "Working" : providerConnected ? "Connected" : modelCatalogSettled ? "Disconnected" : "Waiting";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const openRouterModelUrl = selectedProviderKind === "openrouter" && selectedModel.trim() ? `https://openrouter.ai/${selectedModel.split("/").map((part) => encodeURIComponent(part)).join("/")}` : null;
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
@@ -35956,11 +36372,12 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
                 quizSubmitDisabled: message.status === "streaming",
                 sessionMode,
                 sessionModeToggleDisabled,
+                mentionNames,
                 text: message.content,
                 webSearch,
                 webSearchDisabled
               }
-            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { text: getCopyableMessageText(message.content) }) }) : null,
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { mentionNames, text: getCopyableMessageText(message.content) }) }) : null,
             showModelOutputCosts && message.role === "assistant" && message.costEstimate ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-bubble__cost", title: messageCostTitle(message.costEstimate), children: [
               "Estimated cost: ",
               message.costEstimate.display
@@ -36214,104 +36631,170 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: att.name }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => onRemoveAttachment(att.id), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 10 10", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 1l8 8M9 1l-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }) }) })
         ] }, att.id)) }) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-compose__bar ${isStreaming ? "is-working" : ""}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "chat-compose__attach", title: "Attach images", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 10l-3.5-3.5a2 2 0 00-2.83 0L2 12M14 10v4H2v-2M14 10V5a2 2 0 00-2-2H4a2 2 0 00-2 2v7", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5.5", cy: "6.5", r: "1.5", stroke: "currentColor", strokeWidth: "1.3" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                accept: "image/*",
-                multiple: true,
-                onChange: (e) => {
-                  onAttachImages(e.target.files);
-                  e.target.value = "";
-                },
-                type: "file"
-              }
-            )
-          ] }),
-          selectedProviderKind === "openrouter" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-            OpenRouterReasoningButton,
-            {
-              disabled: isStreaming,
-              effort: openRouterReasoningEffort,
-              model: selectedModel || "No model selected",
-              onChange: onOpenRouterReasoningEffortChange,
-              supported: openRouterReasoningSupported
-            }
-          ) : null,
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "textarea",
-            {
-              ref: textareaRef,
-              className: "chat-compose__input",
-              onChange: (e) => onInputChange(e.target.value),
-              onKeyDown: (e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  const canSend = !isStreaming || nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0);
-                  if (canSend) {
-                    onSend();
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `chat-compose__bar ${isStreaming ? "is-working" : ""} ${composerDragActive ? "is-drag-over" : ""}`,
+            onDragEnter: handleComposerDragEnter,
+            onDragLeave: handleComposerDragLeave,
+            onDragOver: handleComposerDragOver,
+            onDrop: handleComposerDrop,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__drop-hint", "aria-hidden": true, children: "Drop image to attach" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "chat-compose__attach", title: "Attach images", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 10l-3.5-3.5a2 2 0 00-2.83 0L2 12M14 10v4H2v-2M14 10V5a2 2 0 00-2-2H4a2 2 0 00-2 2v7", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5.5", cy: "6.5", r: "1.5", stroke: "currentColor", strokeWidth: "1.3" })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "input",
+                  {
+                    accept: "image/*",
+                    disabled: composerDisabled,
+                    multiple: true,
+                    onChange: (e) => {
+                      onAttachImages(e.target.files);
+                      e.target.value = "";
+                    },
+                    type: "file"
                   }
+                )
+              ] }),
+              selectedProviderKind === "openrouter" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                OpenRouterReasoningButton,
+                {
+                  disabled: isStreaming || composerDisabled,
+                  effort: openRouterReasoningEffort,
+                  model: selectedModel || "No model selected",
+                  onChange: onOpenRouterReasoningEffortChange,
+                  supported: openRouterReasoningSupported
                 }
-              },
-              placeholder: "Type a message...",
-              rows: 1,
-              value: input
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(ChatContextMeter, { limit: contextLimit, used: contextUsedEstimate }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: `chat-compose__terminal-toggle ${terminalOpen ? "is-active" : ""}`,
-              onClick: handleTerminalToggle,
-              type: "button",
-              title: terminalOpen ? "Close terminal" : "Open terminal",
-              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 4l4 4-4 4", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 12h5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
-              ] })
-            }
-          ),
-          isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            nexusRelayQueueDuringStream ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                ref: sendButtonRef,
-                className: "chat-compose__send chat-compose__send--alongside-stop",
-                disabled: input.trim().length === 0 && attachments.length === 0,
-                onBlur: scheduleHideSendCostTooltip,
-                onFocus: showSendCostTooltip,
-                onMouseEnter: showSendCostTooltip,
-                onMouseLeave: scheduleHideSendCostTooltip,
-                onClick: () => onSend(),
-                type: "button",
-                title: queueSendButtonTitle,
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
-              }
-            ) : null,
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) })
-          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              ref: sendButtonRef,
-              className: "chat-compose__send",
-              disabled: input.trim().length === 0 && attachments.length === 0,
-              onBlur: scheduleHideSendCostTooltip,
-              onFocus: showSendCostTooltip,
-              onMouseEnter: showSendCostTooltip,
-              onMouseLeave: scheduleHideSendCostTooltip,
-              onClick: () => onSend(),
-              type: "button",
-              title: sendButtonTitle,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
-            }
-          )
-        ] })
+              ) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-compose__input-wrap ${shouldShowMentionBackdrop ? "has-mention-highlights" : ""}`, children: [
+                shouldShowMentionBackdrop ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-compose__mention-backdrop", ref: mentionBackdropRef, "aria-hidden": true, children: mentionHighlightNodes }) : null,
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "textarea",
+                  {
+                    ref: textareaRef,
+                    className: "chat-compose__input",
+                    "aria-autocomplete": mentionOptions.length > 0 ? "list" : void 0,
+                    "aria-controls": mentionMenuOpen ? "nexus-mention-list" : void 0,
+                    onChange: (e) => {
+                      if (composerDisabled) return;
+                      onInputChange(e.target.value);
+                      setMentionCaret(e.target.selectionStart);
+                      setDismissedMentionStart(null);
+                    },
+                    onKeyDown: (e) => {
+                      if (composerDisabled) return;
+                      if (mentionMenuOpen) {
+                        if (e.key === "Tab" || e.key === "Enter") {
+                          e.preventDefault();
+                          insertMention(visibleMentionOptions[mentionSelectedIndex] ?? visibleMentionOptions[0]);
+                          return;
+                        }
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setMentionSelectedIndex((current) => (current + 1) % visibleMentionOptions.length);
+                          return;
+                        }
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setMentionSelectedIndex((current) => (current - 1 + visibleMentionOptions.length) % visibleMentionOptions.length);
+                          return;
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setDismissedMentionStart(mentionTrigger?.start ?? null);
+                          return;
+                        }
+                      }
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        const canSend = !composerDisabled && (!isStreaming || nexusRelayQueueDuringStream && (input.trim().length > 0 || attachments.length > 0));
+                        if (canSend) {
+                          onSend();
+                        }
+                      }
+                    },
+                    onKeyUp: updateMentionCaretFromTextarea,
+                    onScroll: syncMentionBackdropScroll,
+                    onSelect: updateMentionCaretFromTextarea,
+                    placeholder: composerDisabledPlaceholder ?? "Type a message...",
+                    rows: 1,
+                    value: input,
+                    disabled: composerDisabled
+                  }
+                )
+              ] }),
+              mentionMenuOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-compose__mention-menu", id: "nexus-mention-list", role: "listbox", children: visibleMentionOptions.map((option, index2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  "aria-selected": index2 === mentionSelectedIndex,
+                  className: `chat-compose__mention-option ${index2 === mentionSelectedIndex ? "is-active" : ""}`,
+                  onClick: () => insertMention(option),
+                  onMouseDown: (e) => e.preventDefault(),
+                  role: "option",
+                  type: "button",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__mention-at", children: "@" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__mention-name", children: option.name }),
+                    option.role === "leader" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-compose__mention-role", children: "Leader" }) : null
+                  ]
+                },
+                option.id
+              )) }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsx(ChatContextMeter, { limit: contextLimit, options: contextMeterOptions, used: contextUsedEstimate }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `chat-compose__terminal-toggle ${terminalOpen ? "is-active" : ""}`,
+                  onClick: handleTerminalToggle,
+                  type: "button",
+                  title: terminalOpen ? "Close terminal" : "Open terminal",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 4l4 4-4 4", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 12h5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" })
+                  ] })
+                }
+              ),
+              isStreaming ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                nexusRelayQueueDuringStream ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    ref: sendButtonRef,
+                    className: "chat-compose__send chat-compose__send--alongside-stop",
+                    disabled: composerDisabled || input.trim().length === 0 && attachments.length === 0,
+                    onBlur: scheduleHideSendCostTooltip,
+                    onFocus: showSendCostTooltip,
+                    onMouseEnter: showSendCostTooltip,
+                    onMouseLeave: scheduleHideSendCostTooltip,
+                    onClick: () => onSend(),
+                    type: "button",
+                    title: queueSendButtonTitle,
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                  }
+                ) : null,
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-compose__stop", onClick: onStop, type: "button", title: "Stop", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "3", width: "8", height: "8", rx: "1.5", fill: "currentColor" }) }) })
+              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  ref: sendButtonRef,
+                  className: "chat-compose__send",
+                  disabled: composerDisabled || input.trim().length === 0 && attachments.length === 0,
+                  onBlur: scheduleHideSendCostTooltip,
+                  onFocus: showSendCostTooltip,
+                  onMouseEnter: showSendCostTooltip,
+                  onMouseLeave: scheduleHideSendCostTooltip,
+                  onClick: () => onSend(),
+                  type: "button",
+                  title: sendButtonTitle,
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2L7 9M14 2l-5 12-2-5-5-2 12-5z", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                }
+              )
+            ]
+          }
+        )
       ] }),
       sendCostTooltipPopover
     ] })
@@ -37383,12 +37866,32 @@ const CHAT_THREAD_BUILTIN_PRESETS = [
     description: "Built-in art that tracks the UI theme: each preset tile gets a matching image; Custom uses the **light Mystic (ice)** artwork when the custom theme is light and the **dark (neon)** artwork when it is dark. Chat tints (`--chat-thread-bg`, bubble colors) layer on top so the thread matches your accent."
   }
 ];
+const PROVIDER_KINDS = ["lmstudio", "openrouter", "ollama"];
+function syncProviderSystemPromptFields(settings, sourceProvider = settings.selectedProvider) {
+  const source = settings.providers[sourceProvider] ?? settings.providers[settings.selectedProvider];
+  if (!source) return settings;
+  return {
+    ...settings,
+    providers: PROVIDER_KINDS.reduce(
+      (providers, kind) => ({
+        ...providers,
+        [kind]: {
+          ...settings.providers[kind],
+          systemPrompt: source.systemPrompt,
+          activePromptPresetId: source.activePromptPresetId,
+          promptPresets: source.promptPresets
+        }
+      }),
+      settings.providers
+    )
+  };
+}
 function patchSystemPromptInSettings(settings, v2) {
   const selected = settings.selectedProvider;
   const provider = settings.providers[selected];
   if (provider.activePromptPresetId) {
     const id2 = provider.activePromptPresetId;
-    return {
+    return syncProviderSystemPromptFields({
       ...settings,
       providers: {
         ...settings.providers,
@@ -37400,9 +37903,9 @@ function patchSystemPromptInSettings(settings, v2) {
           )
         }
       }
-    };
+    });
   }
-  return {
+  return syncProviderSystemPromptFields({
     ...settings,
     providers: {
       ...settings.providers,
@@ -37411,7 +37914,7 @@ function patchSystemPromptInSettings(settings, v2) {
         systemPrompt: v2
       }
     }
-  };
+  });
 }
 const uid$1 = () => Math.random().toString(36).slice(2, 11);
 function nextPresetName(list2) {
@@ -37835,13 +38338,15 @@ function SettingsPanel({
   const mysticPreset = CHAT_THREAD_BUILTIN_PRESETS[0];
   const chatBgSelectValue = settings.ui.chatThreadBackgroundPreset === "mystic" ? "mystic" : settings.ui.chatThreadBackgroundPath || chatBgCustomFocus ? "custom" : "none";
   const updateProvider = (patch2, opts) => {
-    const next = {
+    const promptPatch = Object.prototype.hasOwnProperty.call(patch2, "systemPrompt") || Object.prototype.hasOwnProperty.call(patch2, "activePromptPresetId") || Object.prototype.hasOwnProperty.call(patch2, "promptPresets");
+    const patched = {
       ...settings,
       providers: {
         ...settings.providers,
         [settings.selectedProvider]: { ...provider, ...patch2 }
       }
     };
+    const next = promptPatch ? syncProviderSystemPromptFields(patched) : patched;
     onChange(next);
     if (opts?.persist) void onPresetPersist(next);
   };
@@ -38022,7 +38527,7 @@ function SettingsPanel({
                           ariaLabelledBy: "settings-connection-provider-label",
                           options: providerOptions$3,
                           value: settings.selectedProvider,
-                          onChange: (providerKind) => onChange({ ...settings, selectedProvider: providerKind })
+                          onChange: (providerKind) => onChange(syncProviderSystemPromptFields({ ...settings, selectedProvider: providerKind }, settings.selectedProvider))
                         }
                       )
                     ] }),
@@ -38127,7 +38632,7 @@ function SettingsPanel({
           /* @__PURE__ */ jsxRuntimeExports.jsx(PromptPresetMenu, { onPatch: updateProvider, provider })
         ] }),
         provider.promptPresets.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inline-hint", children: [
-          "Add presets to save reusable system prompts for this provider. Use ",
+          "Add presets to save reusable system prompts across all providers. Use ",
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "New preset…" }),
           " or",
           " ",
@@ -38594,9 +39099,7 @@ function SystemPromptInfoDialog({ open, onClose }) {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Settings → System Prompt" }),
                 ", the ",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Preset" }),
-                " menu saves named prompt versions per ",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "provider" }),
-                " (LM Studio, OpenRouter, or Ollama). Switch presets when you change projects or want a different baseline without rewriting everything—",
+                " menu saves named prompt versions globally across LM Studio, OpenRouter, and Ollama. Switch presets when you change projects or want a different baseline without rewriting everything—",
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Save as new…" }),
                 " is an easy way to experiment while keeping a fallback."
               ] }),
@@ -38851,9 +39354,16 @@ function WizardSettingsPanel({
             AppSelect,
             {
               onChange: async (provider) => {
-                const list2 = await onRefreshModels(provider);
-                setLocalModels(list2);
-                onChange({ ...wizard, provider, model: list2[0]?.id ?? "" });
+                const fallbackModel = settings.providers[provider]?.model ?? "";
+                setLocalModels([]);
+                onChange({ ...wizard, provider, model: fallbackModel });
+                try {
+                  const list2 = await onRefreshModels(provider);
+                  setLocalModels(list2);
+                  onChange({ ...wizard, provider, model: list2[0]?.id ?? fallbackModel });
+                } catch {
+                  setLocalModels([]);
+                }
               },
               options: providerOptions$2,
               value: wizard.provider
@@ -40532,6 +41042,21 @@ function sidebarBrandLogoSrc(themeId, customThemeTokens) {
   }
   return logoNeonGrid;
 }
+const WIZARD_ORB_DEFAULT_COLOR = "#22c55e";
+const WIZARD_ORB_COLORS = [
+  { label: "Green", color: "#22c55e" },
+  { label: "Teal", color: "#14b8a6" },
+  { label: "Blue", color: "#3b82f6" },
+  { label: "Purple", color: "#8b5cf6" },
+  { label: "Pink", color: "#ec4899" },
+  { label: "Red", color: "#ef4444" },
+  { label: "Orange", color: "#f97316" },
+  { label: "Yellow", color: "#eab308" },
+  { label: "Slate", color: "#94a3b8" }
+];
+function wizardOrbStyle(color2) {
+  return { "--wizard-orb-color": color2 };
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const replaceWizardNameText = (text2, previousName, nextName) => {
@@ -40721,17 +41246,22 @@ const buildNexusSystemPrompt = (leader, nexus, teamNames) => {
   const missionTrimmed = nexus.mission.trim();
   const missionLines = missionTrimmed ? `Nexus project mission (from project settings — treat as authoritative unless the user explicitly changes goals in chat):
 ${missionTrimmed}` : `Nexus project mission is not set yet. Ask the user what this project should accomplish, or they can define it under Inspector → Settings → Nexus.`;
-  const collab = nexus.parallelWizardResponses === true ? "- **Parallel Nexus:** When Mythra runs multiple teammate streams on one message, everyone answers concurrently—you cannot rely on seeing drafts first. Coordinate explicitly in writing (ownership, sequencing, WAITING/BLOCKED).\n" : "- **Relay Nexus:** Teammates answer **one stream at a time** in a single combined assistant message; they can read earlier segments before speaking. End a round with `[NEXUS_END]` when the Nexus is done with this user message, or `[NEXUS_CONTINUE]` to hand off another turn.\n";
+  const collab = nexus.parallelWizardResponses === true ? "- **Parallel Nexus:** When Mythra runs multiple teammate streams on one message, everyone answers concurrently—you cannot rely on seeing drafts first. Coordinate explicitly in writing (ownership, sequencing, WAITING/BLOCKED).\n" : "- **Relay Nexus:** Teammates answer **one stream at a time** in ordered visible turns; a hidden leader router decides whether another teammate should speak next or the round should end.\n";
   return `${leader.systemPrompt}
 
 Mythra Nexus runtime:
 - You are the leader Wizard for Nexus project "${nexus.name}".
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand each Wizard's identity, personality, strengths, memory, and corrections.
+- Teammate Wizard workspaces are not automatically injected into your prompt. Use the read-only Nexus teammate tools when you need to inspect teammate identity, personality, strengths, memory, or corrections.
 - The team is: ${teamNames.join(", ")}.
+- All Nexus Wizards receive this same operating briefing: everyone should understand relay order, leader routing, tap-ins, and read-only teammate workspace inspection.
+- Leader capabilities: you can coordinate visible turns, explicitly tap in a teammate with \`@WizardName\` or \`WizardName, ...\`, and use read-only teammate workspace tools to understand who each Wizard is before assigning or routing work.
+- Teammate workspace access is read-only and on demand. It is for understanding identity, memory, preferences, and role fit—not for editing teammate private files.
 ${collab}- Start by making a concise plan. Delegate tasks to specific Wizards by name when useful, and explain why.
 - **Leader coordination:** Assign owners by name and file/path scope where helpful. When work must pause until another Wizard finishes something, say clearly **WAITING ON [Wizard]:** reason so teammates idle correctly or pick alternate tasks you assign. When independent tracks can proceed safely (different files / non-overlapping scope), say **PARALLEL OK** for those tracks.
+- Do not start your reply with your own name, a speaker label, or a line like "${leader.name}:". Mythra already displays your name above your message bubble.
+- Do not quote, recap, or paste earlier Wizard messages before your answer. Read prior teammate turns for context, then write only your new contribution.
 - If a teammate's injected docs suggest they are better suited for a task, adjust assignments and say so.
 - Treat this as a collaborative project room: include short messages addressed to teammates, task assignments, status updates, and a clear next action.
 - Only edit files in the shared Nexus workspace unless the user explicitly asks you to update a Wizard's private docs in a separate Wizard session.`;
@@ -40742,8 +41272,8 @@ const buildNexusResponderSystemPrompt = (wizard, nexus, teamNames, role, convers
 ${missionTrimmed}` : `No Nexus mission text is configured yet — ask the user for project goals if you need direction.`;
   const parallelLeader = "- **Parallel Nexus:** Mythra runs **one concurrent model stream per Wizard** on each user message (two or more teammates). Everyone replies **at the same time**—you cannot see teammate drafts until their messages appear.\n- **Your leader responsibilities:** Assign tasks by Wizard name with ownership (who touches which areas/files when possible). When something must wait on another Wizard's deliverable, say **WAITING ON [Wizard]:** reason so nobody guesses whether to idle. Delegate alternate tasks so teammates aren't blocked unnecessarily. When tracks are independent and safe to overlap, say **PARALLEL OK** for those tracks.\n";
   const parallelMember = "- **Parallel Nexus:** Mythra runs **one concurrent stream per Wizard** on each message—assume teammates answer **simultaneously** and you usually cannot see their reply yet.\n- **Follow the Nexus leader's routing.** If your task depends on another Wizard's output, write **WAITING ON [Wizard]:** what you need—avoid duplicating their work. If you have parallel-ready work (leader said PARALLEL OK or it's clearly disjoint files/tools), execute without blocking.\n";
-  const relayLeader = "- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n- When another teammate should speak next on this user message, end with `[NEXUS_CONTINUE]` alone on its own last line. When the Nexus should stop discussing this user message, end with `[NEXUS_END]` alone on its own last line.\n- When the user calls someone out **by Wizard display name** (or `@ThatName`) in a queued mid-relay message, Mythra usually routes the **next** stream to that teammate—reply directly if it was you.\n";
-  const relayMember = "- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n- If the user addresses you **by name** or `@yourName`, treat that as your cue to respond next even when others were busy.\n- Ask teammates questions when helpful. Use `[NEXUS_CONTINUE]` alone on its own last line if more discussion is needed; use `[NEXUS_END]` alone on its own last line when you believe this user message is fully addressed.\n";
+  const relayLeader = "- **Relay Nexus:** Mythra streams **one Wizard at a time** per user message inside this combined assistant reply. Read segments above before you speak—you can respond to teammates and ask clarifying questions.\n- The user may send follow-up lines while another teammate is still streaming; those messages appear before your next turn—read them and coordinate (for example the leader can check whether someone is stuck).\n- For a normal user message, each routed Wizard should speak at most once. Do not request another round just to restate, summarize, or refine what was already answered.\n- To explicitly tap in a teammate next, end your visible reply by addressing them with `@WizardName` or `WizardName, ...`; Mythra treats that as a routing command and forces that Wizard to respond next.\n- A hidden leader router also decides who speaks next after each visible turn. Do not emit routing control tags; just make your useful contribution.\n- When the user calls someone out **by Wizard display name** (or `@ThatName`) in a queued mid-relay message, Mythra usually routes the **next** stream to that teammate—reply directly if it was you.\n";
+  const relayMember = "- **Relay Nexus:** You speak after earlier teammate segments in this same assistant reply—read them before answering.\n- The user may interrupt with new chat lines while someone else is streaming; those lines appear before your next turn—answer them explicitly when they mention you or the situation.\n- If the user addresses you **by name** or `@yourName`, treat that as your cue to respond next even when others were busy.\n- For a normal user message, each routed Wizard should speak at most once. Do not request another round just to restate, summarize, or refine what was already answered.\n- You can explicitly tap in a teammate by ending your visible reply with `@WizardName` or `WizardName, ...`; Mythra treats that as a routing command and forces that Wizard to respond next.\n- Ask teammates questions when helpful, but do not emit routing control tags; the hidden leader router will decide whether another Wizard should speak.\n";
   const modeLeader = conversationMode === "parallel" ? parallelLeader : relayLeader;
   const modeMember = conversationMode === "parallel" ? parallelMember : relayMember;
   return `${wizard.systemPrompt}
@@ -40753,10 +41283,15 @@ Mythra Nexus runtime:
 - Your Nexus role is: ${role === "leader" ? "leader" : "team member"}.
 - ${missionLines}
 - The shared project workspace for all file tools is: ${nexus.workspaceRoot}
-- Your private Wizard documents and every teammate's private Wizard documents are injected as read-only context. Use them to understand identity, personality, strengths, memory, and corrections.
+- Teammate Wizard workspaces are not automatically injected into your prompt. Use the read-only Nexus teammate tools when you need to inspect teammate identity, personality, strengths, memory, or corrections.
 - The team is: ${teamNames.join(", ")}.
+- All Nexus Wizards receive this same operating briefing: everyone should understand relay order, leader routing, tap-ins, and read-only teammate workspace inspection.
+- Leader capabilities: the leader can coordinate visible turns, explicitly tap in a teammate with \`@WizardName\` or \`WizardName, ...\`, and use read-only teammate workspace tools to understand who each Wizard is before assigning or routing work.
+- Teammate workspace access is read-only and on demand. It is for understanding identity, memory, preferences, and role fit—not for editing teammate private files.
 ${role === "leader" ? modeLeader : modeMember}
 - Answer as yourself, in first person, and focus on the user's latest request.
+- Do not start your reply with your own name, a speaker label, or a line like "${wizard.name}:". Mythra already displays your name above your message bubble.
+- Do not quote, recap, or paste earlier Wizard messages before your answer. Read prior teammate turns for context, then write only your new contribution.
 - Prefer splitting files/paths across teammates when parallelizing so simultaneous edits collide less often.
 - If another Wizard is better suited for part of the work, say so clearly and suggest how to split it.
 - Only edit files in the shared Nexus workspace unless the user explicitly asks you to update your private docs in a separate Wizard session.`;
@@ -40801,33 +41336,21 @@ ${file.content}`;
 };
 const buildNexusDocsContext = async (team) => {
   const loaded = [];
-  const parts = [];
   for (const member of team) {
-    const result = await buildWizardDocsContext(member.wizard);
-    loaded.push(
-      ...result.loaded.map((doc) => ({
-        name: `${member.wizard.name}/${doc.name}`,
-        ok: doc.ok
-      }))
-    );
-    if (result.message) {
-      parts.push(`## ${member.role === "leader" ? "Leader" : "Member"}: ${member.wizard.name}
-${result.message.content}`);
+    try {
+      const docs2 = await window.electronAPI.listWizardDocuments(member.wizard.workspaceRoot);
+      const mdDocs = docs2.filter((doc) => /\.md$/i.test(doc.path));
+      loaded.push(
+        ...mdDocs.map((doc) => ({
+          name: `${member.wizard.name}/${workspaceRelativeDisplay(member.wizard.workspaceRoot, doc.path) || doc.label || pathLabel(doc.path)}`,
+          ok: true
+        }))
+      );
+    } catch {
+      loaded.push({ name: member.wizard.name, ok: false });
     }
   }
-  if (parts.length === 0) return { message: null, loaded };
-  return {
-    loaded,
-    message: {
-      id: `nexus-docs-${Date.now()}`,
-      role: "system",
-      content: [
-        "Nexus team private Wizard Markdown documents are injected below as read-only context. Use them to coordinate role fit, memory, style, and corrections while doing project work only in the shared Nexus workspace.",
-        ...parts
-      ].join("\n\n"),
-      status: "done"
-    }
-  };
+  return { message: null, loaded };
 };
 const diffPromptLines = (before, after) => {
   const a = (before || "[empty]").split("\n");
@@ -40860,6 +41383,10 @@ const diffPromptLines = (before, after) => {
 };
 const stripNexusRelayControlMarkers = (raw) => raw.replace(/\[\s*NEXUS_(?:END|CONTINUE)\s*\]/gi, "").trimEnd();
 const parseNexusRelayWantsEnd = (raw) => /\[\s*NEXUS_END\s*\]/i.test(raw);
+const userRequestsEveryNexusWizard = (text2) => /\b(all|every|each)\s+(?:of\s+(?:you|the\s+)?|the\s+)?(?:wizards?|models?|members?|teammates?|agents?)\b/i.test(text2) || /\b(?:you\s+guys|you\s+all|y['’]?all|the\s+team|the\s+group)\b/i.test(text2) || /\b(?:everyone|everybody)'?s\s+(?:thoughts?|opinions?|perspectives?|takes?)\b/i.test(text2) || /\b(?:thoughts?|opinions?|perspectives?|takes?)\s+(?:from|of)\s+(?:everyone|everybody|the\s+team|all\s+of\s+you)\b/i.test(text2) || /\b(?:everyone|everybody)\b/i.test(text2) || /\beach\s+of\s+you\b/i.test(text2);
+const userInvitesNexusDiscussion = (text2) => /\b(?:discuss|debate|deliberate|brainstorm|collaborate|work\s+through|talk\s+(?:it|this)\s+through|back\s+and\s+forth|roundtable)\b/i.test(
+  text2
+);
 const sortNexusTeamLeaderFirst = (team, leaderWizardId) => [...team].sort((a, b) => {
   if (a.id === leaderWizardId && b.id !== leaderWizardId) return -1;
   if (b.id === leaderWizardId && a.id !== leaderWizardId) return 1;
@@ -40874,41 +41401,151 @@ function isWizardNameMentionedInText(displayName, haystack) {
   if (new RegExp(`@${escaped}(?:\\s|$|[,:;.!?])`, "i").test(t)) return true;
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(t);
 }
-function pickNexusRelaySpeakerForQueuedTurn(ordered, roundRobinPick, queuedSlice) {
-  if (queuedSlice.length === 0) return roundRobinPick;
-  const text2 = queuedSlice.map((m) => m.content ?? "").join("\n");
-  if (!text2.trim()) return roundRobinPick;
-  const hits = ordered.filter((m) => isWizardNameMentionedInText(m.wizard.name, text2));
-  if (hits.length === 1) return hits[0];
-  if (hits.length > 1) {
-    const lower = text2.toLowerCase();
-    let best = hits[0];
-    let bestPos = Infinity;
-    for (const m of hits) {
-      const nm = m.wizard.name.trim().toLowerCase();
-      const atIdx = lower.indexOf(`@${nm}`);
-      const bareIdx = lower.indexOf(nm);
-      const idx = atIdx !== -1 ? atIdx : bareIdx === -1 ? Infinity : bareIdx;
-      if (idx < bestPos) {
-        bestPos = idx;
-        best = m;
-      }
+function orderedNexusAtMentionResponders(team, text2) {
+  const source = text2.trim();
+  if (!source) return [];
+  const mentions = [];
+  for (const member of team) {
+    const name2 = member.wizard.name.trim();
+    if (name2.length < 2) continue;
+    const escaped = name2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, "gi");
+    for (const match of source.matchAll(pattern)) {
+      mentions.push({ index: match.index ?? 0, member });
     }
-    return best;
   }
-  return roundRobinPick;
+  mentions.sort((a, b) => a.index - b.index);
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  for (const hit of mentions) {
+    if (seen.has(hit.member.id)) continue;
+    seen.add(hit.member.id);
+    ordered.push(hit.member);
+  }
+  return ordered;
+}
+function orderedNexusVisibleTapIns(team, speakerId, text2) {
+  const trimmed = text2.trim();
+  if (!trimmed) return [];
+  const paragraphs = trimmed.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  const lines = trimmed.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const candidates = [
+    lines[lines.length - 1] ?? "",
+    paragraphs[paragraphs.length - 1] ?? "",
+    trimmed
+  ].filter(Boolean);
+  for (const source of candidates) {
+    const mentionHits = orderedNexusAtMentionResponders(team, source).filter((member) => member.id !== speakerId);
+    if (mentionHits.length > 0) return mentionHits;
+  }
+  const finalBlock = paragraphs[paragraphs.length - 1] ?? lines[lines.length - 1] ?? trimmed;
+  const directHits = [];
+  for (const member of team) {
+    if (member.id === speakerId) continue;
+    const name2 = member.wizard.name.trim();
+    if (name2.length < 2) continue;
+    const escaped = name2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|[.!?]\\s+|\\n)${escaped}\\s*[,::—-]\\s*`, "i");
+    const match = finalBlock.match(pattern);
+    if (match?.index != null) directHits.push({ index: match.index, member });
+  }
+  directHits.sort((a, b) => a.index - b.index);
+  return directHits.map((hit) => hit.member);
+}
+function stripJsonFence(raw) {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (fenced?.[1] ?? trimmed).trim();
+}
+function parseNexusLeaderRouteDecision(raw, team) {
+  const cleaned = stripJsonFence(raw);
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  const source = jsonMatch?.[0] ?? cleaned;
+  try {
+    const parsed = JSON.parse(source);
+    const rawAction = String(parsed.action ?? parsed.next ?? parsed.decision ?? "").trim().toLowerCase();
+    if (rawAction === "end" || rawAction === "stop" || rawAction === "done") {
+      return {
+        action: "end",
+        reason: typeof parsed.reason === "string" ? parsed.reason : void 0
+      };
+    }
+    const wizardId = String(parsed.wizardId ?? parsed.wizard_id ?? parsed.id ?? "").trim();
+    const wizardName = String(parsed.wizardName ?? parsed.wizard_name ?? parsed.name ?? parsed.speaker ?? "").trim();
+    const member = team.find((item) => item.id === wizardId) ?? team.find((item) => item.wizard.name.trim().toLowerCase() === wizardName.toLowerCase());
+    if (member) {
+      return {
+        action: "speak",
+        wizardId: member.id,
+        wizardName: member.wizard.name,
+        reason: typeof parsed.reason === "string" ? parsed.reason : void 0
+      };
+    }
+  } catch {
+  }
+  if (/^\s*(?:end|stop|done)\b/i.test(cleaned)) {
+    return { action: "end" };
+  }
+  for (const member of team) {
+    const escaped = member.wizard.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(cleaned)) {
+      return { action: "speak", wizardId: member.id, wizardName: member.wizard.name };
+    }
+  }
+  return null;
+}
+function buildNexusLeaderRouterSystemPrompt(leader, nexus, team) {
+  const teamRows = team.map(
+    (member) => JSON.stringify({
+      wizardId: member.id,
+      name: member.wizard.name,
+      role: member.role
+    })
+  ).join("\n");
+  return `${leader.systemPrompt}
+
+Mythra hidden Nexus leader router:
+- You are the invisible routing controller for Nexus project "${nexus.name}".
+- You decide who should speak next in the visible chat, or whether the current user request is complete.
+- Return exactly one JSON object and no markdown.
+- Valid END response: {"action":"end","reason":"short reason"}
+- Valid speaker response: {"action":"speak","wizardId":"one of the ids below","reason":"short reason"}
+- Do not choose a speaker just to restate, summarize, or polish what the team already said.
+- If the user asked every wizard/model/member to answer, route each relevant wizard at most once, then end unless the user also clearly asked for debate or back-and-forth.
+- If the request is open-ended, a debate, a design discussion, or unresolved after the last speaker, choose the one wizard with the most useful next contribution.
+- If a queued follow-up mentions a wizard by name or @name, choose that wizard unless another choice is clearly required.
+- Prefer ending when the current visible answers already satisfy the user.
+
+Team:
+${teamRows}`;
 }
 const chatFingerprint = (messages, timeline) => JSON.stringify({ messages, timeline });
-const stripDuplicateNexusSpeakerLabel = (name2, raw) => {
+const nexusSpeakerLabelPattern = (name2) => {
   const escaped = name2.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return raw.replace(new RegExp(`^\\s*${escaped}\\s*:\\s*`, "i"), "").trim();
+  return String.raw`(?:\*\*)?${escaped}\s*:(?:\*\*)?`;
+};
+const stripDuplicateNexusSpeakerLabel = (name2, raw) => {
+  if (!name2.trim()) return raw.trim();
+  return raw.replace(new RegExp(`^\\s*${nexusSpeakerLabelPattern(name2)}\\s*`, "i"), "").trim();
+};
+const cleanNexusResponderContent = (name2, raw, knownNames) => {
+  let text2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+  const names = knownNames.map((n) => n.trim()).filter(Boolean);
+  if (names.length === 0 || !name2.trim()) return text2;
+  const labelAlternation = names.map(nexusSpeakerLabelPattern).join("|");
+  const startsWithKnownSpeaker = new RegExp(`^\\s*(?:${labelAlternation})\\s*`, "i").test(text2);
+  const ownLabelAfterTranscript = new RegExp(`(?:^|\\n)\\s*${nexusSpeakerLabelPattern(name2)}\\s*`, "i").exec(text2);
+  if (startsWithKnownSpeaker && ownLabelAfterTranscript && ownLabelAfterTranscript.index > 0) {
+    text2 = text2.slice(ownLabelAfterTranscript.index + ownLabelAfterTranscript[0].length).trim();
+  }
+  return stripDuplicateNexusSpeakerLabel(name2, text2);
 };
 const formatNexusMultiResponseContent = (group) => group.responders.map(({ requestId, name: name2 }) => {
   const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
-  const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
-  return `**${name2}:**
-${content2 || "Thinking..."}`;
-}).join("\n\n");
+  const content2 = cleanNexusResponderContent(name2, raw, group.responders.map((responder) => responder.name));
+  return content2 ? `**${name2}:**
+${content2}` : "";
+}).filter(Boolean).join("\n\n");
 const formatRelativeDate = (ts) => {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 6e4);
@@ -41051,6 +41688,8 @@ function App() {
   const activeChatIdRef = reactExports.useRef(void 0);
   const inFlightChatsRef = reactExports.useRef(/* @__PURE__ */ new Map());
   const nexusMultiResponseGroupsRef = reactExports.useRef(/* @__PURE__ */ new Map());
+  const hiddenNexusRouterRequestsRef = reactExports.useRef(/* @__PURE__ */ new Map());
+  const stoppedNexusRelayRequestIdsRef = reactExports.useRef(/* @__PURE__ */ new Set());
   const finalizeNexusMultiResponseUiRef = reactExports.useRef(
     () => {
     }
@@ -41063,6 +41702,7 @@ function App() {
   const [overrideModels, setOverrideModels] = reactExports.useState([]);
   const [chatModelExpanded, setChatModelExpanded] = reactExports.useState(false);
   const [newChatModelOverride, setNewChatModelOverride] = reactExports.useState(null);
+  const [optimisticChatModelOverride, setOptimisticChatModelOverride] = reactExports.useState(null);
   const newChatModelOverrideRef = reactExports.useRef(null);
   newChatModelOverrideRef.current = newChatModelOverride;
   const [mediaPickerKind, setMediaPickerKind] = reactExports.useState(null);
@@ -41119,6 +41759,9 @@ function App() {
   const [normalChatDropTarget, setNormalChatDropTarget] = reactExports.useState(null);
   const [draggingWizardId, setDraggingWizardId] = reactExports.useState(null);
   const [wizardDropTarget, setWizardDropTarget] = reactExports.useState(null);
+  const [wizardColorPickerId, setWizardColorPickerId] = reactExports.useState(null);
+  const [nexusColorPickerId, setNexusColorPickerId] = reactExports.useState(null);
+  const [inFlightChatIds, setInFlightChatIds] = reactExports.useState(/* @__PURE__ */ new Set());
   const [wizardRenamePrompt, setWizardRenamePrompt] = reactExports.useState(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = reactExports.useState(null);
   const [wizardPromptApproval, setWizardPromptApproval] = reactExports.useState(null);
@@ -41129,6 +41772,8 @@ function App() {
   const settingsAutosaveTimerRef = reactExports.useRef(null);
   const wizardAutosaveTimerRef = reactExports.useRef(null);
   const nexusAutosaveTimerRef = reactExports.useRef(null);
+  const wizardColorPickerRef = reactExports.useRef(null);
+  const nexusColorPickerRef = reactExports.useRef(null);
   const wizardDraftRef = reactExports.useRef(null);
   const nexusDraftRef = reactExports.useRef(null);
   const lastContentFingerprintRef = reactExports.useRef(null);
@@ -41141,6 +41786,31 @@ function App() {
       if (item.chatId === chatId) return item;
     }
     return void 0;
+  };
+  const rememberInFlight = (requestId, snapshot) => {
+    inFlightChatsRef.current.set(requestId, snapshot);
+    setInFlightChatIds((current) => {
+      if (current.has(snapshot.chatId)) return current;
+      const next = new Set(current);
+      next.add(snapshot.chatId);
+      return next;
+    });
+  };
+  const forgetInFlight = (requestId) => {
+    const snapshot = inFlightChatsRef.current.get(requestId);
+    const deleted = inFlightChatsRef.current.delete(requestId);
+    if (snapshot && deleted) {
+      const stillInFlight = [...inFlightChatsRef.current.values()].some((item) => item.chatId === snapshot.chatId);
+      if (!stillInFlight) {
+        setInFlightChatIds((current) => {
+          if (!current.has(snapshot.chatId)) return current;
+          const next = new Set(current);
+          next.delete(snapshot.chatId);
+          return next;
+        });
+      }
+    }
+    return deleted;
   };
   const showInFlightIfActive = (snapshot) => {
     if (activeChatIdRef.current !== snapshot.chatId) return;
@@ -41190,6 +41860,7 @@ function App() {
     flushStreamingDeltaBufferRef.current();
   };
   const appendActivity = (activity) => {
+    if (hiddenNexusRouterRequestsRef.current.has(activity.requestId)) return;
     const nexusGroup = nexusMultiResponseGroupsRef.current.get(activity.requestId);
     const routedRequestId = nexusGroup?.messageIdByRequestId.get(activity.requestId) ?? nexusGroup?.messageId;
     const routedActivity = routedRequestId ? { ...activity, requestId: routedRequestId } : activity;
@@ -41216,7 +41887,7 @@ function App() {
     const message = {
       id: messageId,
       role: "assistant",
-      content: "Thinking...",
+      content: "",
       status: "streaming",
       assistantDisplayName: name2
     };
@@ -41231,6 +41902,7 @@ function App() {
   const updateNexusMultiResponseMessage = (group, status, requestIdFilter) => {
     const targetRequestIds = requestIdFilter ? /* @__PURE__ */ new Set([requestIdFilter]) : group.requestIds;
     const responderByRequestId = new Map(group.responders.map((responder) => [responder.requestId, responder.name]));
+    const responderNames = group.responders.map((responder) => responder.name);
     const recipe = (m) => ({
       ...m
     });
@@ -41241,13 +41913,13 @@ function App() {
         if (!requestId) return m;
         const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
-        const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+        const content2 = cleanNexusResponderContent(name2, raw, responderNames);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
         const usage = m.usage ?? group.usageByRequestId.get(requestId);
         const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...recipe(m),
-          content: content2 || "Thinking...",
+          content: content2,
           reasoning,
           usage,
           costEstimate,
@@ -41269,13 +41941,13 @@ function App() {
         if (!requestId) return m;
         const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
         const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
-        const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+        const content2 = cleanNexusResponderContent(name2, raw, responderNames);
         const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
         const usage = m.usage ?? group.usageByRequestId.get(requestId);
         const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
         return {
           ...m,
-          content: content2 || "Thinking...",
+          content: content2,
           reasoning,
           usage,
           costEstimate,
@@ -41289,13 +41961,13 @@ function App() {
         updateTimelineMessage(messageId, (m) => {
           const name2 = responderByRequestId.get(requestId) ?? m.assistantDisplayName ?? "Wizard";
           const raw = group.contentByRequestId.get(requestId)?.trim() ?? "";
-          const content2 = stripDuplicateNexusSpeakerLabel(name2, raw);
+          const content2 = cleanNexusResponderContent(name2, raw, responderNames);
           const reasoning = group.reasoningByRequestId.get(requestId)?.trim() || void 0;
           const usage = m.usage ?? group.usageByRequestId.get(requestId);
           const costEstimate = m.costEstimate ?? group.costEstimateByRequestId.get(requestId);
           return {
             ...m,
-            content: content2 || "Thinking...",
+            content: content2,
             reasoning,
             usage,
             costEstimate,
@@ -41354,7 +42026,7 @@ function App() {
     if (finalSnapshot) {
       void saveChatSnapshot(finalSnapshot.chatId, finalSnapshot.messages, finalSnapshot.timeline).finally(() => {
         if (inFlightChatsRef.current.get(group.messageId) === finalSnapshot) {
-          inFlightChatsRef.current.delete(group.messageId);
+          forgetInFlight(group.messageId);
         }
       });
     }
@@ -41464,10 +42136,24 @@ function App() {
     }
   }, [activeNexusMeta?.id]);
   const effectiveModelOverride = reactExports.useMemo(() => {
-    if (activeChatId) return activeChatMeta?.modelOverride ?? null;
+    if (activeChatId) {
+      if (optimisticChatModelOverride?.chatId === activeChatId) {
+        return optimisticChatModelOverride.override;
+      }
+      return activeChatMeta?.modelOverride ?? null;
+    }
     return newChatModelOverride;
-  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride]);
+  }, [activeChatId, activeChatMeta?.modelOverride, newChatModelOverride, optimisticChatModelOverride]);
   const activeMediaOverrideKind = mediaKindForOverride(effectiveModelOverride);
+  reactExports.useEffect(() => {
+    setOptimisticChatModelOverride(null);
+  }, [activeChatId]);
+  reactExports.useEffect(() => {
+    if (!activeChatId || optimisticChatModelOverride?.chatId !== activeChatId) return;
+    if (JSON.stringify(activeChatMeta?.modelOverride ?? null) === JSON.stringify(optimisticChatModelOverride.override)) {
+      setOptimisticChatModelOverride(null);
+    }
+  }, [activeChatId, activeChatMeta?.modelOverride, optimisticChatModelOverride]);
   const showWizardHubPlaceholder = reactExports.useMemo(
     () => sidebarTab === "wizards" && wizardsSidebarPane === "wizards" && !sidebarFocusedWizardId && activeChatMeta?.kind !== "wizard-session" && activeChatMeta?.kind !== "nexus-session",
     [sidebarTab, wizardsSidebarPane, sidebarFocusedWizardId, activeChatMeta?.kind]
@@ -41628,6 +42314,29 @@ function App() {
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [showNewMenu]);
   reactExports.useEffect(() => {
+    if (!wizardColorPickerId && !nexusColorPickerId) return;
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (wizardColorPickerRef.current?.contains(target)) return;
+      if (nexusColorPickerRef.current?.contains(target)) return;
+      setWizardColorPickerId(null);
+      setNexusColorPickerId(null);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setWizardColorPickerId(null);
+        setNexusColorPickerId(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [wizardColorPickerId, nexusColorPickerId]);
+  reactExports.useEffect(() => {
     const preset = settings?.ui.chatThreadBackgroundPreset ?? null;
     const path2 = settings?.ui.chatThreadBackgroundPath?.trim();
     if (!preset && !path2) {
@@ -41730,17 +42439,18 @@ function App() {
   reactExports.useEffect(() => {
     if (!settings) return;
     if (activeChatId) {
-      setOverrideModelProvider(activeChatMeta?.modelOverride?.provider ?? settings.selectedProvider);
+      setOverrideModelProvider(effectiveModelOverride?.provider ?? settings.selectedProvider);
     } else {
       setOverrideModelProvider(newChatModelOverride?.provider ?? settings.selectedProvider);
     }
-  }, [activeChatId, activeChatMeta?.modelOverride?.provider, newChatModelOverride?.provider, settings]);
+  }, [activeChatId, effectiveModelOverride?.provider, newChatModelOverride?.provider, settings?.selectedProvider]);
   reactExports.useEffect(() => {
     if (!settings) {
       setOverrideModels([]);
       return;
     }
     let cancelled = false;
+    setOverrideModels([]);
     void window.electronAPI.listModels(
       settings,
       overrideModelProvider,
@@ -41748,6 +42458,8 @@ function App() {
     ).then((list2) => {
       if (cancelled) return;
       setOverrideModels(activeMediaOverrideKind ? list2.filter((model) => modelMatchesMediaKind(model, activeMediaOverrideKind)) : list2);
+    }).catch(() => {
+      if (!cancelled) setOverrideModels([]);
     });
     return () => {
       cancelled = true;
@@ -41798,6 +42510,11 @@ function App() {
       }
     });
     const offDelta = window.electronAPI.onChatDelta(({ requestId, delta, reasoningDelta }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        if (delta) hiddenRouter.content += delta;
+        return;
+      }
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         if (delta) {
@@ -41828,6 +42545,11 @@ function App() {
       }
     });
     const offDoneChat = window.electronAPI.onChatDone(({ requestId, content: content2, reasoning, attachments, usage, costEstimate }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        hiddenRouter.content = content2;
+        return;
+      }
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
@@ -41838,6 +42560,7 @@ function App() {
           nexusGroup.costEstimateByRequestId.set(requestId, costEstimate);
         }
         nexusGroup.pending.delete(requestId);
+        setNexusRelayProgress((current) => current?.requestId === requestId ? null : current);
         if (nexusGroup.suppressFinalizeUntilOrchestrator) {
           updateNexusMultiResponseMessage(nexusGroup, "streaming", requestId);
           if (usage && activeChatIdRef.current === nexusGroup.chatId) {
@@ -41879,7 +42602,7 @@ function App() {
         }
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
           if (inFlightChatsRef.current.get(requestId) === snapshot) {
-            inFlightChatsRef.current.delete(requestId);
+            forgetInFlight(requestId);
           }
         });
         return;
@@ -41888,11 +42611,17 @@ function App() {
       setActiveRequestId(void 0);
     });
     const offError = window.electronAPI.onChatError(({ requestId, error }) => {
+      const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
+      if (hiddenRouter) {
+        hiddenRouter.error = error;
+        return;
+      }
       cancelStreamDeltaFlushAndFlushNow();
       const nexusGroup = nexusMultiResponseGroupsRef.current.get(requestId);
       if (nexusGroup) {
         nexusGroup.contentByRequestId.set(requestId, `Error: ${error}`);
         nexusGroup.pending.delete(requestId);
+        setNexusRelayProgress((current) => current?.requestId === requestId ? null : current);
         appendActivity({
           id: uid(),
           requestId: nexusGroup.messageId,
@@ -41936,7 +42665,7 @@ function App() {
         }
         void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
           if (inFlightChatsRef.current.get(requestId) === snapshot) {
-            inFlightChatsRef.current.delete(requestId);
+            forgetInFlight(requestId);
           }
         });
         return;
@@ -42568,8 +43297,10 @@ function App() {
   }, []);
   const addChatAttachments = async (files) => {
     if (!files?.length) return;
+    const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(file.name));
+    if (!imageFiles.length) return;
     const nextAttachments = await Promise.all(
-      Array.from(files).map(
+      imageFiles.map(
         (file) => new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve({ id: uid(), name: file.name, mimeType: file.type || "image/*", dataUrl: String(reader.result) });
@@ -42830,7 +43561,7 @@ function App() {
     const inFlight = findInFlightByChatId(id2);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(id2);
     if (activeChatId === id2) await startNewChat();
@@ -42891,7 +43622,7 @@ function App() {
     const inFlight = findInFlightByChatId(session.id);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(session.id);
     if (activeChatId === session.id) {
@@ -42915,7 +43646,7 @@ function App() {
     const inFlight = findInFlightByChatId(session.id);
     if (inFlight) {
       await window.electronAPI.stopChat(inFlight.requestId);
-      inFlightChatsRef.current.delete(inFlight.requestId);
+      forgetInFlight(inFlight.requestId);
     }
     await window.electronAPI.deleteChat(session.id);
     if (activeChatId === session.id) {
@@ -42947,7 +43678,7 @@ function App() {
       const inf = findInFlightByChatId(cid);
       if (inf) {
         await window.electronAPI.stopChat(inf.requestId);
-        inFlightChatsRef.current.delete(inf.requestId);
+        forgetInFlight(inf.requestId);
       }
     }
     await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
@@ -42985,7 +43716,7 @@ function App() {
       const inf = findInFlightByChatId(cid);
       if (inf) {
         await window.electronAPI.stopChat(inf.requestId);
-        inFlightChatsRef.current.delete(inf.requestId);
+        forgetInFlight(inf.requestId);
       }
     }
     await Promise.all(sessions.map((session) => window.electronAPI.deleteChat(session.id)));
@@ -43161,10 +43892,19 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         setNewChatModelOverride(nextOverride);
         return;
       }
+      setOptimisticChatModelOverride({ chatId: activeChatId, override: nextOverride });
       const full = await window.electronAPI.loadChat(activeChatId);
-      if (!full) return;
-      await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
-      await refreshChatList();
+      if (!full) {
+        setOptimisticChatModelOverride(null);
+        return;
+      }
+      try {
+        await window.electronAPI.saveChat({ ...full, modelOverride: nextOverride, updatedAt: Date.now() });
+        await refreshChatList();
+      } catch (error) {
+        setOptimisticChatModelOverride(null);
+        throw error;
+      }
     },
     [activeChatId, activeChatMeta?.modelOverride, refreshChatList]
   );
@@ -43475,6 +44215,75 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     },
     [refreshChatList]
   );
+  const saveWizardAccentColor = reactExports.useCallback(
+    async (wizardId, accentColor) => {
+      setWizardColorPickerId(null);
+      setChatList(
+        (current) => current.map(
+          (chat) => chat.id === wizardId && chat.wizard ? {
+            ...chat,
+            wizard: {
+              ...chat.wizard,
+              accentColor
+            }
+          } : chat
+        )
+      );
+      const full = await window.electronAPI.loadChat(wizardId);
+      if (!full || full.kind !== "wizard" || !full.wizard) return;
+      const activeDraft = activeWizardMeta?.id === wizardId ? wizardDraftRef.current : null;
+      const nextWizard = {
+        ...activeDraft ?? full.wizard,
+        accentColor
+      };
+      await window.electronAPI.saveChat({
+        ...full,
+        wizard: nextWizard,
+        modelOverride: { provider: nextWizard.provider, model: nextWizard.model },
+        updatedAt: full.updatedAt
+      });
+      if (activeWizardMeta?.id === wizardId) {
+        setWizardDraft(nextWizard);
+        wizardDraftRef.current = nextWizard;
+      }
+      await refreshChatList();
+    },
+    [activeWizardMeta?.id, refreshChatList]
+  );
+  const saveNexusAccentColor = reactExports.useCallback(
+    async (nexusId, accentColor) => {
+      setNexusColorPickerId(null);
+      setChatList(
+        (current) => current.map(
+          (chat) => chat.id === nexusId && chat.nexus ? {
+            ...chat,
+            nexus: {
+              ...chat.nexus,
+              accentColor
+            }
+          } : chat
+        )
+      );
+      const full = await window.electronAPI.loadChat(nexusId);
+      if (!full || full.kind !== "nexus" || !full.nexus) return;
+      const activeDraft = activeNexusMeta?.id === nexusId ? nexusDraftRef.current : null;
+      const nextNexus = {
+        ...activeDraft ?? full.nexus,
+        accentColor
+      };
+      await window.electronAPI.saveChat({
+        ...full,
+        nexus: nextNexus,
+        updatedAt: full.updatedAt
+      });
+      if (activeNexusMeta?.id === nexusId) {
+        setNexusDraft(nextNexus);
+        nexusDraftRef.current = nextNexus;
+      }
+      await refreshChatList();
+    },
+    [activeNexusMeta?.id, refreshChatList]
+  );
   const canReorderNormalChats = reactExports.useCallback(
     (sourceId, targetId) => {
       if (!sourceId || sourceId === targetId) return false;
@@ -43705,6 +44514,10 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     if (!sendSettings || trimmedInput.length === 0 && attachmentsSnapshot.length === 0) {
       return;
     }
+    if (composerDisabledReason) {
+      setSettingsStatus(composerDisabledReason);
+      return;
+    }
     if (chatStreamingRef.current && nexusRelayComposeUnlockedRef.current && activeChatIdRef.current && activeRequestIdRef.current) {
       const parentRequestId = activeRequestIdRef.current;
       const userMessage2 = {
@@ -43804,6 +44617,12 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       nexusTeam = resolved.filter((item) => item != null);
     }
     const nexusLeader = nexusForStream ? nexusTeam.find((member) => member.id === nexusForStream.leaderWizardId)?.wizard ?? null : null;
+    const nexusTeamWorkspaceRefs = nexusForStream ? nexusTeam.map((member) => ({
+      wizardId: member.id,
+      wizardName: member.wizard.name,
+      role: member.role,
+      workspaceRoot: member.wizard.workspaceRoot
+    })) : [];
     if (wizardForStream && (!wizardForStream.model.trim() || !wizardForStream.workspaceRoot.trim())) return;
     if (nexusForStream && (!nexusLeader?.model.trim() || !nexusForStream.workspaceRoot.trim())) return;
     if (wizardForStream && workspaceRootRef.current !== wizardForStream.workspaceRoot) {
@@ -43830,9 +44649,17 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       attachments: attachmentsSnapshot,
       status: "done"
     };
-    const nexusResponders = nexusForStream && nexusTeam.length >= 2 ? nexusTeam : [];
-    const useNexusMultiWizard = Boolean(nexusResponders.length >= 2);
-    const useParallelNexusStreams = Boolean(useNexusMultiWizard && nexusForStream?.parallelWizardResponses);
+    const allNexusResponders = nexusForStream && nexusTeam.length >= 2 ? nexusTeam : [];
+    const targetedNexusResponders = orderedNexusAtMentionResponders(
+      allNexusResponders,
+      userMessage.content
+    );
+    const hasTargetedNexusResponders = targetedNexusResponders.length > 0;
+    const nexusResponders = hasTargetedNexusResponders ? targetedNexusResponders : allNexusResponders;
+    const useNexusMultiWizard = Boolean(nexusResponders.length >= (hasTargetedNexusResponders ? 1 : 2));
+    const useParallelNexusStreams = Boolean(
+      useNexusMultiWizard && !hasTargetedNexusResponders && nexusForStream?.parallelWizardResponses
+    );
     const parallelChildRequestIds = useNexusMultiWizard && useParallelNexusStreams ? nexusResponders.map(() => uid()) : [];
     const relayIntroSpeaker = useNexusMultiWizard && nexusForStream && !useParallelNexusStreams ? sortNexusTeamLeaderFirst(nexusResponders, nexusForStream.leaderWizardId)[0]?.wizard.name ?? "Wizard" : "";
     const requestId = uid();
@@ -43847,7 +44674,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     const parallelAssistantMessages = useParallelNexusStreams ? nexusResponders.map((member, index2) => ({
       id: parallelChildRequestIds[index2],
       role: "assistant",
-      content: "Thinking...",
+      content: "",
       status: "streaming",
       assistantDisplayName: member.wizard.name
     })) : [];
@@ -43903,7 +44730,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     }
     if (!chatIdForStream) return;
     const mediaOverrideKind = mediaKindForOverride(overrideForStream);
-    inFlightChatsRef.current.set(requestId, {
+    rememberInFlight(requestId, {
       chatId: chatIdForStream,
       requestId,
       messages: [...nextHistory, ...assistantMessagesForTurn],
@@ -43990,6 +44817,14 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       } : overrideSettings;
     })();
     const wizardDocsContext = nexusForStream ? await buildNexusDocsContext(nexusTeam) : wizardForStream ? await buildWizardDocsContext(wizardForStream) : { message: null, loaded: [] };
+    const nexusOwnDocsByWizardId = /* @__PURE__ */ new Map();
+    if (nexusForStream) {
+      await Promise.all(
+        nexusTeam.map(async (member) => {
+          nexusOwnDocsByWizardId.set(member.id, await buildWizardDocsContext(member.wizard));
+        })
+      );
+    }
     if (wizardForStream) {
       const loadedDocs = wizardDocsContext.loaded;
       const okCount = loadedDocs.filter((doc) => doc.ok).length;
@@ -44015,6 +44850,17 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     if (nexusForStream) {
       const loadedDocs = wizardDocsContext.loaded;
       const okCount = loadedDocs.filter((doc) => doc.ok).length;
+      const ownDocRows = nexusTeam.map((member) => {
+        const own2 = nexusOwnDocsByWizardId.get(member.id);
+        const ownOk = own2?.loaded.filter((doc) => doc.ok).length ?? 0;
+        const ownTotal = own2?.loaded.length ?? 0;
+        return `${member.wizard.name}: ${ownOk}/${ownTotal}`;
+      });
+      const ownDocTotal = [...nexusOwnDocsByWizardId.values()].reduce((sum, docs2) => sum + docs2.loaded.length, 0);
+      const ownDocOkCount = [...nexusOwnDocsByWizardId.values()].reduce(
+        (sum, docs2) => sum + docs2.loaded.filter((doc) => doc.ok).length,
+        0
+      );
       const missingProfiles = nexusForStream.members.length - nexusTeam.length;
       const checklist = [
         `Nexus workspace active: ${nexusForStream.workspaceRoot}`,
@@ -44022,17 +44868,19 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         `Team (resolved): ${nexusTeam.map((member) => member.wizard.name).join(", ") || "none"}`,
         ...missingProfiles > 0 ? [`Could not load ${missingProfiles} Wizard workspace profile(s); those Markdown folders were skipped.`] : [],
         ...useNexusMultiWizard ? useParallelNexusStreams ? [`Parallel mode: ${nexusTeam.length} Wizard streams ran concurrently on this message (each uses its own model profile).`] : [
-          `Relay mode: teammates respond one stream at a time in one assistant bubble (cap ${Math.min(
+          hasTargetedNexusResponders ? `Mention route: ${nexusResponders.map((member) => member.wizard.name).join(" -> ")} will respond one stream at a time in the order mentioned.` : `Relay mode: teammates respond one stream at a time in one assistant bubble (cap ${Math.min(
             96,
             Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24)
-          )} wizard turns unless the Nexus emits [NEXUS_END]).`
+          )} wizard turns; the leader router chooses each next speaker dynamically).`
         ] : [],
-        `Injected ${okCount}/${loadedDocs.length} team Markdown documents into this request.`
+        `Read-only teammate workspace tools available for ${nexusTeamWorkspaceRefs.length} Wizard(s).`,
+        `Auto-injected each responding Wizard's own private Markdown documents into that Wizard's stream: ${ownDocRows.join(", ") || "none"}.`,
+        `Auto-injected 0 team Markdown documents; ${okCount}/${loadedDocs.length} Markdown document path(s) are available to inspect on demand.`
       ].join("\n");
       const activity = {
         id: uid(),
         requestId,
-        kind: okCount === loadedDocs.length ? "success" : "warning",
+        kind: okCount === loadedDocs.length && ownDocOkCount === ownDocTotal ? "success" : "warning",
         message: checklist
       };
       const activityEntry = { id: `activity-${activity.id}`, type: "activity", activity };
@@ -44044,10 +44892,15 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       }
     }
     const streamHistory = wizardDocsContext.message ? [wizardDocsContext.message, ...nextHistory] : nextHistory;
+    const nexusHistoryForMember = (member, history) => {
+      const docs2 = nexusOwnDocsByWizardId.get(member.id);
+      return docs2?.message ? [docs2.message, ...history] : history;
+    };
     if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && useParallelNexusStreams) {
       await Promise.all(
         nexusResponders.map((member, index2) => {
           const rid = parallelChildRequestIds[index2];
+          const memberStreamHistory = nexusHistoryForMember(member, streamHistory);
           const memberSettings = {
             ...sendSettings,
             selectedProvider: member.wizard.provider,
@@ -44074,7 +44927,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               sessionMode: "agent"
             }
           };
-          return window.electronAPI.streamChat(rid, memberSettings, streamHistory, {
+          return window.electronAPI.streamChat(rid, memberSettings, memberStreamHistory, {
             workspaceRoot: nexusForStream.workspaceRoot,
             activeFilePath: activeFilePathRef.current,
             conversationId: `${chatSessionIdRef.current}:${member.id}`,
@@ -44084,6 +44937,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
             wizardFullAccess: void 0,
             wizardAllowOutsideWorkspace: void 0,
             nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
             nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
             nexusLeaderProvider: nexusLeader.provider,
             nexusLeaderModel: nexusLeader.model,
@@ -44095,19 +44949,155 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     }
     if (useNexusMultiWizard && nexusForStream && nexusLeader && nexusMultiGroup && !useParallelNexusStreams) {
       try {
+        stoppedNexusRelayRequestIdsRef.current.delete(requestId);
         nexusRelayComposeUnlockedRef.current = true;
-        const ordered = sortNexusTeamLeaderFirst(nexusResponders, nexusForStream.leaderWizardId);
-        const maxTurns = Math.min(96, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24));
-        const relayHardCap = Math.min(160, maxTurns + 40);
+        const relayTeam = sortNexusTeamLeaderFirst(
+          allNexusResponders.length > 0 ? allNexusResponders : nexusResponders,
+          nexusForStream.leaderWizardId
+        );
+        const ordered = hasTargetedNexusResponders ? nexusResponders : relayTeam;
+        const maxTurns = hasTargetedNexusResponders ? ordered.length : Math.min(96, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24));
+        const relayHardCap = hasTargetedNexusResponders ? Math.min(160, Math.max(maxTurns, Math.max(1, nexusForStream.maxSequentialWizardTurns ?? 24))) : Math.min(160, maxTurns + 40);
+        const latestUserWantsEveryWizard = userRequestsEveryNexusWizard(userMessage.content);
+        const latestUserInvitesDiscussion = userInvitesNexusDiscussion(userMessage.content);
+        const spokenWizardIds = /* @__PURE__ */ new Set();
+        const visibleTapInQueue = [];
+        let lastSpeakerId = null;
         let relayAssistantDigest = "";
         let turn = 0;
+        const chooseLeaderRoutedSpeaker = async (queuedSlice) => {
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) return null;
+          const unspoken = relayTeam.filter((member) => !spokenWizardIds.has(member.id));
+          const queuedText = queuedSlice.map((message) => message.content ?? "").join("\n");
+          const queuedAtMentionHits = queuedText.trim() ? orderedNexusAtMentionResponders(relayTeam, queuedText) : [];
+          const queuedMentionHits = queuedAtMentionHits.length > 0 ? queuedAtMentionHits : queuedText.trim() ? relayTeam.filter((member) => isWizardNameMentionedInText(member.wizard.name, queuedText)) : [];
+          if (queuedMentionHits.length > 0) {
+            return queuedMentionHits[0];
+          }
+          while (visibleTapInQueue.length > 0) {
+            const tapped = visibleTapInQueue.shift();
+            if (tapped.id !== lastSpeakerId) return tapped;
+          }
+          if (latestUserWantsEveryWizard && !latestUserInvitesDiscussion && spokenWizardIds.size >= ordered.length) {
+            return null;
+          }
+          const routerRequestId = uid();
+          hiddenNexusRouterRequestsRef.current.set(routerRequestId, { parentRequestId: requestId, content: "" });
+          setNexusRelayProgress({
+            requestId: routerRequestId,
+            wizardName: "Mythra",
+            segmentStartedAt: Date.now(),
+            phase: "routing"
+          });
+          const routerSettings = {
+            ...sendSettings,
+            selectedProvider: nexusLeader.provider,
+            providers: {
+              ...sendSettings.providers,
+              [nexusLeader.provider]: {
+                ...sendSettings.providers[nexusLeader.provider],
+                model: nexusLeader.model,
+                systemPrompt: buildNexusLeaderRouterSystemPrompt(nexusLeader, nexusForStream, relayTeam)
+              }
+            },
+            tools: {
+              ...sendSettings.tools,
+              allowModelSystemPrompt: false
+            },
+            agent: {
+              ...sendSettings.agent,
+              autoContinue: false
+            },
+            ui: {
+              ...sendSettings.ui,
+              sessionMode: "talk",
+              webSearch: false
+            }
+          };
+          const routeState = [
+            "Nexus routing state for the current user message.",
+            `Latest user request:
+${userMessage.content}`,
+            queuedSlice.length > 0 ? `Queued user follow-up(s):
+${queuedSlice.map((message) => message.content).join("\n\n")}` : "Queued user follow-up(s): none",
+            `User asked every wizard/model/member to answer: ${latestUserWantsEveryWizard ? "yes" : "no"}`,
+            `User invited open-ended discussion/back-and-forth: ${latestUserInvitesDiscussion ? "yes" : "no"}`,
+            `Already spoken this user message: ${relayTeam.filter((member) => spokenWizardIds.has(member.id)).map((member) => member.wizard.name).join(", ") || "none"}`,
+            `Last speaker: ${lastSpeakerId ? relayTeam.find((member) => member.id === lastSpeakerId)?.wizard.name ?? "unknown" : "none"}`,
+            `Current visible Nexus transcript for this user message:
+${relayAssistantDigest.trim() || "[none yet]"}`,
+            "Return JSON only. Choose END if the current answers already satisfy the user."
+          ].join("\n\n");
+          const leaderRouterMember = relayTeam.find((member) => member.id === nexusForStream.leaderWizardId) ?? relayTeam[0];
+          const routerMessages = [
+            ...nexusHistoryForMember(leaderRouterMember, messagesForHistory),
+            userMessage,
+            {
+              id: `nexus-router-state-${routerRequestId}`,
+              role: "user",
+              content: routeState,
+              status: "done"
+            }
+          ];
+          let routerResult = { ok: false };
+          try {
+            routerResult = await window.electronAPI.streamChat(routerRequestId, routerSettings, routerMessages, {
+              workspaceRoot: nexusForStream.workspaceRoot,
+              activeFilePath: activeFilePathRef.current,
+              conversationId: `${chatSessionIdRef.current}:leader-router:${turn}`,
+              wizardId: void 0,
+              wizardName: void 0,
+              wizardSystemPrompt: void 0,
+              wizardFullAccess: void 0,
+              wizardAllowOutsideWorkspace: void 0,
+              nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+              nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
+              nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
+              nexusLeaderProvider: nexusLeader.provider,
+              nexusLeaderModel: nexusLeader.model,
+              nexusLeaderName: nexusLeader.name.trim() || void 0
+            });
+          } finally {
+            setNexusRelayProgress((current) => current?.requestId === routerRequestId ? null : current);
+          }
+          const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(routerRequestId);
+          hiddenNexusRouterRequestsRef.current.delete(routerRequestId);
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) return null;
+          const decision = parseNexusLeaderRouteDecision(hiddenRouter?.content ?? "", relayTeam);
+          const fallback = latestUserWantsEveryWizard && !latestUserInvitesDiscussion && unspoken.length > 0 ? unspoken[0] : spokenWizardIds.size === 0 ? relayTeam[0] : null;
+          if (!routerResult.ok || hiddenRouter?.error || !decision) {
+            return fallback;
+          }
+          if (decision.action === "end") {
+            return fallback;
+          }
+          const selected = relayTeam.find((member) => member.id === decision.wizardId);
+          if (!selected) return fallback;
+          if (latestUserWantsEveryWizard && !latestUserInvitesDiscussion && spokenWizardIds.has(selected.id) && unspoken.length > 0) {
+            return unspoken[0];
+          }
+          if (selected.id === lastSpeakerId && unspoken.length > 0 && !queuedText.trim()) {
+            return unspoken[0];
+          }
+          return selected;
+        };
         while (turn < relayHardCap) {
-          if (turn >= maxTurns && nexusQueuedUserTurnsRef.current.length === 0) {
+          if (stoppedNexusRelayRequestIdsRef.current.has(requestId)) {
+            break;
+          }
+          if (turn >= maxTurns && nexusQueuedUserTurnsRef.current.length === 0 && visibleTapInQueue.length === 0) {
             break;
           }
           const queuedSlice = nexusQueuedUserTurnsRef.current.splice(0);
-          const roundRobinMember = ordered[turn % ordered.length];
-          const member = queuedSlice.length > 0 ? pickNexusRelaySpeakerForQueuedTurn(ordered, roundRobinMember, queuedSlice) : roundRobinMember;
+          let member = null;
+          if (hasTargetedNexusResponders && turn < ordered.length) {
+            member = ordered[turn];
+          } else {
+            member = await chooseLeaderRoutedSpeaker(queuedSlice);
+          }
+          if (!member) {
+            break;
+          }
           const rid = uid();
           nexusMultiGroup.requestIds.add(rid);
           nexusMultiGroup.pending.add(rid);
@@ -44115,11 +45105,17 @@ Project mission: ${full.nexus.mission.trim()}` : "";
           nexusMultiGroup.messageIdByRequestId.set(rid, rid);
           nexusMultiGroup.contentByRequestId.set(rid, "");
           nexusMultiResponseGroupsRef.current.set(rid, nexusMultiGroup);
-          setNexusRelayProgress({ wizardName: member.wizard.name, segmentStartedAt: Date.now() });
+          setNexusRelayProgress({
+            requestId: rid,
+            wizardName: member.wizard.name,
+            segmentStartedAt: Date.now(),
+            phase: "responding"
+          });
           addNexusMultiResponseMessage(nexusMultiGroup, rid, member.wizard.name);
           updateNexusMultiResponseMessage(nexusMultiGroup, "streaming");
-          const continuationHistoryBase = relayAssistantDigest.trim().length === 0 ? streamHistory : [
-            ...streamHistory,
+          const memberStreamHistory = nexusHistoryForMember(member, streamHistory);
+          const continuationHistoryBase = relayAssistantDigest.trim().length === 0 ? memberStreamHistory : [
+            ...memberStreamHistory,
             {
               id: `nexus-relay-${requestId}-${turn}`,
               role: "assistant",
@@ -44164,6 +45160,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
             wizardFullAccess: void 0,
             wizardAllowOutsideWorkspace: void 0,
             nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
+            nexusTeamWorkspaces: nexusTeamWorkspaceRefs,
             nexusLeaderApprovesTools: Boolean(nexusForStream.leaderApprovesTools) && !Boolean(nexusForStream.teamFullAccess),
             nexusLeaderProvider: nexusLeader.provider,
             nexusLeaderModel: nexusLeader.model,
@@ -44178,12 +45175,20 @@ Project mission: ${full.nexus.mission.trim()}` : "";
           nexusMultiGroup.contentByRequestId.set(rid, cleaned);
           updateNexusMultiResponseMessage(nexusMultiGroup, "streaming");
           relayAssistantDigest = formatNexusMultiResponseContent(nexusMultiGroup);
+          const tapIns = orderedNexusVisibleTapIns(relayTeam, member.id, cleaned);
+          for (const tapIn of tapIns) {
+            if (!visibleTapInQueue.some((queued) => queued.id === tapIn.id)) {
+              visibleTapInQueue.push(tapIn);
+            }
+          }
+          spokenWizardIds.add(member.id);
+          lastSpeakerId = member.id;
           if (wantsEnd) {
-            if (nexusQueuedUserTurnsRef.current.length > 0) {
+            if (!hasTargetedNexusResponders && nexusQueuedUserTurnsRef.current.length > 0) {
               turn += 1;
               continue;
             }
-            break;
+            if (!hasTargetedNexusResponders) break;
           }
           turn += 1;
         }
@@ -44192,11 +45197,18 @@ Project mission: ${full.nexus.mission.trim()}` : "";
         nexusQueuedUserTurnsRef.current = [];
         setNexusRelayProgress(null);
         nexusMultiGroup.suppressFinalizeUntilOrchestrator = false;
-        finalizeNexusMultiResponseUiRef.current(nexusMultiGroup);
+        if (!stoppedNexusRelayRequestIdsRef.current.has(requestId)) {
+          finalizeNexusMultiResponseUiRef.current(nexusMultiGroup);
+        }
+        stoppedNexusRelayRequestIdsRef.current.delete(requestId);
       }
       return;
     }
-    await window.electronAPI.streamChat(requestId, streamSettings, streamHistory, {
+    const finalStreamHistory = nexusForStream && nexusLeader ? nexusHistoryForMember(
+      nexusTeam.find((member) => member.id === nexusForStream.leaderWizardId) ?? nexusTeam[0],
+      streamHistory
+    ) : streamHistory;
+    await window.electronAPI.streamChat(requestId, streamSettings, finalStreamHistory, {
       workspaceRoot: nexusForStream?.workspaceRoot ?? wizardForStream?.workspaceRoot ?? workspaceRootRef.current,
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current,
@@ -44205,6 +45217,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
       wizardSystemPrompt: nexusForStream ? void 0 : wizardForStream?.systemPrompt,
       wizardFullAccess: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.fullAccess) : void 0,
       wizardAllowOutsideWorkspace: nexusForStream ? void 0 : wizardForStream ? Boolean(wizardForStream.allowOutsideWorkspace) : void 0,
+      nexusTeamWorkspaces: nexusForStream ? nexusTeamWorkspaceRefs : void 0,
       mediaGenerationKind: mediaOverrideKind ?? void 0,
       ...nexusForStream && nexusLeader ? {
         nexusTeamFullAccess: Boolean(nexusForStream.teamFullAccess),
@@ -44220,11 +45233,19 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     const groupSnapshot = inFlightChatsRef.current.get(activeRequestId);
     const group = groupSnapshot != null ? [...nexusMultiResponseGroupsRef.current.values()].find((item) => item.messageId === activeRequestId) : void 0;
     if (group) {
-      await Promise.all([...group.pending].map((rid) => window.electronAPI.stopChat(rid)));
+      stoppedNexusRelayRequestIdsRef.current.add(group.messageId);
+      const hiddenRouterRequestIds = [...hiddenNexusRouterRequestsRef.current.entries()].filter(([, item]) => item.parentRequestId === group.messageId).map(([rid]) => rid);
+      await Promise.all([
+        ...[...group.pending].map((rid) => window.electronAPI.stopChat(rid)),
+        ...hiddenRouterRequestIds.map((rid) => window.electronAPI.stopChat(rid))
+      ]);
       for (const rid of group.requestIds) {
         nexusMultiResponseGroupsRef.current.delete(rid);
       }
-      inFlightChatsRef.current.delete(group.messageId);
+      for (const rid of hiddenRouterRequestIds) {
+        hiddenNexusRouterRequestsRef.current.delete(rid);
+      }
+      forgetInFlight(group.messageId);
     } else {
       await window.electronAPI.stopChat(activeRequestId);
     }
@@ -44268,11 +45289,23 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     const memberIds = new Set(nexusDraft.members.map((m) => m.wizardId));
     return wizardChatList.filter((w) => !memberIds.has(w.id)).map((w) => ({ id: w.id, name: w.wizard?.name ?? w.title }));
   }, [nexusDraft, wizardChatList]);
+  const nexusMentionOptions = reactExports.useMemo(
+    () => activeNexus ? nexusSettingsParticipants.map((participant) => ({
+      id: participant.wizardId,
+      name: participant.name,
+      role: participant.role
+    })) : [],
+    [activeNexus, nexusSettingsParticipants]
+  );
   const activeBuffer = activeFilePath ? buffers[activeFilePath] : void 0;
   const selectedProvider = settings?.providers[settings.selectedProvider];
   const isWizardActive = Boolean(activeWizard);
   const isNexusActive = Boolean(activeNexus);
   const chatPanelIsWizard = Boolean(isWizardActive && !showWizardHubPlaceholder);
+  const isNexusPaneWithoutRoom = Boolean(
+    sidebarTab === "wizards" && wizardsSidebarPane === "nexus" && activeChatMeta?.kind !== "nexus-session"
+  );
+  const composerDisabledReason = showWizardHubPlaceholder ? "Select a Wizard before starting a session." : isNexusPaneWithoutRoom ? "Select or create a Nexus room before chatting." : null;
   const effectiveHeaderModelId = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.model : activeWizard?.model) ?? effectiveModelOverride?.model ?? selectedProvider?.model ?? "";
   const openRouterReady = settings && settings.selectedProvider === "openrouter" ? Boolean(settings.providers.openrouter.apiKey?.trim()) : true;
   const providerConnected = activeNexus ? Boolean(effectiveHeaderModelId) : activeWizard ? Boolean(activeWizard.model) : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
@@ -44282,6 +45315,22 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     if (!id2) return 131072;
     return modelCatalogForLimit.find((m) => m.id === id2)?.contextLength ?? 131072;
   })();
+  const nexusContextMeterOptions = reactExports.useMemo(
+    () => activeNexus ? nexusSettingsParticipants.map((participant) => {
+      const wizard = chatList.find((chat) => chat.id === participant.wizardId && chat.kind === "wizard")?.wizard;
+      const model = wizard?.model?.trim() ?? "";
+      const limit = model ? modelCatalogForLimit.find((m) => m.id === model)?.contextLength ?? 131072 : 131072;
+      return {
+        id: participant.wizardId,
+        name: participant.name,
+        role: participant.role,
+        limit,
+        model: model || void 0,
+        providerLabel: wizard ? providerLabel(wizard.provider) : void 0
+      };
+    }) : [],
+    [activeNexus, chatList, modelCatalogForLimit, nexusSettingsParticipants]
+  );
   const selectedProviderKind = (activeNexus ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard?.provider : activeWizard?.provider ?? effectiveModelOverride?.provider ?? settings?.selectedProvider) ?? "lmstudio";
   const selectedProviderLabel = providerLabel(selectedProviderKind);
   const effectiveHeaderModelInfo = modelCatalogForLimit.find((model) => model.id === effectiveHeaderModelId);
@@ -45036,9 +46085,9 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.6.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.7.0"}`, children: [
                   "v",
-                  "0.6.0"
+                  "0.7.0"
                 ] })
               ] })
             ] }),
@@ -45302,13 +46351,15 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                       if (!settings) return;
                                       if (activeMediaOverrideKind) return;
                                       if (e.target.checked) {
-                                        const list2 = await window.electronAPI.listModels(settings, overrideModelProvider);
-                                        const model = pickDefaultModel(list2, list2[0]?.id);
+                                        const providerModel = settings.providers[overrideModelProvider]?.model ?? "";
+                                        const model = pickDefaultModel(overrideModels, providerModel || overrideModels[0]?.id) || providerModel || overrideModels[0]?.id;
                                         if (model) {
-                                          await saveChatModelOverride({ provider: overrideModelProvider, model });
+                                          void saveChatModelOverride({ provider: overrideModelProvider, model });
+                                        } else {
+                                          setSettingsStatus(`Choose a ${providerLabel(overrideModelProvider)} model before enabling model override.`);
                                         }
                                       } else {
-                                        await saveChatModelOverride(null);
+                                        void saveChatModelOverride(null);
                                       }
                                     },
                                     type: "checkbox"
@@ -45341,16 +46392,28 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                       portalDropdown: true,
                                       onChange: async (p) => {
                                         setOverrideModelProvider(p);
+                                        setOverrideModels([]);
                                         if (!settings) return;
-                                        const list2 = await window.electronAPI.listModels(
-                                          settings,
-                                          p,
-                                          activeMediaOverrideKind ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] } : void 0
-                                        );
-                                        const modelList = activeMediaOverrideKind ? list2.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind)) : list2;
-                                        const model = pickDefaultModel(modelList, void 0);
-                                        if (model) {
-                                          await saveChatModelOverride({ provider: p, model });
+                                        const fallbackModel = settings.providers[p]?.model ?? "";
+                                        const initialSave = fallbackModel ? saveChatModelOverride({ provider: p, model: fallbackModel }) : Promise.resolve();
+                                        try {
+                                          const list2 = await window.electronAPI.listModels(
+                                            settings,
+                                            p,
+                                            activeMediaOverrideKind ? { outputModalities: MEDIA_MODEL_LIST_OUTPUT_MODALITIES[activeMediaOverrideKind] } : void 0
+                                          );
+                                          const modelList = activeMediaOverrideKind ? list2.filter((item) => modelMatchesMediaKind(item, activeMediaOverrideKind)) : list2;
+                                          setOverrideModels(modelList);
+                                          const model = pickDefaultModel(modelList, fallbackModel || modelList[0]?.id);
+                                          if (model && model !== fallbackModel) {
+                                            await initialSave;
+                                            await saveChatModelOverride({ provider: p, model });
+                                          }
+                                        } catch (error) {
+                                          setOverrideModels([]);
+                                          setSettingsStatus(
+                                            error instanceof Error ? error.message : `Could not load ${providerLabel(p)} models.`
+                                          );
                                         }
                                       },
                                       value: overrideModelProvider
@@ -45363,7 +46426,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                     ModelSearch,
                                     {
                                       models: overrideModels,
-                                      value: effectiveModelOverride.model,
+                                      value: effectiveModelOverride.provider === overrideModelProvider ? effectiveModelOverride.model : "",
                                       favoriteIds: settings.ui.favoriteModels?.[overrideModelProvider] ?? [],
                                       portalDropdown: true,
                                       onChange: async (model) => {
@@ -45406,10 +46469,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     const mediaKind = mediaKindForOverride(chat.modelOverride);
                     const mediaBadge = mediaKind ? MEDIA_CHAT_BADGES[mediaKind] : null;
                     const hasModelOverride = Boolean(chat.modelOverride?.model?.trim());
+                    const chatIsWorking = inFlightChatIds.has(chat.id);
                     return /* @__PURE__ */ jsxRuntimeExports.jsxs(
                       "div",
                       {
-                        className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ""} ${draggingNormalChatId === chat.id ? "is-dragging" : ""} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ""}`,
+                        className: `chat-list__item ${activeChatId === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${mediaKind ? `chat-list__item--media chat-list__item--media-${mediaKind}` : ""} ${draggingNormalChatId === chat.id ? "is-dragging" : ""} ${normalChatDropTarget?.id === chat.id ? `is-drop-${normalChatDropTarget.position}` : ""} ${chatIsWorking ? "is-working" : ""}`,
                         draggable: editingTitleId !== chat.id,
                         onDragEnd: clearNormalChatDragState,
                         onDragLeave: (e) => {
@@ -45453,7 +46517,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                   title: "Model override enabled"
                                 }
                               ) : null,
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title })
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__title", children: chat.title }),
+                              chatIsWorking ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-list__spinner", "aria-label": "Model working", role: "status" }) : null
                             ] }),
                             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list__date", children: formatRelativeDate(chat.updatedAt) })
                           ] }),
@@ -45537,14 +46602,16 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "nexus-sidebar-section__label", children: "Nexus" }),
                   nexusProjectList.map((project) => {
                     const sessions = nexusSessionsByNexusId.get(project.id) ?? [];
+                    const nexusAccentColor = project.nexus?.accentColor?.trim() || WIZARD_ORB_DEFAULT_COLOR;
                     const leader = project.nexus ? chatList.find((chat) => chat.id === project.nexus?.leaderWizardId)?.wizard?.name : void 0;
                     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group wizard-group--nexus", children: [
                       /* @__PURE__ */ jsxRuntimeExports.jsxs(
                         "div",
                         {
                           "aria-expanded": expandedNexusIds.has(project.id),
-                          className: `chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? "is-active" : ""} ${project.pinned ? "is-pinned" : ""}`,
+                          className: `chat-list__item chat-list__item--wizard chat-list__item--nexus ${activeNexusMeta?.id === project.id ? "is-active" : ""} ${project.pinned ? "is-pinned" : ""} ${nexusColorPickerId === project.id ? "has-open-color-picker" : ""}`,
                           onClick: () => {
+                            setNexusColorPickerId(null);
                             void handleNexusSidebarRowActivate(project);
                           },
                           children: [
@@ -45560,6 +46627,23 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                     fill: "none",
                                     "aria-hidden": true,
                                     children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "button",
+                                  {
+                                    "aria-label": `Change ${project.title} color`,
+                                    className: "wizard-color-orb",
+                                    draggable: false,
+                                    onClick: (e) => {
+                                      e.stopPropagation();
+                                      setWizardColorPickerId(null);
+                                      setNexusColorPickerId((current) => current === project.id ? null : project.id);
+                                    },
+                                    onMouseDown: (e) => e.stopPropagation(),
+                                    style: wizardOrbStyle(nexusAccentColor),
+                                    title: `Change ${project.title} color`,
+                                    type: "button"
                                   }
                                 ),
                                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: project.title, children: project.title })
@@ -45615,7 +46699,32 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                                   ) })
                                 }
                               )
-                            ] })
+                            ] }),
+                            nexusColorPickerId === project.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "div",
+                              {
+                                className: "wizard-color-popover",
+                                onClick: (e) => e.stopPropagation(),
+                                onMouseDown: (e) => e.stopPropagation(),
+                                ref: nexusColorPickerRef,
+                                children: WIZARD_ORB_COLORS.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "button",
+                                  {
+                                    "aria-label": `Use ${option.label} for ${project.title}`,
+                                    "aria-pressed": nexusAccentColor.toLowerCase() === option.color.toLowerCase(),
+                                    className: `wizard-color-popover__swatch ${nexusAccentColor.toLowerCase() === option.color.toLowerCase() ? "is-active" : ""}`,
+                                    onClick: (e) => {
+                                      e.stopPropagation();
+                                      void saveNexusAccentColor(project.id, option.color);
+                                    },
+                                    style: wizardOrbStyle(option.color),
+                                    title: option.label,
+                                    type: "button"
+                                  },
+                                  option.color
+                                ))
+                              }
+                            ) : null
                           ]
                         }
                       ),
@@ -45636,76 +46745,79 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                               /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
                               "New room"
                             ] }),
-                            sessions.map((session) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "div",
-                              {
-                                className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
-                                onClick: () => void loadChat(session.id),
-                                role: "button",
-                                tabIndex: 0,
-                                onKeyDown: (e) => {
-                                  if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    void loadChat(session.id);
-                                  }
-                                },
-                                children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                  "input",
-                                  {
-                                    autoFocus: true,
-                                    className: "chat-list__title-input wizard-session-row__title-input",
-                                    onBlur: (e) => {
-                                      void commitRenameChat(session.id, e.target.value);
-                                    },
-                                    onChange: (e) => setEditingTitleDraft(e.target.value),
-                                    onClick: (e) => e.stopPropagation(),
-                                    onKeyDown: (e) => {
-                                      e.stopPropagation();
-                                      if (e.key === "Enter") {
-                                        e.currentTarget.blur();
-                                      } else if (e.key === "Escape") {
-                                        e.preventDefault();
-                                        skipNextRenameCommitRef.current = true;
-                                        cancelRenameChat();
-                                      }
-                                    },
-                                    value: editingTitleDraft
-                                  }
-                                ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
-                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
-                                    /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
-                                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                      "button",
-                                      {
-                                        "aria-label": `Rename ${session.title}`,
-                                        className: "wizard-session-row__rename",
-                                        onClick: (e) => beginRenameChat(e, session.id, session.title),
-                                        onMouseDown: (e) => e.preventDefault(),
-                                        title: "Rename room",
-                                        type: "button",
-                                        children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
-                                      }
-                                    ),
-                                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                      "button",
-                                      {
-                                        "aria-label": `Delete ${session.title}`,
-                                        className: "wizard-session-row__delete",
-                                        onClick: (e) => {
-                                          e.stopPropagation();
-                                          requestDeleteChat(session);
-                                        },
-                                        title: "Delete room",
-                                        type: "button",
-                                        children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
-                                      }
-                                    )
+                            sessions.map((session) => {
+                              const sessionIsWorking = inFlightChatIds.has(session.id);
+                              return /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "div",
+                                {
+                                  className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""} ${sessionIsWorking ? "is-working" : ""}`,
+                                  onClick: () => void loadChat(session.id),
+                                  role: "button",
+                                  tabIndex: 0,
+                                  onKeyDown: (e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      void loadChat(session.id);
+                                    }
+                                  },
+                                  children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "input",
+                                    {
+                                      autoFocus: true,
+                                      className: "chat-list__title-input wizard-session-row__title-input",
+                                      onBlur: (e) => {
+                                        void commitRenameChat(session.id, e.target.value);
+                                      },
+                                      onChange: (e) => setEditingTitleDraft(e.target.value),
+                                      onClick: (e) => e.stopPropagation(),
+                                      onKeyDown: (e) => {
+                                        e.stopPropagation();
+                                        if (e.key === "Enter") {
+                                          e.currentTarget.blur();
+                                        } else if (e.key === "Escape") {
+                                          e.preventDefault();
+                                          skipNextRenameCommitRef.current = true;
+                                          cancelRenameChat();
+                                        }
+                                      },
+                                      value: editingTitleDraft
+                                    }
+                                  ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
+                                      sessionIsWorking ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wizard-session-row__spinner", "aria-label": "Model working", role: "status" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                        "button",
+                                        {
+                                          "aria-label": `Rename ${session.title}`,
+                                          className: "wizard-session-row__rename",
+                                          onClick: (e) => beginRenameChat(e, session.id, session.title),
+                                          onMouseDown: (e) => e.preventDefault(),
+                                          title: "Rename room",
+                                          type: "button",
+                                          children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
+                                        }
+                                      ),
+                                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                        "button",
+                                        {
+                                          "aria-label": `Delete ${session.title}`,
+                                          className: "wizard-session-row__delete",
+                                          onClick: (e) => {
+                                            e.stopPropagation();
+                                            requestDeleteChat(session);
+                                          },
+                                          title: "Delete room",
+                                          type: "button",
+                                          children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                        }
+                                      )
+                                    ] })
                                   ] })
-                                ] })
-                              },
-                              session.id
-                            ))
+                                },
+                                session.id
+                              );
+                            })
                           ] })
                         }
                       )
@@ -45724,182 +46836,231 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                   ] }) : null
                 ] }) : wizardChatList.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-list", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "nexus-sidebar-section", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "nexus-sidebar-section__label", children: "Wizards" }),
-                  wizardChatList.map((chat) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group", children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                      "div",
-                      {
-                        "aria-expanded": expandedWizardIds.has(chat.id),
-                        className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${draggingWizardId === chat.id ? "is-dragging" : ""} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ""}`,
-                        draggable: true,
-                        onDragEnd: clearWizardDragState,
-                        onDragLeave: (e) => {
-                          if (!e.currentTarget.contains(e.relatedTarget)) {
-                            setWizardDropTarget((current) => current?.id === chat.id ? null : current);
-                          }
-                        },
-                        onDragOver: (e) => handleWizardDragOver(e, chat.id),
-                        onDragStart: (e) => handleWizardDragStart(e, chat.id),
-                        onDrop: (e) => void handleWizardDrop(e, chat.id),
-                        onClick: () => {
-                          void handleWizardSidebarRowActivate(chat);
-                        },
-                        children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                  wizardChatList.map((chat) => {
+                    const wizardAccentColor = chat.wizard?.accentColor?.trim() || WIZARD_ORB_DEFAULT_COLOR;
+                    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-group", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                        "div",
+                        {
+                          "aria-expanded": expandedWizardIds.has(chat.id),
+                          className: `chat-list__item chat-list__item--wizard ${activeWizardMeta?.id === chat.id ? "is-active" : ""} ${chat.pinned ? "is-pinned" : ""} ${draggingWizardId === chat.id ? "is-dragging" : ""} ${wizardDropTarget?.id === chat.id ? `is-drop-${wizardDropTarget.position}` : ""} ${wizardColorPickerId === chat.id ? "has-open-color-picker" : ""}`,
+                          draggable: true,
+                          onDragEnd: clearWizardDragState,
+                          onDragLeave: (e) => {
+                            if (!e.currentTarget.contains(e.relatedTarget)) {
+                              setWizardDropTarget((current) => current?.id === chat.id ? null : current);
+                            }
+                          },
+                          onDragOver: (e) => handleWizardDragOver(e, chat.id),
+                          onDragStart: (e) => handleWizardDragStart(e, chat.id),
+                          onDrop: (e) => void handleWizardDrop(e, chat.id),
+                          onClick: () => {
+                            setWizardColorPickerId(null);
+                            setNexusColorPickerId(null);
+                            void handleWizardSidebarRowActivate(chat);
+                          },
+                          children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__content", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__title wizard-title-row", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "svg",
+                                  {
+                                    className: `wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? "is-open" : ""}`,
+                                    width: "12",
+                                    height: "12",
+                                    viewBox: "0 0 12 12",
+                                    fill: "none",
+                                    "aria-hidden": true,
+                                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "button",
+                                  {
+                                    "aria-label": `Change ${chat.title} color`,
+                                    className: "wizard-color-orb",
+                                    draggable: false,
+                                    onClick: (e) => {
+                                      e.stopPropagation();
+                                      setNexusColorPickerId(null);
+                                      setWizardColorPickerId((current) => current === chat.id ? null : chat.id);
+                                    },
+                                    onMouseDown: (e) => e.stopPropagation(),
+                                    style: wizardOrbStyle(wizardAccentColor),
+                                    title: `Change ${chat.title} color`,
+                                    type: "button"
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: chat.title, children: chat.title })
+                              ] }),
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
+                                (wizardSessionsByWizardId.get(chat.id) ?? []).length,
+                                " sessions"
+                              ] })
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
                               /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "svg",
+                                "button",
                                 {
-                                  className: `wizard-title-row__chevron ${expandedWizardIds.has(chat.id) ? "is-open" : ""}`,
-                                  width: "12",
-                                  height: "12",
-                                  viewBox: "0 0 12 12",
-                                  fill: "none",
-                                  "aria-hidden": true,
-                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4.5 2.5L8 6l-3.5 3.5", stroke: "currentColor", strokeWidth: "1.4", strokeLinecap: "round", strokeLinejoin: "round" })
+                                  className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
+                                  onClick: (e) => void togglePinChat(e, chat.id),
+                                  type: "button",
+                                  title: chat.pinned ? "Unpin" : "Pin to top",
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z", fill: chat.pinned ? "currentColor" : "none", stroke: "currentColor", strokeLinejoin: "round", strokeWidth: "1.1" }) })
                                 }
                               ),
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: chat.title, children: chat.title })
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__date", children: [
-                              "Wizard · ",
-                              (wizardSessionsByWizardId.get(chat.id) ?? []).length,
-                              " sessions"
-                            ] })
-                          ] }),
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-list__row-actions", onClick: (e) => e.stopPropagation(), children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "button",
-                              {
-                                className: `chat-list__pin ${chat.pinned ? "is-active" : ""}`,
-                                onClick: (e) => void togglePinChat(e, chat.id),
-                                type: "button",
-                                title: chat.pinned ? "Unpin" : "Pin to top",
-                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 1.2L2.2 5.2V10h7.6V5.2L6 1.2z", fill: chat.pinned ? "currentColor" : "none", stroke: "currentColor", strokeLinejoin: "round", strokeWidth: "1.1" }) })
-                              }
-                            ),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "button",
-                              {
-                                className: "chat-list__export",
-                                onClick: (e) => beginWizardExport(e, chat),
-                                type: "button",
-                                title: "Export Wizard bundle",
-                                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                  "path",
-                                  {
-                                    d: "M6 1v6m0 0l2.8-2.8M6 7L3.2 4.2M2 11h8",
-                                    stroke: "currentColor",
-                                    strokeWidth: "1.25",
-                                    strokeLinecap: "round",
-                                    strokeLinejoin: "round"
-                                  }
-                                ) })
-                              }
-                            ),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__delete", onClick: (e) => {
-                              e.stopPropagation();
-                              requestDeleteChat(chat);
-                            }, onMouseDown: (e) => e.preventDefault(), type: "button", title: "Delete Wizard", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
-                          ] })
-                        ]
-                      }
-                    ),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      motion.div,
-                      {
-                        "aria-hidden": !expandedWizardIds.has(chat.id),
-                        className: "wizard-session-list-anim",
-                        initial: false,
-                        animate: {
-                          height: expandedWizardIds.has(chat.id) ? "auto" : 0
-                        },
-                        style: {
-                          overflow: "hidden",
-                          pointerEvents: expandedWizardIds.has(chat.id) ? "auto" : "none"
-                        },
-                        transition: {
-                          duration: 0.32,
-                          ease: [0.4, 0, 0.2, 1]
-                        },
-                        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button", onClick: () => void createWizardSession(chat), type: "button", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
-                            "New session"
-                          ] }),
-                          (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            "div",
-                            {
-                              className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""}`,
-                              onClick: () => void loadChat(session.id),
-                              role: "button",
-                              tabIndex: 0,
-                              onKeyDown: (e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  void loadChat(session.id);
-                                }
-                              },
-                              children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "input",
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "button",
                                 {
-                                  autoFocus: true,
-                                  className: "chat-list__title-input wizard-session-row__title-input",
-                                  onBlur: (e) => {
-                                    void commitRenameChat(session.id, e.target.value);
-                                  },
-                                  onChange: (e) => setEditingTitleDraft(e.target.value),
-                                  onClick: (e) => e.stopPropagation(),
-                                  onKeyDown: (e) => {
-                                    e.stopPropagation();
-                                    if (e.key === "Enter") {
-                                      e.currentTarget.blur();
-                                    } else if (e.key === "Escape") {
-                                      e.preventDefault();
-                                      skipNextRenameCommitRef.current = true;
-                                      cancelRenameChat();
+                                  className: "chat-list__export",
+                                  onClick: (e) => beginWizardExport(e, chat),
+                                  type: "button",
+                                  title: "Export Wizard bundle",
+                                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "path",
+                                    {
+                                      d: "M6 1v6m0 0l2.8-2.8M6 7L3.2 4.2M2 11h8",
+                                      stroke: "currentColor",
+                                      strokeWidth: "1.25",
+                                      strokeLinecap: "round",
+                                      strokeLinejoin: "round"
                                     }
-                                  },
-                                  value: editingTitleDraft
+                                  ) })
                                 }
-                              ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
-                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                    "button",
-                                    {
-                                      "aria-label": `Rename ${session.title}`,
-                                      className: "wizard-session-row__rename",
-                                      onClick: (e) => beginRenameChat(e, session.id, session.title),
-                                      onMouseDown: (e) => e.preventDefault(),
-                                      title: "Rename session",
-                                      type: "button",
-                                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
+                              ),
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chat-list__delete", onClick: (e) => {
+                                e.stopPropagation();
+                                requestDeleteChat(chat);
+                              }, onMouseDown: (e) => e.preventDefault(), type: "button", title: "Delete Wizard", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
+                            ] }),
+                            wizardColorPickerId === chat.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                              "div",
+                              {
+                                className: "wizard-color-popover",
+                                onClick: (e) => e.stopPropagation(),
+                                onMouseDown: (e) => e.stopPropagation(),
+                                ref: wizardColorPickerRef,
+                                children: WIZARD_ORB_COLORS.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  "button",
+                                  {
+                                    "aria-label": `Use ${option.label} for ${chat.title}`,
+                                    "aria-pressed": wizardAccentColor.toLowerCase() === option.color.toLowerCase(),
+                                    className: `wizard-color-popover__swatch ${wizardAccentColor.toLowerCase() === option.color.toLowerCase() ? "is-active" : ""}`,
+                                    onClick: (e) => {
+                                      e.stopPropagation();
+                                      void saveWizardAccentColor(chat.id, option.color);
+                                    },
+                                    style: wizardOrbStyle(option.color),
+                                    title: option.label,
+                                    type: "button"
+                                  },
+                                  option.color
+                                ))
+                              }
+                            ) : null
+                          ]
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        motion.div,
+                        {
+                          "aria-hidden": !expandedWizardIds.has(chat.id),
+                          className: "wizard-session-list-anim",
+                          initial: false,
+                          animate: {
+                            height: expandedWizardIds.has(chat.id) ? "auto" : 0
+                          },
+                          style: {
+                            overflow: "hidden",
+                            pointerEvents: expandedWizardIds.has(chat.id) ? "auto" : "none"
+                          },
+                          transition: {
+                            duration: 0.32,
+                            ease: [0.4, 0, 0.2, 1]
+                          },
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-list", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "wizard-session-button", onClick: () => void createWizardSession(chat), type: "button", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "12", height: "12", viewBox: "0 0 14 14", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 2v10M2 7h10", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) }),
+                              "New session"
+                            ] }),
+                            (wizardSessionsByWizardId.get(chat.id) ?? []).map((session) => {
+                              const sessionIsWorking = inFlightChatIds.has(session.id);
+                              return /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "div",
+                                {
+                                  className: `wizard-session-row ${activeChatId === session.id ? "is-active" : ""} ${sessionIsWorking ? "is-working" : ""}`,
+                                  onClick: () => void loadChat(session.id),
+                                  role: "button",
+                                  tabIndex: 0,
+                                  onKeyDown: (e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      void loadChat(session.id);
                                     }
-                                  ),
-                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                    "button",
+                                  },
+                                  children: editingTitleId === session.id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "input",
                                     {
-                                      "aria-label": `Delete ${session.title}`,
-                                      className: "wizard-session-row__delete",
-                                      onClick: (e) => {
-                                        e.stopPropagation();
-                                        requestDeleteChat(session);
+                                      autoFocus: true,
+                                      className: "chat-list__title-input wizard-session-row__title-input",
+                                      onBlur: (e) => {
+                                        void commitRenameChat(session.id, e.target.value);
                                       },
-                                      title: "Delete session",
-                                      type: "button",
-                                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                      onChange: (e) => setEditingTitleDraft(e.target.value),
+                                      onClick: (e) => e.stopPropagation(),
+                                      onKeyDown: (e) => {
+                                        e.stopPropagation();
+                                        if (e.key === "Enter") {
+                                          e.currentTarget.blur();
+                                        } else if (e.key === "Escape") {
+                                          e.preventDefault();
+                                          skipNextRenameCommitRef.current = true;
+                                          cancelRenameChat();
+                                        }
+                                      },
+                                      value: editingTitleDraft
                                     }
-                                  )
-                                ] })
-                              ] })
-                            },
-                            session.id
-                          ))
-                        ] })
-                      }
-                    )
-                  ] }, chat.id))
+                                  ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { title: session.title, children: session.title }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-session-row__meta", children: [
+                                      sessionIsWorking ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wizard-session-row__spinner", "aria-label": "Model working", role: "status" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: formatRelativeDate(session.updatedAt) }),
+                                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                        "button",
+                                        {
+                                          "aria-label": `Rename ${session.title}`,
+                                          className: "wizard-session-row__rename",
+                                          onClick: (e) => beginRenameChat(e, session.id, session.title),
+                                          onMouseDown: (e) => e.preventDefault(),
+                                          title: "Rename session",
+                                          type: "button",
+                                          children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7.3 1.2l3.4 3.4-7.5 7.5H.8V8.7l7.5-7.5zM1.5 7.6v1.2h1.2l5.6-5.6L7 2 1.5 7.5z", fill: "currentColor" }) })
+                                        }
+                                      ),
+                                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                        "button",
+                                        {
+                                          "aria-label": `Delete ${session.title}`,
+                                          className: "wizard-session-row__delete",
+                                          onClick: (e) => {
+                                            e.stopPropagation();
+                                            requestDeleteChat(session);
+                                          },
+                                          title: "Delete session",
+                                          type: "button",
+                                          children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "11", height: "11", viewBox: "0 0 12 12", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 3h8M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1M5 5.5v3M7 5.5v3M3 3l.5 7a1 1 0 001 1h3a1 1 0 001-1L9 3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }) })
+                                        }
+                                      )
+                                    ] })
+                                  ] })
+                                },
+                                session.id
+                              );
+                            })
+                          ] })
+                        }
+                      )
+                    ] }, chat.id);
+                  })
                 ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-empty", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
                     "No Wizards yet. Create one from ",
@@ -46014,8 +47175,11 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               attachments: chatAttachments,
               chatMessages,
               contextLimit: resolvedContextLimit,
+              contextMeterOptions: nexusContextMeterOptions,
               input: chatInput,
               isStreaming: chatStreaming,
+              composerDisabled: Boolean(composerDisabledReason),
+              composerDisabledPlaceholder: composerDisabledReason ?? void 0,
               isNexus: isNexusActive,
               isWizard: chatPanelIsWizard,
               lastTokenUsage,
@@ -46027,6 +47191,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
               onOpenWizardCreator: () => setShowWizardSetup(true),
               onAttachImages: addChatAttachments,
               onInputChange: setChatInput,
+              mentionOptions: nexusMentionOptions,
               onRemoveAttachment: (id2) => setChatAttachments((c) => c.filter((a) => a.id !== id2)),
               onSend: sendChat,
               onSubmitQuizAnswers: (answersText) => void sendChat({ content: answersText }),
@@ -46228,7 +47393,7 @@ Project mission: ${full.nexus.mission.trim()}` : "";
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.6.0",
+                        appVersion: "0.7.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

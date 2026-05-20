@@ -22,6 +22,7 @@ import type {
   ChatStreamError,
   ModelInfo,
   ModelListOptions,
+  NexusTeamWorkspaceReference,
   OpenRouterReasoningEffort,
   ProviderKind,
   SavedChat,
@@ -30,6 +31,7 @@ import type {
   WizardProfile
 } from '@shared/types';
 import { MYTHRA_SESSION_MODE_TOGGLE, MYTHRA_WEB_SEARCH_TOGGLE } from '@shared/mythra-embeds';
+import { syncProviderSystemPromptFields } from '@shared/provider-profile';
 import {
   isPresetThemeId,
   isThemeId,
@@ -490,7 +492,7 @@ const mythraSetAppThemeAgentInstruction =
   '**Mystic chat background:** When Settings → chat background is **Mythic**, artwork tracks the UI theme. For **Custom** app themes, **light** custom uses the **ice** Mystic image and **dark** custom uses the **neon** Mystic image; the UI layers **--chat-thread-bg** and bubble-related tokens (**--chat-assistant-bg**, **--chat-user-bg**, **--thinking-bg**) on top so the conversation area tints to match the palette. Prefer this coordinated look—after set_custom_theme you may call merge_custom_theme_tokens on **chatThread** / **assistantMessage** / **userMessage** with rgba washes of the accent if the user wants a stronger match.';
 
 const mythraModelSystemPromptInstruction =
-  'System prompt: in Agent mode you may always call get_system_prompt to read the stored instructions for the **currently selected** provider—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full prompt for that provider and saves to disk. Call get_tool_access to read Tool access toggles.';
+  'System prompt: in Agent mode you may always call get_system_prompt to read the stored global assistant instructions—it works even when “AI can change system prompt” is off and does not modify settings. If Tool access allows `set_system_prompt`, call it only when the user explicitly asks you to replace those instructions; it overwrites the full global prompt and saves to disk. Call get_tool_access to read Tool access toggles.';
 
 const mythraToolAccessReadInstruction =
   'Tool access: call get_tool_access when the user asks which capabilities are enabled or disabled in Settings → Tool access (files, workspace search, commands, changing the stored system prompt via set_system_prompt). Reading the stored prompt is always done with get_system_prompt in Agent mode, independent of those toggles.';
@@ -710,6 +712,8 @@ interface ChatRuntimeContext {
   wizardAllowOutsideWorkspace?: boolean;
   /** Nexus sessions: grant Full-access-equivalent tool approvals for every teammate stream. */
   nexusTeamFullAccess?: boolean;
+  /** Nexus sessions: read-only references to teammate Wizard workspaces. */
+  nexusTeamWorkspaces?: NexusTeamWorkspaceReference[];
   /** Nexus sessions: resolve risky tools via leader mini-completion instead of the human modal (ignored when nexusTeamFullAccess). */
   nexusLeaderApprovesTools?: boolean;
   nexusLeaderProvider?: ProviderKind;
@@ -738,9 +742,9 @@ function agentModeSystemPromptInstructions(settings: AppSettings, runtime: ChatR
   if (runtime.wizardId) {
     const label = runtime.wizardName?.trim() || 'this Wizard';
     return [
-      `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global LLM provider preset in Settings.`,
+      `Wizard session: you are running inside the "${label}" Wizard profile. The app merges this Wizard’s private instructions into the request; they are separate from the global System Prompt preset in Settings.`,
       'To change **this Wizard’s own** long-term instructions when the user asks, call `set_wizard_system_prompt` with the full new text. Mythra opens a before/after approval dialog—the user approves or rejects there. Do **not** tell them to enable “AI can change system prompt” under Settings → Tool access for Wizard instruction edits; that toggle only gates `set_system_prompt` (global provider prompt). `set_system_prompt` is not offered in Wizard chats.',
-      '`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global LLM provider** preset in Settings—do not confuse the two.',
+      '`get_wizard_system_prompt` reads this Wizard’s stored private instructions (read-only). Call it before small edits or `set_wizard_system_prompt`. `get_system_prompt` reads the separate **global System Prompt** preset in Settings—do not confuse the two.',
       '`set_wizard_display_name` updates the Wizard **shown name** in the sidebar and Inspector (stored profile). Mythra also renames the Wizard workspace folder on disk when the sanitized name no longer matches the folder name. When the user asks to rename you completely, call `set_wizard_display_name`, then edit identity.md and adjust `set_wizard_system_prompt` so identity text matches. For legacy Wizards, update soul.md if that is where identity still lives.',
       'Non-Wizard Tool access lines elsewhere in this prompt still apply to files, workspace search, and commands; Wizard prompt edits bypass the “AI can change system prompt” toggle.',
       '`set_wizard_system_prompt` must be **only** your Wizard’s authored persona/instructions text—the same kind of content shown in the Wizard editor—not hidden routing copied from this chat (never paste lines starting with `[Mythra model routing`, `[Mythra] Thread id`, workspace listings, or “Enabled tools:”). For small edits, call `get_wizard_system_prompt` first (and `read_file` on identity.md or personality.md when facts live there), then minimally adjust—do not paste large unrelated blocks.',
@@ -1673,7 +1677,7 @@ export class ModelService {
       function: {
         name: 'get_system_prompt',
         description:
-          'Return the full system prompt text and preset metadata for the **currently selected** LLM provider in Settings (read-only, never writes). Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.',
+          'Return the full global system prompt text and preset metadata from Settings (read-only, never writes). It is the same across LM Studio, OpenRouter, and Ollama. Use when the user asks what instructions you were given, what the system prompt says, or to quote the developer prompt. Available in Agent mode even if “AI can change system prompt” is disabled in Tool access. Long prompts may be truncated in the tool result.',
         parameters: {
           type: 'object',
           properties: {},
@@ -1689,7 +1693,7 @@ export class ModelService {
       function: {
         name: 'get_wizard_system_prompt',
         description:
-          'Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not Mythra’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global LLM provider preset in Settings. Long prompts may be truncated.',
+          'Return this Wizard’s stored **private** system prompt (read-only)—the text edited in the Wizard profile, not Mythra’s hidden routing layers. Call before `set_wizard_system_prompt` whenever you need the exact current text for a precise edit. This is distinct from `get_system_prompt`, which reads the global System Prompt preset in Settings. Long prompts may be truncated.',
         parameters: {
           type: 'object',
           properties: {},
@@ -2067,13 +2071,13 @@ export class ModelService {
         function: {
           name: 'set_system_prompt',
           description:
-            'Replace the entire system prompt for the **currently selected** LLM provider in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately; applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.',
+            'Replace the entire global system prompt in Settings. Use only when the user clearly wants their assistant instructions updated. Saves immediately, syncs across LM Studio/OpenRouter/Ollama, and applies on the next user message. Disabled unless the user turns on “AI can change system prompt” in Settings → Tool access.',
           parameters: {
             type: 'object',
             properties: {
               system_prompt: {
                 type: 'string',
-                description: 'Full new system prompt text (replaces the previous one for this provider).'
+                description: 'Full new system prompt text (replaces the previous global prompt).'
               }
             },
             required: ['system_prompt'],
@@ -2091,7 +2095,7 @@ export class ModelService {
         function: {
           name: 'set_wizard_system_prompt',
           description:
-            'Replace this Wizard’s private system prompt only—not the global LLM provider preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. Mythra shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste Mythra Agent routing text from this chat into system_prompt—only persona/editor-style instructions.',
+            'Replace this Wizard’s private system prompt only—not the global System Prompt preset in Settings. Use when the user clearly asks to change this Wizard’s own long-term instructions. Mythra shows a before/after approval dialog automatically. Independent of Settings → Tool access → “AI can change system prompt” (that toggle applies only to `set_system_prompt`, which is not offered in Wizard chats). Never paste Mythra Agent routing text from this chat into system_prompt—only persona/editor-style instructions.',
           parameters: {
             type: 'object',
             properties: {
@@ -2229,6 +2233,63 @@ export class ModelService {
           }
         }
       });
+      if (runtime.nexusTeamWorkspaces?.length) {
+        tools.push(
+          {
+            type: 'function',
+            function: {
+              name: 'list_nexus_teammate_workspaces',
+              description:
+                'List Nexus teammate Wizard workspaces and their Markdown documents. Use this when you need to understand who teammates are or what private docs are available. Returns paths only, not document contents.',
+              parameters: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false
+              }
+            }
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'read_nexus_teammate_file',
+              description:
+                'Read a file from a Nexus teammate Wizard workspace by wizard_id or wizard_name. Read-only: cannot write, edit, delete, rename, patch, or run commands in teammate workspaces. Use for identity, personality, memory, and Markdown docs when needed.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  wizard_id: {
+                    type: 'string',
+                    description: 'The teammate wizard id from list_nexus_teammate_workspaces.'
+                  },
+                  wizard_name: {
+                    type: 'string',
+                    description: 'The teammate wizard display name. Use if you do not know wizard_id.'
+                  },
+                  path: {
+                    type: 'string',
+                    description: 'Workspace-relative path inside that teammate Wizard workspace.'
+                  },
+                  pdf_start_page: {
+                    type: 'number',
+                    description: 'PDF-only. 1-based page number to start reading from.'
+                  },
+                  pdf_page_count: {
+                    type: 'number',
+                    description: 'PDF-only. Number of pages to read from pdf_start_page.'
+                  },
+                  pdf_ocr: {
+                    type: 'string',
+                    enum: ['auto', 'on', 'off'],
+                    description: 'PDF-only. auto OCRs pages with little/no embedded text.'
+                  }
+                },
+                required: ['path'],
+                additionalProperties: false
+              }
+            }
+          }
+        );
+      }
     }
 
     if (settings.tools.fileWrite) {
@@ -2535,6 +2596,9 @@ export class ModelService {
       settings.tools.workspaceSearch ? 'list_files, list_recent_files' : null,
       settings.tools.workspaceSearch ? 'search_symbols, get_file_outline' : null,
       settings.tools.fileRead ? 'read_file, summarize_file, describe_image, transcribe_audio' : null,
+      settings.tools.fileRead && runtime.nexusTeamWorkspaces?.length
+        ? 'list_nexus_teammate_workspaces, read_nexus_teammate_file'
+        : null,
       settings.tools.fileWrite ? 'apply_patch, replace_in_file, insert_after, rename_file, write_file, delete_path' : null,
       settings.tools.commandDeck ? 'get_git_diff, run_tests, run_command' : null,
       settings.tools.allowModelSystemPrompt ? 'set_system_prompt' : null,
@@ -2574,6 +2638,9 @@ export class ModelService {
         ? runtime.wizardAllowOutsideWorkspace
           ? 'Wizard **Allow paths outside workspace** is ON: read/write/replace/insert/rename/delete/get_file_outline may target ../ segments or absolute local paths (cloud-sync folders remain blocked). list_files, search_symbols, apply_patch, get_git_diff, run_tests, and run_command stay scoped to this Wizard’s workspace folder only.'
           : 'Wizard path-based file tools default to this workspace folder only. If the user wants reads/writes elsewhere on disk (another Wizard folder, home directory, etc.), tell them to enable **Allow paths outside workspace** for this Wizard in Inspector → Wizard settings. Until then Mythra rejects paths outside the workspace—even with approval. To reuse another Wizard’s docs without that setting, suggest copying files here or opening that Wizard’s session.'
+        : '',
+      runtime.nexusTeamWorkspaces?.length
+        ? 'Nexus teammate Wizard workspaces are NOT auto-loaded into this prompt. You have read-only tools to inspect teammate identity/memory/docs on demand: list_nexus_teammate_workspaces and read_nexus_teammate_file. These tools never grant write access to teammate Wizard folders; normal file write tools still target only the shared Nexus workspace.'
         : '',
       `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
@@ -2988,7 +3055,7 @@ export class ModelService {
             })();
       return JSON.stringify(
         {
-          provider: kind,
+          active_provider: kind,
           prompt_preset: preset,
           active_prompt_preset_id: provider.activePromptPresetId,
           system_prompt,
@@ -3058,7 +3125,7 @@ export class ModelService {
       );
       const saved = await this.persistAppSettings((base) => {
         const p = base.providers[providerKind];
-        return {
+        return syncProviderSystemPromptFields({
           ...base,
           providers: {
             ...base.providers,
@@ -3068,15 +3135,14 @@ export class ModelService {
               activePromptPresetId: null
             }
           }
-        };
+        });
       });
       Object.assign(settings, saved);
       return JSON.stringify(
         {
           ok: true,
-          provider: providerKind,
           length: system_prompt.length,
-          message: 'System prompt saved for the active provider. It applies on the next message.'
+          message: 'Global system prompt saved across providers. It applies on the next message.'
         },
         null,
         2
@@ -3349,6 +3415,106 @@ export class ModelService {
             path: relative(workspaceRoot, audio.path),
             mimeType: audio.mimeType,
             transcript
+          },
+          null,
+          2
+        );
+      }
+
+      case 'list_nexus_teammate_workspaces': {
+        if (!settings.tools.fileRead) {
+          throw new Error('The list_nexus_teammate_workspaces tool is disabled in settings.');
+        }
+        const members = runtime.nexusTeamWorkspaces ?? [];
+        if (members.length === 0) {
+          throw new Error('This chat has no Nexus teammate workspace references.');
+        }
+        const entries = await Promise.all(
+          members.map(async (member) => {
+            try {
+              const docs = await this.workspaceService.listWizardWorkspaceDocuments(member.workspaceRoot);
+              return {
+                wizardId: member.wizardId,
+                wizardName: member.wizardName,
+                role: member.role,
+                workspaceRoot: member.workspaceRoot,
+                markdownDocuments: docs
+                  .filter((doc) => /\.md$/i.test(doc.path))
+                  .map((doc) => ({
+                    path: relative(member.workspaceRoot, doc.path),
+                    label: doc.label,
+                    core: doc.core
+                  }))
+              };
+            } catch (error) {
+              return {
+                wizardId: member.wizardId,
+                wizardName: member.wizardName,
+                role: member.role,
+                workspaceRoot: member.workspaceRoot,
+                error: error instanceof Error ? error.message : 'Could not list workspace.'
+              };
+            }
+          })
+        );
+        return JSON.stringify({ ok: true, count: entries.length, entries }, null, 2);
+      }
+
+      case 'read_nexus_teammate_file': {
+        if (!settings.tools.fileRead) {
+          throw new Error('The read_nexus_teammate_file tool is disabled in settings.');
+        }
+        const members = runtime.nexusTeamWorkspaces ?? [];
+        if (members.length === 0) {
+          throw new Error('This chat has no Nexus teammate workspace references.');
+        }
+        const wizardId = String(args.wizard_id ?? '').trim();
+        const wizardName = String(args.wizard_name ?? '').trim().toLowerCase();
+        const member =
+          members.find((candidate) => candidate.wizardId === wizardId) ??
+          members.find((candidate) => candidate.wizardName.trim().toLowerCase() === wizardName);
+        if (!member) {
+          throw new Error('read_nexus_teammate_file requires a valid wizard_id or wizard_name from list_nexus_teammate_workspaces.');
+        }
+        const path = String(args.path ?? '');
+        if (!path) {
+          throw new Error('read_nexus_teammate_file requires a path.');
+        }
+        const pdfStartPage = Number(args.pdf_start_page);
+        const pdfPageCount = Number(args.pdf_page_count);
+        const rawPdfOcr = String(args.pdf_ocr ?? 'auto');
+        const pdfOcr = rawPdfOcr === 'on' || rawPdfOcr === 'off' ? rawPdfOcr : 'auto';
+        const file = await this.workspaceService.openFile(member.workspaceRoot, path, false, {
+          pdf: {
+            startPage: Number.isFinite(pdfStartPage) ? pdfStartPage : undefined,
+            pageCount: Number.isFinite(pdfPageCount) ? pdfPageCount : undefined,
+            ocr: pdfOcr
+          }
+        });
+        if (file.imagePreview && !file.content) {
+          return JSON.stringify(
+            {
+              wizardId: member.wizardId,
+              wizardName: member.wizardName,
+              path: relative(member.workspaceRoot, file.path),
+              kind: 'image',
+              mimeType: file.imagePreview.mimeType,
+              readOnly: true,
+              note: 'Binary image file. No text content is returned here.'
+            },
+            null,
+            2
+          );
+        }
+        return JSON.stringify(
+          {
+            wizardId: member.wizardId,
+            wizardName: member.wizardName,
+            path: relative(member.workspaceRoot, file.path),
+            kind: file.readOnlyReason?.toLowerCase().includes('pdf') ? 'pdf' : 'text',
+            readOnly: true,
+            note: file.readOnlyReason ?? 'Read-only Nexus teammate workspace file.',
+            content: truncate(file.content)
           },
           null,
           2

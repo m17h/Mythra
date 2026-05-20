@@ -1,10 +1,16 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, type AppSettings } from '@shared/types';
 import { isChatThreadBackgroundPresetId } from '@shared/chat-thread-backgrounds';
-import { normalizeProviderProfile } from '@shared/provider-profile';
+import { normalizeProviderProfile, syncProviderSystemPromptFields } from '@shared/provider-profile';
+import {
+  decryptSettingsSecrets,
+  encryptSettingsSecrets,
+  isEncryptionAvailable,
+  rawSettingsHasPlaintextSecrets
+} from './settings-secrets';
 
 const SETTINGS_FILE = 'mythra-settings.json';
 /** Older installs before the Mythra rename. */
@@ -27,37 +33,38 @@ function normalizeMergedSearch(saved: Partial<AppSettings['search']> | undefined
   };
 }
 
-const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => ({
-  ...defaultSettings,
-  ...saved,
-  lastWorkspaceRoot:
-    typeof saved?.lastWorkspaceRoot === 'string' && saved.lastWorkspaceRoot.trim().length > 0
-      ? saved.lastWorkspaceRoot.trim()
-      : null,
-  providers: {
-    lmstudio: normalizeProviderProfile(
-      defaultSettings.providers.lmstudio,
-      saved?.providers?.lmstudio as Partial<Record<string, unknown>> | undefined
-    ),
-    openrouter: normalizeProviderProfile(
-      defaultSettings.providers.openrouter,
-      saved?.providers?.openrouter as Partial<Record<string, unknown>> | undefined
-    ),
-    ollama: normalizeProviderProfile(
-      defaultSettings.providers.ollama,
-      saved?.providers?.ollama as Partial<Record<string, unknown>> | undefined
-    )
-  },
-  search: normalizeMergedSearch(saved?.search),
-  tools: {
-    ...defaultSettings.tools,
-    ...saved?.tools
-  },
-  agent: {
-    ...defaultSettings.agent,
-    ...saved?.agent
-  },
-  ui: {
+const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings =>
+  syncProviderSystemPromptFields({
+    ...defaultSettings,
+    ...saved,
+    lastWorkspaceRoot:
+      typeof saved?.lastWorkspaceRoot === 'string' && saved.lastWorkspaceRoot.trim().length > 0
+        ? saved.lastWorkspaceRoot.trim()
+        : null,
+    providers: {
+      lmstudio: normalizeProviderProfile(
+        defaultSettings.providers.lmstudio,
+        saved?.providers?.lmstudio as Partial<Record<string, unknown>> | undefined
+      ),
+      openrouter: normalizeProviderProfile(
+        defaultSettings.providers.openrouter,
+        saved?.providers?.openrouter as Partial<Record<string, unknown>> | undefined
+      ),
+      ollama: normalizeProviderProfile(
+        defaultSettings.providers.ollama,
+        saved?.providers?.ollama as Partial<Record<string, unknown>> | undefined
+      )
+    },
+    search: normalizeMergedSearch(saved?.search),
+    tools: {
+      ...defaultSettings.tools,
+      ...saved?.tools
+    },
+    agent: {
+      ...defaultSettings.agent,
+      ...saved?.agent
+    },
+    ui: {
     ...defaultSettings.ui,
     ...saved?.ui,
     chatThreadBackgroundPreset:
@@ -95,12 +102,18 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings => 
         ...(saved?.ui?.favoriteModels?.ollama ?? defaultSettings.ui.favoriteModels.ollama)
       ]
     }
-  }
-});
+    }
+  });
 
 export class SettingsStore {
   private readonly userData = app.getPath('userData');
   private readonly path = join(this.userData, SETTINGS_FILE);
+
+  private async writeEncrypted(settings: AppSettings): Promise<void> {
+    const forDisk = encryptSettingsSecrets(settings);
+    await mkdir(dirname(this.path), { recursive: true });
+    await writeFile(this.path, JSON.stringify(forDisk, null, 2), 'utf8');
+  }
 
   async load(): Promise<AppSettings> {
     const pathsToTry = [this.path, ...LEGACY_SETTINGS_FILES.map((f) => join(this.userData, f))];
@@ -108,15 +121,24 @@ export class SettingsStore {
     for (const tryPath of pathsToTry) {
       try {
         const raw = await readFile(tryPath, 'utf8');
-        const merged = mergeSettings(JSON.parse(raw) as Partial<AppSettings>);
-        if (tryPath !== this.path && !existsSync(this.path)) {
+        const parsed = JSON.parse(raw) as Partial<AppSettings>;
+        const merged = decryptSettingsSecrets(mergeSettings(parsed));
+        const migratingLegacyFile = tryPath !== this.path && !existsSync(this.path);
+
+        if (migratingLegacyFile) {
           try {
-            await mkdir(dirname(this.path), { recursive: true });
-            await writeFile(this.path, JSON.stringify(merged, null, 2), 'utf8');
+            await this.writeEncrypted(merged);
           } catch {
             /* non-fatal migration copy */
           }
+        } else if (tryPath === this.path && rawSettingsHasPlaintextSecrets(parsed) && isEncryptionAvailable()) {
+          try {
+            await this.writeEncrypted(merged);
+          } catch {
+            /* non-fatal encrypt-in-place migration */
+          }
         }
+
         return merged;
       } catch {
         /* try next */
@@ -126,8 +148,8 @@ export class SettingsStore {
   }
 
   async save(next: AppSettings): Promise<AppSettings> {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify(next, null, 2), 'utf8');
-    return next;
+    const synced = syncProviderSystemPromptFields(next);
+    await this.writeEncrypted(synced);
+    return synced;
   }
 }

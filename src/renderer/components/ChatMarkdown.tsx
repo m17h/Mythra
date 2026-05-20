@@ -1,5 +1,6 @@
 import type { Components } from 'react-markdown';
 import type { ReactNode } from 'react';
+import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -98,6 +99,74 @@ function remarkChatColorText() {
   };
 }
 
+function mentionRanges(value: string, names: string[]) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const rawName of names) {
+    const name = rawName.trim();
+    if (name.length < 2) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`@${escaped}(?=$|\\s|[,:;.!?])`, 'gi');
+    for (const match of value.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      ranges.push({ start, end: start + match[0].length });
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start < previous.end) continue;
+    merged.push(range);
+  }
+  return merged;
+}
+
+function parseMentionText(value: string, names: string[]): MarkdownNode[] {
+  const ranges = mentionRanges(value, names);
+  if (ranges.length === 0) return [{ type: 'text', value }];
+  const nodes: MarkdownNode[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) nodes.push({ type: 'text', value: value.slice(cursor, range.start) });
+    nodes.push({
+      type: 'chatMention',
+      data: {
+        hName: 'span',
+        hProperties: {
+          className: ['chat-mention-text']
+        }
+      },
+      children: [{ type: 'text', value: value.slice(range.start, range.end) }]
+    });
+    cursor = range.end;
+  }
+  if (cursor < value.length) nodes.push({ type: 'text', value: value.slice(cursor) });
+  return nodes;
+}
+
+function remarkChatMentionText(names: string[]) {
+  return () => {
+    const mentionNames = names.map((name) => name.trim()).filter((name) => name.length >= 2);
+    return (tree: MarkdownNode) => {
+      if (mentionNames.length === 0) return;
+      const visit = (node: MarkdownNode) => {
+        if (!node.children) return;
+        const nextChildren: MarkdownNode[] = [];
+        for (const child of node.children) {
+          if (child.type === 'text' && typeof child.value === 'string' && child.value.includes('@')) {
+            nextChildren.push(...parseMentionText(child.value, mentionNames));
+          } else {
+            visit(child);
+            nextChildren.push(child);
+          }
+        }
+        node.children = nextChildren;
+      };
+      visit(tree);
+    };
+  };
+}
+
 function mediaKindFromHref(rawHref: unknown): MediaKind | null {
   if (typeof rawHref !== 'string') return null;
   const href = rawHref.trim();
@@ -173,12 +242,14 @@ const markdownComponents: Components = {
 
 interface ChatMarkdownProps {
   text: string;
+  mentionNames?: string[];
 }
 
-export function ChatMarkdown({ text }: ChatMarkdownProps) {
+export function ChatMarkdown({ text, mentionNames = [] }: ChatMarkdownProps) {
+  const mentionPlugin = useMemo(() => remarkChatMentionText(mentionNames), [mentionNames]);
   return (
     <div className="chat-markdown">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks, remarkChatColorText]}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkBreaks, remarkChatColorText, mentionPlugin]}>
         {text}
       </ReactMarkdown>
     </div>

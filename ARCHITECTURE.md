@@ -166,6 +166,64 @@ Use SQLite tables for:
 
 Do not store raw provider secrets in plain text. Use OS credential storage or Electron safe storage for secrets and keep only profile metadata in SQLite.
 
+### API key and secret storage (implemented)
+
+Mythra **does not** ship with a master decryption key in the app or repo. Secrets are protected by the **operating system**, not by Mythra-owned crypto.
+
+**What is encrypted on disk**
+
+In `mythra-settings.json` (under Electron `userData`), these fields are written as `mythra-enc:<base64>` when OS encryption is available:
+
+- `providers.lmstudio.apiKey`
+- `providers.openrouter.apiKey`
+- `providers.ollama.apiKey`
+- `search.tavilyApiKey`
+- `search.braveApiKey`
+
+**How it works**
+
+- **Main process only:** `src/main/settings-secrets.ts` wraps Electron [`safeStorage`](https://www.electronjs.org/docs/latest/api/safe-storage).
+- **On save:** plaintext in memory → `encryptString()` → prefixed blob in JSON.
+- **On load:** prefixed blob → `decryptString()` → plaintext in memory for Settings UI and model/search clients.
+- **Renderer / IPC:** unchanged; users still type keys in Settings the same way. Encryption is invisible in the product UI.
+
+**Where the encryption key lives**
+
+| Platform | Backing store |
+|----------|----------------|
+| macOS | Keychain (user login context) |
+| Windows | DPAPI (user profile) |
+| Linux | Secret service (e.g. libsecret), when available |
+
+Decrypting a blob generally requires the **same machine and OS user** that encrypted it. Copying `mythra-settings.json` to another computer does not reliably carry working keys.
+
+**Updating or removing a key (common question)**
+
+API keys are **not** stored as separate Keychain / Password Manager / DPAPI entries (one named entry per provider). Each key is an encrypted **string inside `mythra-settings.json`** for that field.
+
+When a user changes a key in Settings and saves:
+
+1. Mythra encrypts the **new** value.
+2. That field in the JSON is **overwritten** with the new `mythra-enc:…` blob.
+3. The old blob in the file is **gone** — Mythra does not keep the previous key around in the settings file.
+
+There is no extra step to “delete the old key from Keychain,” because the old key was never its own Keychain record. Only the current blob for that field matters.
+
+If the user **clears** the field and saves, the field is stored empty (`""`) and the previous encrypted blob is removed the same way.
+
+**Migration**
+
+On first load after an upgrade, if the JSON still has plaintext secrets and `safeStorage.isEncryptionAvailable()` is true, the main process rewrites the file once with encrypted values. No user dialog.
+
+**Fallback**
+
+If OS encryption is unavailable (some Linux setups), secrets stay plaintext on disk so the app keeps working—same behavior as before encryption shipped.
+
+**Code**
+
+- `src/main/settings-secrets.ts` — encrypt/decrypt helpers and `mythra-enc:` prefix
+- `src/main/settings-store.ts` — encrypt on `save()`, decrypt on `load()`
+
 ## Tool Safety Model
 
 This matters more than almost anything else.

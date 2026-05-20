@@ -97,6 +97,7 @@ declare global {
           wizardFullAccess?: boolean;
           wizardAllowOutsideWorkspace?: boolean;
           nexusTeamFullAccess?: boolean;
+          nexusTeamWorkspaces?: import('@shared/types').NexusTeamWorkspaceReference[];
           nexusLeaderApprovesTools?: boolean;
           nexusLeaderProvider?: ProviderKind;
           nexusLeaderModel?: string;
