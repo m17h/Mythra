@@ -24,6 +24,10 @@ import { ChatMarkdown } from './ChatMarkdown';
 
 /** How close to the true bottom counts as “pinned” for auto-follow while the model streams. */
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+const CHAT_VIRTUALIZATION_THRESHOLD = 80;
+const CHAT_VIRTUALIZATION_OVERSCAN_PX = 1200;
+const CHAT_VIRTUALIZATION_DEFAULT_ROW_PX = 170;
+const CHAT_VIRTUALIZATION_GAP_PX = 8;
 const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
 
 export interface ChatMentionOption {
@@ -755,6 +759,37 @@ type RenderChunk =
   | { type: 'activity-solo'; entry: ActivityTimelineEntry }
   | { type: 'activity-group'; id: string; items: ActivityTimelineEntry[] };
 
+function renderChunkKey(chunk: RenderChunk): string {
+  if (chunk.type === 'activity-group') return chunk.id;
+  return chunk.entry.id;
+}
+
+function estimateRenderChunkHeight(chunk: RenderChunk): number {
+  if (chunk.type === 'activity-group') return 74 + Math.min(120, chunk.items.length * 18) + CHAT_VIRTUALIZATION_GAP_PX;
+  if (chunk.type === 'activity-solo') return 72 + CHAT_VIRTUALIZATION_GAP_PX;
+  const message = chunk.entry.message;
+  const textLength = Math.max(message.content.length, message.reasoning?.length ?? 0);
+  const attachmentBoost = (message.attachments?.length ?? 0) * 90;
+  return Math.min(
+    720,
+    Math.max(
+      CHAT_VIRTUALIZATION_DEFAULT_ROW_PX,
+      90 + Math.ceil(textLength / 95) * 22 + attachmentBoost
+    )
+  ) + CHAT_VIRTUALIZATION_GAP_PX;
+}
+
+function lowerBound(values: number[], target: number): number {
+  let lo = 0;
+  let hi = values.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if ((values[mid] ?? 0) < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function buildRenderChunks(timeline: ChatTimelineEntry[]): RenderChunk[] {
   const out: RenderChunk[] = [];
   let buffer: ActivityTimelineEntry[] = [];
@@ -797,6 +832,11 @@ const activityDetailsStartOpen = (kind: ChatActivity['kind']) =>
 function CollapsibleActivityBlock({ activity, onDetailsToggle }: { activity: ChatActivity; onDetailsToggle?: () => void }) {
   const [open, setOpen] = useState(() => activityDetailsStartOpen(activity.kind));
   const label = activityLabelMap[activity.kind];
+  const handleToggle = () => {
+    setOpen((v) => !v);
+    onDetailsToggle?.();
+  };
+
   return (
     <motion.div
       animate={{ opacity: 1, y: 0 }}
@@ -804,25 +844,43 @@ function CollapsibleActivityBlock({ activity, onDetailsToggle }: { activity: Cha
       initial={{ opacity: 0, y: 6 }}
       transition={{ duration: 0.2, ease: 'easeOut' }}
     >
-      <details
-        className={`chat-activity chat-activity--collapsible chat-activity--${activity.kind}`}
-        onToggle={(e) => {
-          setOpen((e.currentTarget as HTMLDetailsElement).open);
-          onDetailsToggle?.();
-        }}
-        open={open}
-      >
-        <summary className="chat-activity__summary">{label}</summary>
-        <div className="chat-activity__body">
-          <p>{activity.message}</p>
-        </div>
-      </details>
+      <div className={`chat-activity chat-activity--collapsible chat-activity--${activity.kind}${open ? ' is-open' : ''}`}>
+        <button
+          aria-expanded={open}
+          className="chat-activity__summary"
+          onClick={handleToggle}
+          type="button"
+        >
+          {label}
+        </button>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="activity-body"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              style={{ overflow: 'hidden' }}
+            >
+              <div className="chat-activity__body">
+                <p>{activity.message}</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 }
 
 function ToolActivityGroup({ items, onDetailsToggle }: { items: ActivityTimelineEntry[]; onDetailsToggle?: () => void }) {
   const [open, setOpen] = useState(false);
+  const handleToggle = () => {
+    setOpen((v) => !v);
+    onDetailsToggle?.();
+  };
+
   return (
     <motion.div
       animate={{ opacity: 1, y: 0 }}
@@ -830,30 +888,73 @@ function ToolActivityGroup({ items, onDetailsToggle }: { items: ActivityTimeline
       initial={{ opacity: 0, y: 6 }}
       transition={{ duration: 0.2, ease: 'easeOut' }}
     >
-      <details
-        className="chat-activity chat-activity--collapsible chat-activity--grouped-tools"
-        onToggle={(e) => {
-          setOpen((e.currentTarget as HTMLDetailsElement).open);
-          onDetailsToggle?.();
-        }}
-        open={open}
-      >
-        <summary className="chat-activity__summary">
+      <div className={`chat-activity chat-activity--collapsible chat-activity--grouped-tools${open ? ' is-open' : ''}`}>
+        <button
+          aria-expanded={open}
+          className="chat-activity__summary"
+          onClick={handleToggle}
+          type="button"
+        >
           Tool activity · {items.length} steps
-        </summary>
-        <div className="chat-activity-group__list">
-          {items.map((entry) => (
-            <div
-              className={`chat-activity-group__row chat-activity-group__row--${entry.activity.kind}`}
-              key={entry.id}
+        </button>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="tool-activity-body"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              style={{ overflow: 'hidden' }}
             >
-              <div className="chat-activity-group__row-label">{activityLabelMap[entry.activity.kind]}</div>
-              <p className="chat-activity-group__row-text">{entry.activity.message}</p>
-            </div>
-          ))}
-        </div>
-      </details>
+              <div className="chat-activity-group__list">
+                {items.map((entry) => (
+                  <div
+                    className={`chat-activity-group__row chat-activity-group__row--${entry.activity.kind}`}
+                    key={entry.id}
+                  >
+                    <div className="chat-activity-group__row-label">{activityLabelMap[entry.activity.kind]}</div>
+                    <p className="chat-activity-group__row-text">{entry.activity.message}</p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </motion.div>
+  );
+}
+
+function VirtualMeasuredChunk({
+  children,
+  chunkKey,
+  enabled,
+  onMeasure
+}: {
+  children: ReactElement;
+  chunkKey: string;
+  enabled: boolean;
+  onMeasure: (key: string, height: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!enabled || !ref.current) return;
+    const node = ref.current;
+    const measure = () => {
+      onMeasure(chunkKey, Math.ceil(node.getBoundingClientRect().height) + CHAT_VIRTUALIZATION_GAP_PX);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [chunkKey, enabled, onMeasure]);
+
+  return (
+    <div className="chat-virtual-item" ref={ref}>
+      {children}
+    </div>
   );
 }
 
@@ -1206,6 +1307,7 @@ export function ChatPanel({
   }, [draftCostTooltip]);
   /** When true and the model grows the thread height, snap scroll only if still within epsilon of bottom. */
   const userPinnedToBottomRef = useRef(true);
+  const scheduleVirtualWindowUpdateRef = useRef<() => void>(() => undefined);
 
   const scrollToBottomHard = useCallback(() => {
     const node = scrollRef.current;
@@ -1251,7 +1353,7 @@ export function ChatPanel({
     });
   }, [clampAndMaybeStickToBottom]);
 
-  /** Collapsible <details> toggles (Thinking, tool blocks) do not change React state; the scroll range can go stale. */
+  /** Collapsible activity blocks animate height changes, so the scroll range may need a follow-up clamp. */
   const afterCollapsibleLayout = useCallback(() => {
     afterScrollLayout();
   }, [afterScrollLayout]);
@@ -1260,6 +1362,7 @@ export function ChatPanel({
     const n = scrollRef.current;
     if (!n) return;
     userPinnedToBottomRef.current = distanceFromChatBottom(n) <= CHAT_BOTTOM_STICK_EPSILON_PX;
+    scheduleVirtualWindowUpdateRef.current();
   }, []);
 
   /** Stop chasing the stream the instant the user scrolls upward (wheel / trackpad), before scrollTop updates. */
@@ -1468,6 +1571,91 @@ export function ChatPanel({
       : null;
 
   const renderChunks = useMemo(() => buildRenderChunks(timeline), [timeline]);
+  const chunkHeightMapRef = useRef<Map<string, number>>(new Map());
+  const virtualizationRafRef = useRef(0);
+  const [virtualScrollVersion, setVirtualScrollVersion] = useState(0);
+  const [virtualMeasureVersion, setVirtualMeasureVersion] = useState(0);
+  const virtualizationEnabled = renderChunks.length > CHAT_VIRTUALIZATION_THRESHOLD;
+  const renderChunkKeys = useMemo(() => renderChunks.map(renderChunkKey), [renderChunks]);
+
+  useEffect(() => {
+    const liveKeys = new Set(renderChunkKeys);
+    for (const key of chunkHeightMapRef.current.keys()) {
+      if (!liveKeys.has(key)) chunkHeightMapRef.current.delete(key);
+    }
+  }, [renderChunkKeys]);
+
+  const virtualPrefix = useMemo(() => {
+    const prefix = new Array(renderChunks.length + 1).fill(0);
+    for (let i = 0; i < renderChunks.length; i += 1) {
+      const key = renderChunkKeys[i] ?? '';
+      const measured = chunkHeightMapRef.current.get(key);
+      prefix[i + 1] = (prefix[i] ?? 0) + (measured ?? estimateRenderChunkHeight(renderChunks[i]!));
+    }
+    return prefix;
+  }, [renderChunks, renderChunkKeys, virtualMeasureVersion]);
+
+  const virtualWindow = useMemo(() => {
+    if (!virtualizationEnabled) {
+      return {
+        enabled: false,
+        start: 0,
+        end: renderChunks.length,
+        top: 0,
+        bottom: 0
+      };
+    }
+    const node = scrollRef.current;
+    const scrollTop = node?.scrollTop ?? Math.max(0, (virtualPrefix[renderChunks.length] ?? 0) - 900);
+    const viewportHeight = node?.clientHeight ?? 900;
+    const firstVisible = lowerBound(virtualPrefix, Math.max(0, scrollTop - CHAT_VIRTUALIZATION_OVERSCAN_PX));
+    const lastVisible = lowerBound(
+      virtualPrefix,
+      scrollTop + viewportHeight + CHAT_VIRTUALIZATION_OVERSCAN_PX
+    );
+    const start = Math.max(0, Math.min(renderChunks.length, firstVisible - 1));
+    const end = Math.max(start, Math.min(renderChunks.length, lastVisible + 1));
+    const totalHeight = virtualPrefix[renderChunks.length] ?? 0;
+    return {
+      enabled: true,
+      start,
+      end,
+      top: virtualPrefix[start] ?? 0,
+      bottom: Math.max(0, totalHeight - (virtualPrefix[end] ?? totalHeight))
+    };
+  }, [renderChunks.length, virtualPrefix, virtualScrollVersion, virtualizationEnabled]);
+
+  const visibleRenderChunks = virtualizationEnabled
+    ? renderChunks.slice(virtualWindow.start, virtualWindow.end)
+    : renderChunks;
+
+  const scheduleVirtualWindowUpdate = useCallback(() => {
+    if (!virtualizationEnabled) return;
+    if (virtualizationRafRef.current) return;
+    virtualizationRafRef.current = requestAnimationFrame(() => {
+      virtualizationRafRef.current = 0;
+      setVirtualScrollVersion((version) => version + 1);
+    });
+  }, [virtualizationEnabled]);
+  scheduleVirtualWindowUpdateRef.current = scheduleVirtualWindowUpdate;
+
+  useEffect(() => {
+    if (!virtualizationEnabled) return;
+    scheduleVirtualWindowUpdate();
+  }, [renderChunks.length, scheduleVirtualWindowUpdate, threadHeadKey, timelineTailKey, virtualizationEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (virtualizationRafRef.current) cancelAnimationFrame(virtualizationRafRef.current);
+    };
+  }, []);
+
+  const handleVirtualChunkMeasure = useCallback((key: string, nextHeight: number) => {
+    const prevHeight = chunkHeightMapRef.current.get(key);
+    if (Math.abs((prevHeight ?? 0) - nextHeight) <= 2) return;
+    chunkHeightMapRef.current.set(key, nextHeight);
+    setVirtualMeasureVersion((version) => version + 1);
+  }, []);
 
   const chatBgLayers =
     chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== '' ? (
@@ -1582,12 +1770,33 @@ export function ChatPanel({
           </div>
         ) : null}
 
-        {renderChunks.map((chunk) => {
+        {virtualWindow.enabled && virtualWindow.top > 0 ? (
+          <div aria-hidden className="chat-virtual-spacer" style={{ height: virtualWindow.top }} />
+        ) : null}
+
+        {visibleRenderChunks.map((chunk) => {
+          const chunkKey = renderChunkKey(chunk);
+          const wrapVirtual = (element: ReactElement) =>
+            virtualizationEnabled ? (
+              <VirtualMeasuredChunk
+                chunkKey={chunkKey}
+                enabled={virtualizationEnabled}
+                key={chunkKey}
+                onMeasure={handleVirtualChunkMeasure}
+              >
+                {element}
+              </VirtualMeasuredChunk>
+            ) : (
+              element
+            );
+
           if (chunk.type === 'activity-group') {
-            return <ToolActivityGroup key={chunk.id} items={chunk.items} onDetailsToggle={afterCollapsibleLayout} />;
+            return wrapVirtual(
+              <ToolActivityGroup key={chunk.id} items={chunk.items} onDetailsToggle={afterCollapsibleLayout} />
+            );
           }
           if (chunk.type === 'activity-solo') {
-            return (
+            return wrapVirtual(
               <CollapsibleActivityBlock
                 key={chunk.entry.id}
                 activity={chunk.entry.activity}
@@ -1608,7 +1817,7 @@ export function ChatPanel({
             return null;
           }
 
-          return (
+          return wrapVirtual(
             <motion.article
               animate={{ opacity: 1, y: 0 }}
               className={`chat-bubble chat-bubble--${message.role}`}
@@ -1673,6 +1882,9 @@ export function ChatPanel({
             </motion.article>
           );
         })}
+        {virtualWindow.enabled && virtualWindow.bottom > 0 ? (
+          <div aria-hidden className="chat-virtual-spacer" style={{ height: virtualWindow.bottom }} />
+        ) : null}
         <div aria-hidden className="chat-scroll__bottom" ref={bottomRef} />
       </div>
     </div>

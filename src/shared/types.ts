@@ -18,6 +18,8 @@ export interface WizardDocument {
   path: string;
   label: string;
   core: boolean;
+  /** When false, Mythra lists the document but does not auto-inject it into this Wizard's context. */
+  autoInject?: boolean;
 }
 
 export interface WizardProfile {

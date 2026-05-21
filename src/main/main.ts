@@ -486,7 +486,9 @@ const requestToolApproval = async (
     window.webContents.send('tool:approval-request', payload);
   });
   if (!approved) {
-    throw new Error(`${title} was denied by the user.`);
+    const error = new Error(`${title} was denied by the user.`);
+    error.name = 'ToolApprovalDeniedError';
+    throw error;
   }
 };
 

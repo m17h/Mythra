@@ -27,6 +27,8 @@ interface SettingsPanelProps {
   onRefreshModels: () => void;
   /** Opens the in-app Connection guide (OpenRouter, LM Studio, and Ollama) from Settings. */
   onOpenConnectionHelp?: () => void;
+  /** Opens Mythra's curated model recommendation matrix. */
+  onOpenModelRecommendations?: () => void;
   /** Opens support/contact guidance for app updates. */
   onOpenAppUpdatesInfo?: () => void;
   /** Opens the in-app explanation about Tavily / Brave Search (same dialog as onboarding). */
@@ -65,6 +67,7 @@ export function SettingsPanel({
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
+  onOpenModelRecommendations,
   onOpenAppUpdatesInfo,
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
@@ -228,22 +231,37 @@ export function SettingsPanel({
         </div>
 
         <div className="settings-section settings-section--connection">
-          <div className="settings-section__title-cluster">
-            <h4 className="settings-section__title settings-section__title--cluster">Connection</h4>
-            {onOpenConnectionHelp ? (
-              <button
-                className="settings-info-button"
-                type="button"
-                aria-label="About OpenRouter, LM Studio, Ollama, and Mythra"
-                title="OpenRouter, LM Studio, and Ollama in Mythra"
-                onClick={onOpenConnectionHelp}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
-                  <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
-            ) : null}
+          <div className="settings-section__title-cluster settings-section__title-cluster--split">
+            <div className="settings-section__title-left">
+              <h4 className="settings-section__title settings-section__title--cluster">Connection</h4>
+              {onOpenConnectionHelp ? (
+                <button
+                  className="settings-info-button"
+                  type="button"
+                  aria-label="About OpenRouter, LM Studio, Ollama, and Mythra"
+                  title="OpenRouter, LM Studio, and Ollama in Mythra"
+                  onClick={onOpenConnectionHelp}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                    <path d="M12 16v-4.5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
+            <div className="settings-section__title-actions">
+              {onOpenModelRecommendations ? (
+                <button
+                  aria-label="Open Mythra recommended AI models"
+                  className="settings-mini-action"
+                  onClick={onOpenModelRecommendations}
+                  title="Mythra recommended AI models"
+                  type="button"
+                >
+                  Models
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="field-row">

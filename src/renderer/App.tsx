@@ -54,6 +54,7 @@ import {
   type WorkspaceNode
 } from '@shared/types';
 import { patchSystemPromptInSettings } from '@shared/patch-system-prompt';
+import { syncProviderSystemPromptFields } from '@shared/provider-profile';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
 import { isAllowedCustomThemeTokenKey, isLikelyLightCssBackground, type ThemeId } from '@shared/themes';
 
@@ -153,6 +154,16 @@ function pathJoinFs(a: string, b: string): string {
 /** Loose match for comparing filesystem roots across slash variants. */
 const pathsEqual = (a: string, b: string) =>
   a.replace(/\\/g, '/').replace(/\/+$/, '') === b.replace(/\\/g, '/').replace(/\/+$/, '');
+
+const wizardDocumentPathKey = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '');
+
+function mergeWizardDocumentPreferences(fresh: WizardDocument[], previous: WizardDocument[] | undefined): WizardDocument[] {
+  const previousByPath = new Map((previous ?? []).map((doc) => [wizardDocumentPathKey(doc.path), doc]));
+  return fresh.map((doc) => {
+    const existing = previousByPath.get(wizardDocumentPathKey(doc.path));
+    return { ...doc, autoInject: existing?.autoInject ?? doc.autoInject ?? true };
+  });
+}
 
 /**
  * Nexus sends must resolve each member's **private** Wizard folder for Markdown injection.
@@ -297,6 +308,206 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
 const mediaProviderOptions = providerOptions.filter((option) => option.value !== 'ollama');
 const providerLabel = (kind: ProviderKind) =>
   kind === 'openrouter' ? 'OpenRouter' : kind === 'ollama' ? 'Ollama' : 'LM Studio';
+
+type RecommendedModel = {
+  name: string;
+  id: string;
+  bestFor: string;
+  ratings: {
+    fast: boolean;
+    toolCalling: boolean;
+    reasoning: boolean;
+    coding: boolean;
+    longContext: boolean;
+    value: boolean;
+  };
+};
+
+const RECOMMENDED_MODEL_COLUMNS: Array<{
+  key: keyof RecommendedModel['ratings'];
+  label: string;
+}> = [
+  { key: 'fast', label: 'Fast' },
+  { key: 'toolCalling', label: 'Accurate tools' },
+  { key: 'reasoning', label: 'Deep reasoning' },
+  { key: 'coding', label: 'Coding' },
+  { key: 'longContext', label: 'Long context' },
+  { key: 'value', label: 'Good value' }
+];
+
+const MYTHRA_RECOMMENDED_MODELS: RecommendedModel[] = [
+  {
+    name: 'DeepSeek V4 Flash',
+    id: 'deepseek/deepseek-v4-flash',
+    bestFor: 'Responsive, low-cost coding and research support.',
+    ratings: { fast: true, toolCalling: true, reasoning: true, coding: true, longContext: true, value: true }
+  },
+  {
+    name: 'Grok 4.3',
+    id: 'x-ai/grok-4.3',
+    bestFor: 'Strong accessible frontier chat, coding, and agentic work.',
+    ratings: { fast: true, toolCalling: true, reasoning: true, coding: true, longContext: true, value: true }
+  },
+  {
+    name: 'Kimi K2.6',
+    id: 'moonshotai/kimi-k2.6',
+    bestFor: 'Coding-heavy UI work and multi-agent style decomposition.',
+    ratings: { fast: false, toolCalling: true, reasoning: true, coding: true, longContext: false, value: true }
+  }
+];
+
+function ModelRatingMark({ value, label }: { value: boolean; label: string }) {
+  return (
+    <span
+      aria-label={value ? `${label}: recommended` : `${label}: not recommended`}
+      className={`model-recommendations__mark ${value ? 'is-yes' : 'is-no'}`}
+      title={value ? `${label}: recommended` : `${label}: not recommended`}
+    >
+      {value ? '✓' : '×'}
+    </span>
+  );
+}
+
+function ModelRecommendationsDialog({
+  favoriteIds,
+  onClose,
+  onSelectModel,
+  onToggleFavorite,
+  selectedModelId
+}: {
+  favoriteIds: string[];
+  onClose: () => void;
+  onSelectModel: (id: string) => void;
+  onToggleFavorite: (id: string) => void;
+  selectedModelId: string;
+}) {
+  return (
+    <motion.div
+      animate={{ opacity: 1 }}
+      className="app-dialog-backdrop"
+      exit={{ opacity: 0 }}
+      initial={{ opacity: 0 }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <motion.div
+        aria-describedby="model-recommendations-desc"
+        aria-labelledby="model-recommendations-title"
+        aria-modal="true"
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="app-dialog app-dialog--scrollable model-recommendations-dialog"
+        exit={{ opacity: 0, scale: 0.98, y: 8 }}
+        initial={{ opacity: 0, scale: 0.98, y: 8 }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        transition={{ duration: 0.18, ease: 'easeOut' }}
+      >
+        <div className="app-dialog__kicker">Model Guide</div>
+        <h3 id="model-recommendations-title">Mythra recommended AI models</h3>
+        <p id="model-recommendations-desc">
+          Mythra specifically chooses models that are cheap and effective. These recommendations prioritize usefulness
+          and accessibility for users, then balance speed, tool calling, reasoning, coding, and context size. Local LM
+          Studio and Ollama recommendations depend on your hardware and loaded model files.
+        </p>
+        <div className="model-recommendations__table-wrap" role="region" aria-label="Recommended model comparison">
+          <table className="model-recommendations__table">
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                {RECOMMENDED_MODEL_COLUMNS.map((column) => (
+                  <th key={column.key} scope="col">
+                    {column.label}
+                  </th>
+                ))}
+                <th scope="col">Best fit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {MYTHRA_RECOMMENDED_MODELS.map((model) => (
+                <tr className={model.id === selectedModelId ? 'is-selected' : ''} key={model.id}>
+                  <th scope="row">
+                    <div className="model-recommendations__identity">
+                      <button
+                        aria-pressed={favoriteIds.includes(model.id)}
+                        aria-label={
+                          favoriteIds.includes(model.id)
+                            ? `Remove ${model.name} from favorites`
+                            : `Favorite ${model.name}`
+                        }
+                        className="model-recommendations__favorite"
+                        onClick={() => onToggleFavorite(model.id)}
+                        title={favoriteIds.includes(model.id) ? 'Remove from favorites' : 'Favorite this model'}
+                        type="button"
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          <path
+                            d="M12 2.5l2.4 5.3 5.8.5-4.3 3.7 1.3 5.6L12 16.1 6.8 17.5l1.3-5.6-4.3-3.7 5.8-.5L12 2.5z"
+                            stroke="currentColor"
+                            strokeLinejoin="round"
+                            fill={favoriteIds.includes(model.id) ? 'currentColor' : 'none'}
+                            strokeWidth="1.4"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        className="model-recommendations__model-button"
+                        onClick={() => onSelectModel(model.id)}
+                        title={`Use ${model.name} in Connection settings`}
+                        type="button"
+                      >
+                        <span className="model-recommendations__name">{model.name}</span>
+                        <code>{model.id}</code>
+                      </button>
+                    </div>
+                  </th>
+                  {RECOMMENDED_MODEL_COLUMNS.map((column) => (
+                    <td key={column.key}>
+                      <ModelRatingMark label={column.label} value={model.ratings[column.key]} />
+                    </td>
+                  ))}
+                  <td className="model-recommendations__fit">{model.bestFor}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="app-dialog__links">
+          <a
+            className="app-dialog__link"
+            href="https://openrouter.ai/collections/tool-calling-models"
+            onClick={(e) => {
+              e.preventDefault();
+              void window.electronAPI.openExternalUrl('https://openrouter.ai/collections/tool-calling-models');
+            }}
+            rel="noreferrer"
+          >
+            OpenRouter tool-calling models
+          </a>
+          <span aria-hidden className="app-dialog__links-sep">
+            ·
+          </span>
+          <a
+            className="app-dialog__link"
+            href="https://openrouter.ai/models"
+            onClick={(e) => {
+              e.preventDefault();
+              void window.electronAPI.openExternalUrl('https://openrouter.ai/models');
+            }}
+            rel="noreferrer"
+          >
+            Full model catalog
+          </a>
+        </div>
+        <div className="app-dialog__actions">
+          <button className="btn btn--primary" onClick={onClose} type="button">
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 const needsSearchApiKeyNotice = (settings: AppSettings) => {
   if (settings.search.provider === 'duckduckgo') return false;
   const hasAny =
@@ -450,7 +661,8 @@ const buildWizardDocsContext = async (wizard: WizardProfile): Promise<WizardDocs
     return { message: null, loaded: [] };
   }
 
-  const mdDocs = docs.filter((doc) => /\.md$/i.test(doc.path));
+  const docsWithPreferences = mergeWizardDocumentPreferences(docs, wizard.documents);
+  const mdDocs = docsWithPreferences.filter((doc) => /\.md$/i.test(doc.path) && doc.autoInject !== false);
   if (mdDocs.length === 0) return { message: null, loaded: [] };
 
   const loaded: Array<{ name: string; ok: boolean }> = [];
@@ -474,7 +686,7 @@ const buildWizardDocsContext = async (wizard: WizardProfile): Promise<WizardDocs
       id: `wizard-docs-${Date.now()}`,
       role: 'system',
       content: [
-        'Wizard Markdown workspace documents are injected below (every .md file Mythra could find under this workspace). Treat them as current private context; use read_file if something may have changed since this injection.',
+        'Wizard Markdown workspace documents selected for auto-injection are included below. Treat them as current private context; use read_file if something may have changed since this injection or if another listed document is needed on demand.',
         ...parts
       ].join('\n\n'),
       status: 'done'
@@ -534,6 +746,11 @@ const diffPromptLines = (before: string, after: string) => {
   }
   return { left, right };
 };
+
+const diffLineSummary = (diff: ReturnType<typeof diffPromptLines>) => ({
+  added: diff.right.filter((line) => line.kind === 'add').length,
+  removed: diff.left.filter((line) => line.kind === 'remove').length
+});
 
 const stripNexusRelayControlMarkers = (raw: string) =>
   raw.replace(/\[\s*NEXUS_(?:END|CONTINUE)\s*\]/gi, '').trimEnd();
@@ -1049,6 +1266,7 @@ export function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
+  const [showModelRecommendations, setShowModelRecommendations] = useState(false);
   const [showAppUpdatesInfo, setShowAppUpdatesInfo] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
   const [updateToast, setUpdateToast] = useState<UpdateToast | null>(null);
@@ -2187,7 +2405,10 @@ export function App() {
             if (wid && cur && pathsEqual(cur.workspaceRoot, root)) {
               const full = await window.electronAPI.loadChat(wid);
               if (full?.kind === 'wizard' && full.wizard) {
-                const merged: WizardProfile = { ...full.wizard, documents: docs };
+                const merged: WizardProfile = {
+                  ...full.wizard,
+                  documents: mergeWizardDocumentPreferences(docs, full.wizard.documents)
+                };
                 setWizardDraft(merged);
                 wizardDraftRef.current = merged;
                 await window.electronAPI.saveChat({ ...full, wizard: merged, updatedAt: Date.now() });
@@ -2623,6 +2844,56 @@ export function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+
+  const selectRecommendedModel = useCallback(
+    (modelId: string) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const next = syncProviderSystemPromptFields(
+        {
+          ...current,
+          selectedProvider: 'openrouter',
+          providers: {
+            ...current.providers,
+            openrouter: {
+              ...current.providers.openrouter,
+              model: modelId
+            }
+          }
+        },
+        current.selectedProvider
+      );
+      handleSettingsPanelChange(next);
+      setShowModelRecommendations(false);
+      setSettingsStatus(`Selected ${modelId}.`);
+    },
+    [handleSettingsPanelChange]
+  );
+
+  const toggleRecommendedModelFavorite = useCallback(
+    (modelId: string) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const baseFav = current.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+      const nextSet = new Set(baseFav.openrouter ?? []);
+      if (nextSet.has(modelId)) nextSet.delete(modelId);
+      else nextSet.add(modelId);
+      const next: AppSettings = {
+        ...current,
+        ui: {
+          ...current.ui,
+          favoriteModels: {
+            ...baseFav,
+            openrouter: [...nextSet].sort((a, b) => a.localeCompare(b))
+          }
+        }
+      };
+      settingsRef.current = next;
+      setSettings(next);
+      void persistAfterPresetAction(next);
+    },
+    []
+  );
 
   const describeUpdateProgress = useCallback((progress: AppUpdateProgress) => {
     const total = progress.total > 0 ? `${Math.round(progress.total / 1024 / 1024)} MB` : 'update';
@@ -3663,7 +3934,8 @@ export function App() {
           }
         }
         try {
-          profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
+          const docs = await window.electronAPI.listWizardDocuments(profile.workspaceRoot);
+          profile = { ...profile, documents: mergeWizardDocumentPreferences(docs, profile.documents) };
         } catch {
           /* keep existing document list if refresh fails */
         }
@@ -4332,12 +4604,16 @@ export function App() {
         : activeDiskChat?.kind === 'nexus'
           ? activeDiskChat
           : null;
-    const wizardForStream =
+    const savedWizardForStream =
       parentWizardChat?.kind === 'wizard'
         ? parentWizardChat.wizard ?? null
         : activeChatMeta?.kind === 'wizard'
           ? activeChatMeta.wizard ?? null
           : null;
+    const wizardForStream =
+      savedWizardForStream && parentWizardChat?.id === activeWizardMeta?.id && wizardDraftRef.current
+        ? wizardDraftRef.current
+        : savedWizardForStream;
     const nexusForStream = parentNexusChat?.kind === 'nexus' ? parentNexusChat.nexus ?? null : null;
 
     let nexusTeam: Array<{ id: string; wizard: WizardProfile; role: 'leader' | 'member' }> = [];
@@ -5296,6 +5572,7 @@ export function App() {
     typeof toolApprovalRequest.diffAfter === 'string'
       ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter)
       : null;
+  const toolApprovalDiffSummary = toolApprovalDiff ? diffLineSummary(toolApprovalDiff) : null;
 
   return (
     <div className="app-shell">
@@ -5804,6 +6081,16 @@ export function App() {
               <h3>{toolApprovalRequest.title}</h3>
               {toolApprovalDiff ? (
                 <>
+                  {toolApprovalDiffSummary ? (
+                    <div className="wizard-prompt-approval__line-summary" aria-label="Change summary">
+                      <span className="wizard-prompt-approval__line-summary-pill wizard-prompt-approval__line-summary-pill--add">
+                        +{toolApprovalDiffSummary.added} lines added
+                      </span>
+                      <span className="wizard-prompt-approval__line-summary-pill wizard-prompt-approval__line-summary-pill--remove">
+                        -{toolApprovalDiffSummary.removed} lines removed
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="wizard-prompt-approval__intro">
                     <p id="tool-approval-desc">{toolApprovalRequest.detail}</p>
                   </div>
@@ -5971,6 +6258,17 @@ export function App() {
               </div>
             </motion.div>
           </motion.div>
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showModelRecommendations ? (
+          <ModelRecommendationsDialog
+            favoriteIds={settings?.ui.favoriteModels?.openrouter ?? []}
+            onClose={() => setShowModelRecommendations(false)}
+            onSelectModel={selectRecommendedModel}
+            onToggleFavorite={toggleRecommendedModelFavorite}
+            selectedModelId={settings?.providers.openrouter.model ?? ''}
+          />
         ) : null}
       </AnimatePresence>
       {isDarwin ? <div aria-hidden className="app-titlebar" /> : null}
@@ -7275,6 +7573,7 @@ export function App() {
                         onDownloadUpdate={() => void startUpdateInstall()}
                         onOpenAppUpdatesInfo={() => setShowAppUpdatesInfo(true)}
                         onOpenConnectionHelp={() => setShowConnectionHelp(true)}
+                        onOpenModelRecommendations={() => setShowModelRecommendations(true)}
                         onOpenSystemPromptInfo={() => setShowSystemPromptHelp(true)}
                         onOpenSystemPromptModal={() => setShowSystemPromptModal(true)}
                         onOpenWebSearchInfo={() => setShowWebSearchNotice(true)}

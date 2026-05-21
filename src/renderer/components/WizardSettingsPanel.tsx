@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { defaultSettings, type AppSettings, type ModelInfo, type ProviderKind, type WizardProfile } from '@shared/types';
+import { roughTokensFromText } from '@renderer/lib/estimate-context-tokens';
 import { AppSelect } from './AppSelect';
 import { ModelSearch } from './ModelSearch';
 
@@ -28,6 +29,17 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
 ];
 
 const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+const formatTokenEstimate = (tokens: number) =>
+  tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k` : tokens.toLocaleString();
+const wizardDocumentPathKey = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '');
+
+function mergeWizardDocumentPreferences(fresh: WizardProfile['documents'], previous: WizardProfile['documents']) {
+  const previousByPath = new Map(previous.map((doc) => [wizardDocumentPathKey(doc.path), doc]));
+  return fresh.map((doc) => {
+    const existing = previousByPath.get(wizardDocumentPathKey(doc.path));
+    return { ...doc, autoInject: existing?.autoInject ?? doc.autoInject ?? true };
+  });
+}
 
 export function WizardSettingsPanel({
   wizard,
@@ -46,6 +58,13 @@ export function WizardSettingsPanel({
   const [localModels, setLocalModels] = useState<ModelInfo[]>(modelOptions);
   const [nameDraft, setNameDraft] = useState(wizard.name);
   const [markdownDocumentsExpanded, setMarkdownDocumentsExpanded] = useState(false);
+  const [markdownTokenEstimate, setMarkdownTokenEstimate] = useState<{
+    loading: boolean;
+    tokens: number;
+    readable: number;
+    included: number;
+    total: number;
+  }>({ loading: true, tokens: 0, readable: 0, included: 0, total: 0 });
 
   useEffect(() => {
     setLocalModels(modelOptions);
@@ -73,10 +92,11 @@ export function WizardSettingsPanel({
       try {
         const docs = await window.electronAPI.listWizardDocuments(wizard.workspaceRoot);
         if (cancelled) return;
+        const docsWithPreferences = mergeWizardDocumentPreferences(docs, wizard.documents);
         const prevKey = wizard.documents.map((d) => d.path).join('\0');
         const nextKey = docs.map((d) => d.path).join('\0');
         if (prevKey !== nextKey) {
-          onChange({ ...wizard, documents: docs });
+          onChange({ ...wizard, documents: docsWithPreferences });
         }
       } catch {
         /* workspace missing or unreadable */
@@ -88,6 +108,70 @@ export function WizardSettingsPanel({
     // Only re-scan when switching to another Wizard workspace; live updates come from App workspace events.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional narrow deps
   }, [wizard.workspaceRoot]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const markdownDocs = wizard.documents.filter((doc) => /\.md$/i.test(doc.path));
+    const includedDocs = markdownDocs.filter((doc) => doc.autoInject !== false);
+    setMarkdownTokenEstimate((prev) => ({
+      loading: includedDocs.length > 0,
+      tokens: includedDocs.length > 0 ? prev.tokens : 0,
+      readable: includedDocs.length > 0 ? prev.readable : 0,
+      included: includedDocs.length,
+      total: markdownDocs.length
+    }));
+    if (includedDocs.length === 0) return () => {
+      cancelled = true;
+    };
+
+    void (async () => {
+      let tokens = 0;
+      let readable = 0;
+      await Promise.all(
+        includedDocs.map(async (doc) => {
+          try {
+            const file = await window.electronAPI.readWizardDocument(wizard.workspaceRoot, doc.path);
+            tokens += roughTokensFromText(file.content);
+            readable += 1;
+          } catch {
+            /* Ignore unreadable docs in the estimate; count stays visible. */
+          }
+        })
+      );
+      if (!cancelled) {
+        setMarkdownTokenEstimate({
+          loading: false,
+          tokens,
+          readable,
+          included: includedDocs.length,
+          total: markdownDocs.length
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [wizard.documents, wizard.workspaceRoot]);
+
+  const markdownDocumentCount = wizard.documents.filter((doc) => /\.md$/i.test(doc.path)).length;
+  const includedMarkdownDocumentCount = wizard.documents.filter(
+    (doc) => /\.md$/i.test(doc.path) && doc.autoInject !== false
+  ).length;
+
+  const toggleDocumentAutoInject = (path: string, autoInject: boolean) => {
+    onChange({
+      ...wizard,
+      documents: wizard.documents.map((doc) =>
+        wizardDocumentPathKey(doc.path) === wizardDocumentPathKey(path) ? { ...doc, autoInject } : doc
+      )
+    });
+  };
+  const hasTokenEstimateValue = markdownTokenEstimate.tokens > 0 || markdownTokenEstimate.readable > 0;
+  const markdownTokenEstimateText =
+    markdownTokenEstimate.loading && !hasTokenEstimateValue
+      ? 'Calculating...'
+      : `${formatTokenEstimate(markdownTokenEstimate.tokens)} tokens`;
 
   return (
     <section className="panel settings-panel">
@@ -190,6 +274,21 @@ export function WizardSettingsPanel({
         </div>
 
         <div className="settings-section">
+          <div className="wizard-doc-token-meter">
+            <div className="wizard-doc-token-meter__copy">
+              <span>Markdown context estimate</span>
+              <strong>{markdownTokenEstimateText}</strong>
+            </div>
+            <div className="wizard-doc-token-meter__meta">
+              {markdownTokenEstimate.total === 0
+                ? 'No Markdown documents found'
+                : markdownTokenEstimate.loading
+                  ? `${markdownTokenEstimate.included}/${markdownTokenEstimate.total} docs included`
+                  : markdownTokenEstimate.included === 0
+                    ? `0/${markdownTokenEstimate.total} docs included`
+                    : `${markdownTokenEstimate.readable}/${markdownTokenEstimate.included} included docs readable (${markdownTokenEstimate.total} available)`}
+            </div>
+          </div>
           <div className={`chat-thread-options chat-thread-options--settings ${markdownDocumentsExpanded ? 'is-expanded' : ''}`}>
             <button
               className="chat-thread-options__header"
@@ -216,7 +315,9 @@ export function WizardSettingsPanel({
                 <span className="chat-thread-options__title">Markdown documents</span>
               </span>
               {!markdownDocumentsExpanded ? (
-                <span className="chat-thread-options__badge">{wizard.documents.length} docs</span>
+                <span className="chat-thread-options__badge">
+                  {includedMarkdownDocumentCount}/{markdownDocumentCount} docs
+                </span>
               ) : null}
             </button>
 
@@ -233,15 +334,31 @@ export function WizardSettingsPanel({
                   <div className="chat-thread-options__body">
                     <div className="wizard-doc-list">
                       {wizard.documents.map((doc) => (
-                        <button
-                          className="wizard-doc-list__item"
+                        <div
+                          className={`wizard-doc-list__item ${doc.autoInject !== false ? 'is-included' : 'is-excluded'}`}
                           key={doc.path}
-                          onClick={() => onOpenDocument(doc.path)}
-                          type="button"
                         >
-                          <span>{doc.label}</span>
-                          <code>{doc.path.split(/[\\/]/).pop()}</code>
-                        </button>
+                          <label className="wizard-doc-list__toggle">
+                            <input
+                              checked={doc.autoInject !== false}
+                              onChange={(e) => toggleDocumentAutoInject(doc.path, e.target.checked)}
+                              type="checkbox"
+                            />
+                            <span className="wizard-doc-list__text">
+                              <span>{doc.label}</span>
+                              <small>{doc.autoInject !== false ? 'Auto-injected' : 'Not injected'}</small>
+                            </span>
+                            <code>{doc.path.split(/[\\/]/).pop()}</code>
+                          </label>
+                          <button
+                            className="wizard-doc-list__open"
+                            onClick={() => onOpenDocument(doc.path)}
+                            title={`Open ${doc.path}`}
+                            type="button"
+                          >
+                            Open
+                          </button>
+                        </div>
                       ))}
                     </div>
                   </div>

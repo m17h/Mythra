@@ -45,6 +45,38 @@ import { formatToolActivityDone, formatToolActivityStart } from './tool-activity
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
 
+function safeJsonParse(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isToolApprovalDeniedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'ToolApprovalDeniedError' || /\bdenied\b.*\b(user|leader)\b/i.test(error.message))
+  );
+}
+
+function toolApprovalDeniedResult(tool: string, rawArgs: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : 'The requested tool action was denied.';
+  return JSON.stringify(
+    {
+      ok: false,
+      error: 'tool_approval_denied',
+      tool,
+      message,
+      attempted_arguments: safeJsonParse(rawArgs) ?? rawArgs,
+      guidance:
+        'The user denied this tool action. Do not stop. Explain what you were trying to do and why, ask for approval with clearer context if the action is still needed, or choose a safer alternate approach that does not require the denied action.'
+    },
+    null,
+    2
+  );
+}
+
 function mapCompletionUsage(
   u:
     | {
@@ -1058,15 +1090,31 @@ export class ModelService {
               formatToolActivityStart(toolCall.function.name, rawArgs, settings)
             );
 
-            const toolResult = await this.executeToolCall(
-              window,
-              requestId,
-              settings,
-              runtime,
-              toolCall,
-              parsedArgs.args,
-              messages
-            );
+            let toolResult: string;
+            let approvalDenied = false;
+            try {
+              toolResult = await this.executeToolCall(
+                window,
+                requestId,
+                settings,
+                runtime,
+                toolCall,
+                parsedArgs.args,
+                messages
+              );
+            } catch (error) {
+              if (!isToolApprovalDeniedError(error)) {
+                throw error;
+              }
+              approvalDenied = true;
+              toolResult = toolApprovalDeniedResult(toolCall.function.name, rawArgs, error);
+              this.emitActivity(
+                window,
+                requestId,
+                'warning',
+                `${toolCall.function.name}: denied; returning denial to the model so it can continue.`
+              );
+            }
             this.assertNotStopped(requestId);
 
             apiMessages.push({
@@ -1075,7 +1123,9 @@ export class ModelService {
               content: truncate(toolResult, 18_000)
             });
 
-            this.emitActivity(window, requestId, 'success', formatToolActivityDone(toolCall.function.name, rawArgs));
+            if (!approvalDenied) {
+              this.emitActivity(window, requestId, 'success', formatToolActivityDone(toolCall.function.name, rawArgs));
+            }
           }
 
           continue;
@@ -4167,7 +4217,9 @@ export class ModelService {
         active?.controller.signal
       );
       if (!approved) {
-        throw new Error('Nexus leader denied this tool action.');
+        const error = new Error('Nexus leader denied this tool action.');
+        error.name = 'ToolApprovalDeniedError';
+        throw error;
       }
       return;
     }

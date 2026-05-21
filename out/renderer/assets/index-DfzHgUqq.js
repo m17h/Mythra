@@ -12541,17 +12541,17 @@ function velocityPerSecond(velocity, frameDuration) {
 const calcBezier = (t, a1, a2) => (((1 - 3 * a2 + 3 * a1) * t + (3 * a2 - 6 * a1)) * t + 3 * a1) * t;
 const subdivisionPrecision = 1e-7;
 const subdivisionMaxIterations = 12;
-function binarySubdivide(x, lowerBound, upperBound, mX1, mX2) {
+function binarySubdivide(x, lowerBound2, upperBound, mX1, mX2) {
   let currentX;
   let currentT;
   let i = 0;
   do {
-    currentT = lowerBound + (upperBound - lowerBound) / 2;
+    currentT = lowerBound2 + (upperBound - lowerBound2) / 2;
     currentX = calcBezier(currentT, mX1, mX2) - x;
     if (currentX > 0) {
       upperBound = currentT;
     } else {
-      lowerBound = currentT;
+      lowerBound2 = currentT;
     }
   } while (Math.abs(currentX) > subdivisionPrecision && ++i < subdivisionMaxIterations);
   return currentT;
@@ -35070,6 +35070,10 @@ function AssistantMessageContent({
   }) });
 }
 const CHAT_BOTTOM_STICK_EPSILON_PX = 4;
+const CHAT_VIRTUALIZATION_THRESHOLD = 80;
+const CHAT_VIRTUALIZATION_OVERSCAN_PX = 1200;
+const CHAT_VIRTUALIZATION_DEFAULT_ROW_PX = 170;
+const CHAT_VIRTUALIZATION_GAP_PX = 8;
 const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
 const reasoningEffortOptions = [
   { value: "auto", label: "Auto", hint: "Use the model default" },
@@ -35606,6 +35610,34 @@ const activityLabelMap = {
 };
 const hiddenActivityKinds = /* @__PURE__ */ new Set(["info", "finished", "reasoning"]);
 const groupableActivityKinds = /* @__PURE__ */ new Set(["tool", "command", "success", "approval"]);
+function renderChunkKey(chunk) {
+  if (chunk.type === "activity-group") return chunk.id;
+  return chunk.entry.id;
+}
+function estimateRenderChunkHeight(chunk) {
+  if (chunk.type === "activity-group") return 74 + Math.min(120, chunk.items.length * 18) + CHAT_VIRTUALIZATION_GAP_PX;
+  if (chunk.type === "activity-solo") return 72 + CHAT_VIRTUALIZATION_GAP_PX;
+  const message = chunk.entry.message;
+  const textLength = Math.max(message.content.length, message.reasoning?.length ?? 0);
+  const attachmentBoost = (message.attachments?.length ?? 0) * 90;
+  return Math.min(
+    720,
+    Math.max(
+      CHAT_VIRTUALIZATION_DEFAULT_ROW_PX,
+      90 + Math.ceil(textLength / 95) * 22 + attachmentBoost
+    )
+  ) + CHAT_VIRTUALIZATION_GAP_PX;
+}
+function lowerBound(values, target) {
+  let lo = 0;
+  let hi = values.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if ((values[mid] ?? 0) < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
 function buildRenderChunks(timeline) {
   const out = [];
   let buffer = [];
@@ -35642,6 +35674,10 @@ const activityDetailsStartOpen = (kind) => kind === "error" || kind === "stopped
 function CollapsibleActivityBlock({ activity, onDetailsToggle }) {
   const [open, setOpen] = reactExports.useState(() => activityDetailsStartOpen(activity.kind));
   const label = activityLabelMap[activity.kind];
+  const handleToggle = () => {
+    setOpen((v2) => !v2);
+    onDetailsToggle?.();
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     motion.div,
     {
@@ -35649,26 +35685,39 @@ function CollapsibleActivityBlock({ activity, onDetailsToggle }) {
       className: "chat-activity-wrap",
       initial: { opacity: 0, y: 6 },
       transition: { duration: 0.2, ease: "easeOut" },
-      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "details",
-        {
-          className: `chat-activity chat-activity--collapsible chat-activity--${activity.kind}`,
-          onToggle: (e) => {
-            setOpen(e.currentTarget.open);
-            onDetailsToggle?.();
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-activity chat-activity--collapsible chat-activity--${activity.kind}${open ? " is-open" : ""}`, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            "aria-expanded": open,
+            className: "chat-activity__summary",
+            onClick: handleToggle,
+            type: "button",
+            children: label
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          motion.div,
+          {
+            initial: { height: 0, opacity: 0 },
+            animate: { height: "auto", opacity: 1 },
+            exit: { height: 0, opacity: 0 },
+            transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+            style: { overflow: "hidden" },
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-activity__body", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: activity.message }) })
           },
-          open,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "chat-activity__summary", children: label }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-activity__body", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: activity.message }) })
-          ]
-        }
-      )
+          "activity-body"
+        ) })
+      ] })
     }
   );
 }
 function ToolActivityGroup({ items, onDetailsToggle }) {
   const [open, setOpen] = reactExports.useState(false);
+  const handleToggle = () => {
+    setOpen((v2) => !v2);
+    onDetailsToggle?.();
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     motion.div,
     {
@@ -35676,22 +35725,30 @@ function ToolActivityGroup({ items, onDetailsToggle }) {
       className: "chat-activity-wrap",
       initial: { opacity: 0, y: 6 },
       transition: { duration: 0.2, ease: "easeOut" },
-      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "details",
-        {
-          className: "chat-activity chat-activity--collapsible chat-activity--grouped-tools",
-          onToggle: (e) => {
-            setOpen(e.currentTarget.open);
-            onDetailsToggle?.();
-          },
-          open,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("summary", { className: "chat-activity__summary", children: [
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-activity chat-activity--collapsible chat-activity--grouped-tools${open ? " is-open" : ""}`, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            "aria-expanded": open,
+            className: "chat-activity__summary",
+            onClick: handleToggle,
+            type: "button",
+            children: [
               "Tool activity · ",
               items.length,
               " steps"
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-activity-group__list", children: items.map((entry) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          motion.div,
+          {
+            initial: { height: 0, opacity: 0 },
+            animate: { height: "auto", opacity: 1 },
+            exit: { height: 0, opacity: 0 },
+            transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+            style: { overflow: "hidden" },
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-activity-group__list", children: items.map((entry) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
               "div",
               {
                 className: `chat-activity-group__row chat-activity-group__row--${entry.activity.kind}`,
@@ -35702,11 +35759,32 @@ function ToolActivityGroup({ items, onDetailsToggle }) {
               },
               entry.id
             )) })
-          ]
-        }
-      )
+          },
+          "tool-activity-body"
+        ) })
+      ] })
     }
   );
+}
+function VirtualMeasuredChunk({
+  children,
+  chunkKey,
+  enabled,
+  onMeasure
+}) {
+  const ref = reactExports.useRef(null);
+  reactExports.useLayoutEffect(() => {
+    if (!enabled || !ref.current) return;
+    const node2 = ref.current;
+    const measure = () => {
+      onMeasure(chunkKey, Math.ceil(node2.getBoundingClientRect().height) + CHAT_VIRTUALIZATION_GAP_PX);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(node2);
+    return () => ro.disconnect();
+  }, [chunkKey, enabled, onMeasure]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-virtual-item", ref, children });
 }
 const THINKING_LAYOUT_MS = 240;
 function ThinkingBlock({ active, reasoning }) {
@@ -36030,6 +36108,7 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
     if (!draftCostTooltip) setSendCostTooltipOpen(false);
   }, [draftCostTooltip]);
   const userPinnedToBottomRef = reactExports.useRef(true);
+  const scheduleVirtualWindowUpdateRef = reactExports.useRef(() => void 0);
   const scrollToBottomHard = reactExports.useCallback(() => {
     const node2 = scrollRef.current;
     if (!node2) return;
@@ -36076,6 +36155,7 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
     const n = scrollRef.current;
     if (!n) return;
     userPinnedToBottomRef.current = distanceFromChatBottom(n) <= CHAT_BOTTOM_STICK_EPSILON_PX;
+    scheduleVirtualWindowUpdateRef.current();
   }, []);
   const handleWheelCapture = reactExports.useCallback((e) => {
     if (e.deltaY < 0) {
@@ -36237,6 +36317,81 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
   const statusModifierClass = isStreaming || providerConnected ? "is-live" : modelCatalogSettled ? "is-disconnected" : "";
   const openRouterModelUrl = selectedProviderKind === "openrouter" && selectedModel.trim() ? `https://openrouter.ai/${selectedModel.split("/").map((part) => encodeURIComponent(part)).join("/")}` : null;
   const renderChunks = reactExports.useMemo(() => buildRenderChunks(timeline), [timeline]);
+  const chunkHeightMapRef = reactExports.useRef(/* @__PURE__ */ new Map());
+  const virtualizationRafRef = reactExports.useRef(0);
+  const [virtualScrollVersion, setVirtualScrollVersion] = reactExports.useState(0);
+  const [virtualMeasureVersion, setVirtualMeasureVersion] = reactExports.useState(0);
+  const virtualizationEnabled = renderChunks.length > CHAT_VIRTUALIZATION_THRESHOLD;
+  const renderChunkKeys = reactExports.useMemo(() => renderChunks.map(renderChunkKey), [renderChunks]);
+  reactExports.useEffect(() => {
+    const liveKeys = new Set(renderChunkKeys);
+    for (const key of chunkHeightMapRef.current.keys()) {
+      if (!liveKeys.has(key)) chunkHeightMapRef.current.delete(key);
+    }
+  }, [renderChunkKeys]);
+  const virtualPrefix = reactExports.useMemo(() => {
+    const prefix = new Array(renderChunks.length + 1).fill(0);
+    for (let i = 0; i < renderChunks.length; i += 1) {
+      const key = renderChunkKeys[i] ?? "";
+      const measured = chunkHeightMapRef.current.get(key);
+      prefix[i + 1] = (prefix[i] ?? 0) + (measured ?? estimateRenderChunkHeight(renderChunks[i]));
+    }
+    return prefix;
+  }, [renderChunks, renderChunkKeys, virtualMeasureVersion]);
+  const virtualWindow = reactExports.useMemo(() => {
+    if (!virtualizationEnabled) {
+      return {
+        enabled: false,
+        start: 0,
+        end: renderChunks.length,
+        top: 0,
+        bottom: 0
+      };
+    }
+    const node2 = scrollRef.current;
+    const scrollTop = node2?.scrollTop ?? Math.max(0, (virtualPrefix[renderChunks.length] ?? 0) - 900);
+    const viewportHeight = node2?.clientHeight ?? 900;
+    const firstVisible = lowerBound(virtualPrefix, Math.max(0, scrollTop - CHAT_VIRTUALIZATION_OVERSCAN_PX));
+    const lastVisible = lowerBound(
+      virtualPrefix,
+      scrollTop + viewportHeight + CHAT_VIRTUALIZATION_OVERSCAN_PX
+    );
+    const start = Math.max(0, Math.min(renderChunks.length, firstVisible - 1));
+    const end = Math.max(start, Math.min(renderChunks.length, lastVisible + 1));
+    const totalHeight = virtualPrefix[renderChunks.length] ?? 0;
+    return {
+      enabled: true,
+      start,
+      end,
+      top: virtualPrefix[start] ?? 0,
+      bottom: Math.max(0, totalHeight - (virtualPrefix[end] ?? totalHeight))
+    };
+  }, [renderChunks.length, virtualPrefix, virtualScrollVersion, virtualizationEnabled]);
+  const visibleRenderChunks = virtualizationEnabled ? renderChunks.slice(virtualWindow.start, virtualWindow.end) : renderChunks;
+  const scheduleVirtualWindowUpdate = reactExports.useCallback(() => {
+    if (!virtualizationEnabled) return;
+    if (virtualizationRafRef.current) return;
+    virtualizationRafRef.current = requestAnimationFrame(() => {
+      virtualizationRafRef.current = 0;
+      setVirtualScrollVersion((version) => version + 1);
+    });
+  }, [virtualizationEnabled]);
+  scheduleVirtualWindowUpdateRef.current = scheduleVirtualWindowUpdate;
+  reactExports.useEffect(() => {
+    if (!virtualizationEnabled) return;
+    scheduleVirtualWindowUpdate();
+  }, [renderChunks.length, scheduleVirtualWindowUpdate, threadHeadKey, timelineTailKey, virtualizationEnabled]);
+  reactExports.useEffect(() => {
+    return () => {
+      if (virtualizationRafRef.current) cancelAnimationFrame(virtualizationRafRef.current);
+    };
+  }, []);
+  const handleVirtualChunkMeasure = reactExports.useCallback((key, nextHeight) => {
+    const prevHeight = chunkHeightMapRef.current.get(key);
+    if (Math.abs((prevHeight ?? 0) - nextHeight) <= 2) return;
+    chunkHeightMapRef.current.set(key, nextHeight);
+    setVirtualMeasureVersion((version) => version + 1);
+  }, []);
   const chatBgLayers = chatThreadBackgroundUrl != null && chatThreadBackgroundUrl !== "" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `chat-scroll__bg ${chatThreadBackgroundBlur ? "is-blurred" : ""}`, "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       "img",
@@ -36319,18 +36474,34 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "chat-empty__title", children: isNexus ? "Nexus ready" : isWizard ? "Wizard ready" : isTalk ? "Start a conversation" : "Ready to build" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "chat-empty__desc", children: providerConnected ? isTalk ? "You're in Chat mode. Ask anything or switch to Agent for tools and file access." : isNexus ? "The leader Wizard can plan with its team and work in the shared Nexus workspace." : isWizard ? "This Wizard is connected to its own local workspace and memory documents." : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.` : "Connect in Settings → Connection, then pick a model." })
     ] }) : null,
-    renderChunks.map((chunk) => {
+    virtualWindow.enabled && virtualWindow.top > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-virtual-spacer", style: { height: virtualWindow.top } }) : null,
+    visibleRenderChunks.map((chunk) => {
+      const chunkKey = renderChunkKey(chunk);
+      const wrapVirtual = (element2) => virtualizationEnabled ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        VirtualMeasuredChunk,
+        {
+          chunkKey,
+          enabled: virtualizationEnabled,
+          onMeasure: handleVirtualChunkMeasure,
+          children: element2
+        },
+        chunkKey
+      ) : element2;
       if (chunk.type === "activity-group") {
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id);
+        return wrapVirtual(
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ToolActivityGroup, { items: chunk.items, onDetailsToggle: afterCollapsibleLayout }, chunk.id)
+        );
       }
       if (chunk.type === "activity-solo") {
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(
-          CollapsibleActivityBlock,
-          {
-            activity: chunk.entry.activity,
-            onDetailsToggle: afterCollapsibleLayout
-          },
-          chunk.entry.id
+        return wrapVirtual(
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            CollapsibleActivityBlock,
+            {
+              activity: chunk.entry.activity,
+              onDetailsToggle: afterCollapsibleLayout
+            },
+            chunk.entry.id
+          )
         );
       }
       const { entry } = chunk;
@@ -36338,55 +36509,58 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
       if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
         return null;
       }
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        motion.article,
-        {
-          animate: { opacity: 1, y: 0 },
-          className: `chat-bubble chat-bubble--${message.role}`,
-          initial: { opacity: 0, y: 8 },
-          transition: { duration: 0.22, ease: "easeOut" },
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
-              getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "button",
+      return wrapVirtual(
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          motion.article,
+          {
+            animate: { opacity: 1, y: 0 },
+            className: `chat-bubble chat-bubble--${message.role}`,
+            initial: { opacity: 0, y: 8 },
+            transition: { duration: 0.22, ease: "easeOut" },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "chat-bubble__header", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-bubble__header-title", children: message.role === "user" ? "You" : message.assistantDisplayName?.trim() || "Assistant" }),
+                getCopyableMessageText(message.content).length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
+                    "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
+                    title: copiedMessageId === entry.id ? "Copied" : "Copy",
+                    type: "button",
+                    onClick: () => void handleCopyMessage(entry.id, message.content),
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
+                  }
+                ) : null
+              ] }),
+              message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { active: message.status === "streaming", reasoning: message.reasoning.trim() }) : null,
+              message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att }, att.id)) }) : null,
+              message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                AssistantMessageContent,
                 {
-                  className: `chat-bubble__copy${copiedMessageId === entry.id ? " is-done" : ""}`,
-                  "aria-label": copiedMessageId === entry.id ? "Copied" : "Copy message",
-                  title: copiedMessageId === entry.id ? "Copied" : "Copy",
-                  type: "button",
-                  onClick: () => void handleCopyMessage(entry.id, message.content),
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(CopyMessageIcon, { copied: copiedMessageId === entry.id })
+                  completedQuizSelections: completedQuizSelectionsAfterMessage(chatMessages, message.id),
+                  onSessionModeToggle,
+                  onSubmitQuizAnswers,
+                  onWebSearchChange,
+                  quizSubmitDisabled: message.status === "streaming",
+                  sessionMode,
+                  sessionModeToggleDisabled,
+                  mentionNames,
+                  text: message.content,
+                  webSearch,
+                  webSearchDisabled
                 }
-              ) : null
-            ] }),
-            message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { active: message.status === "streaming", reasoning: message.reasoning.trim() }) : null,
-            message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att }, att.id)) }) : null,
-            message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-              AssistantMessageContent,
-              {
-                completedQuizSelections: completedQuizSelectionsAfterMessage(chatMessages, message.id),
-                onSessionModeToggle,
-                onSubmitQuizAnswers,
-                onWebSearchChange,
-                quizSubmitDisabled: message.status === "streaming",
-                sessionMode,
-                sessionModeToggleDisabled,
-                mentionNames,
-                text: message.content,
-                webSearch,
-                webSearchDisabled
-              }
-            ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { mentionNames, text: getCopyableMessageText(message.content) }) }) : null,
-            showModelOutputCosts && message.role === "assistant" && message.costEstimate ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-bubble__cost", title: messageCostTitle(message.costEstimate), children: [
-              "Estimated cost: ",
-              message.costEstimate.display
-            ] }) : null
-          ]
-        },
-        entry.id
+              ) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChatMarkdown, { mentionNames, text: getCopyableMessageText(message.content) }) }) : null,
+              showModelOutputCosts && message.role === "assistant" && message.costEstimate ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chat-bubble__cost", title: messageCostTitle(message.costEstimate), children: [
+                "Estimated cost: ",
+                message.costEstimate.display
+              ] }) : null
+            ]
+          },
+          entry.id
+        )
       );
     }),
+    virtualWindow.enabled && virtualWindow.bottom > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-virtual-spacer", style: { height: virtualWindow.bottom } }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "chat-scroll__bottom", ref: bottomRef })
   ] }) });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "chat-panel", children: [
@@ -38289,6 +38463,7 @@ function SettingsPanel({
   onPresetPersist,
   onRefreshModels,
   onOpenConnectionHelp,
+  onOpenModelRecommendations,
   onOpenAppUpdatesInfo,
   onOpenWebSearchInfo,
   onOpenSystemPromptInfo,
@@ -38416,22 +38591,35 @@ function SettingsPanel({
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section settings-section--connection", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Connection" }),
-          onOpenConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-cluster settings-section__title-cluster--split", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section__title-left", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title settings-section__title--cluster", children: "Connection" }),
+            onOpenConnectionHelp ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "settings-info-button",
+                type: "button",
+                "aria-label": "About OpenRouter, LM Studio, Ollama, and Mythra",
+                title: "OpenRouter, LM Studio, and Ollama in Mythra",
+                onClick: onOpenConnectionHelp,
+                children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 16v-4.5M12 8h.01", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" })
+                ] })
+              }
+            ) : null
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section__title-actions", children: onOpenModelRecommendations ? /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
-              className: "settings-info-button",
+              "aria-label": "Open Mythra recommended AI models",
+              className: "settings-mini-action",
+              onClick: onOpenModelRecommendations,
+              title: "Mythra recommended AI models",
               type: "button",
-              "aria-label": "About OpenRouter, LM Studio, Ollama, and Mythra",
-              title: "OpenRouter, LM Studio, and Ollama in Mythra",
-              onClick: onOpenConnectionHelp,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "9", stroke: "currentColor", strokeWidth: "2" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 16v-4.5M12 8h.01", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round" })
-              ] })
+              children: "Models"
             }
-          ) : null
+          ) : null })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field-row", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
@@ -39251,6 +39439,15 @@ const providerOptions$2 = [
   { value: "ollama", label: "Ollama" }
 ];
 const pathLabel$1 = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+const formatTokenEstimate = (tokens) => tokens >= 1e3 ? `${(tokens / 1e3).toFixed(tokens >= 1e4 ? 0 : 1)}k` : tokens.toLocaleString();
+const wizardDocumentPathKey$1 = (path2) => path2.replace(/\\/g, "/").replace(/\/+$/, "");
+function mergeWizardDocumentPreferences$1(fresh, previous2) {
+  const previousByPath = new Map(previous2.map((doc) => [wizardDocumentPathKey$1(doc.path), doc]));
+  return fresh.map((doc) => {
+    const existing = previousByPath.get(wizardDocumentPathKey$1(doc.path));
+    return { ...doc, autoInject: existing?.autoInject ?? doc.autoInject ?? true };
+  });
+}
 function WizardSettingsPanel({
   wizard,
   settings,
@@ -39268,6 +39465,7 @@ function WizardSettingsPanel({
   const [localModels, setLocalModels] = reactExports.useState(modelOptions);
   const [nameDraft, setNameDraft] = reactExports.useState(wizard.name);
   const [markdownDocumentsExpanded, setMarkdownDocumentsExpanded] = reactExports.useState(false);
+  const [markdownTokenEstimate, setMarkdownTokenEstimate] = reactExports.useState({ loading: true, tokens: 0, readable: 0, included: 0, total: 0 });
   reactExports.useEffect(() => {
     setLocalModels(modelOptions);
   }, [modelOptions]);
@@ -39291,10 +39489,11 @@ function WizardSettingsPanel({
       try {
         const docs2 = await window.electronAPI.listWizardDocuments(wizard.workspaceRoot);
         if (cancelled) return;
+        const docsWithPreferences = mergeWizardDocumentPreferences$1(docs2, wizard.documents);
         const prevKey = wizard.documents.map((d) => d.path).join("\0");
         const nextKey = docs2.map((d) => d.path).join("\0");
         if (prevKey !== nextKey) {
-          onChange({ ...wizard, documents: docs2 });
+          onChange({ ...wizard, documents: docsWithPreferences });
         }
       } catch {
       }
@@ -39303,6 +39502,61 @@ function WizardSettingsPanel({
       cancelled = true;
     };
   }, [wizard.workspaceRoot]);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    const markdownDocs = wizard.documents.filter((doc) => /\.md$/i.test(doc.path));
+    const includedDocs = markdownDocs.filter((doc) => doc.autoInject !== false);
+    setMarkdownTokenEstimate((prev) => ({
+      loading: includedDocs.length > 0,
+      tokens: includedDocs.length > 0 ? prev.tokens : 0,
+      readable: includedDocs.length > 0 ? prev.readable : 0,
+      included: includedDocs.length,
+      total: markdownDocs.length
+    }));
+    if (includedDocs.length === 0) return () => {
+      cancelled = true;
+    };
+    void (async () => {
+      let tokens = 0;
+      let readable = 0;
+      await Promise.all(
+        includedDocs.map(async (doc) => {
+          try {
+            const file = await window.electronAPI.readWizardDocument(wizard.workspaceRoot, doc.path);
+            tokens += roughTokensFromText(file.content);
+            readable += 1;
+          } catch {
+          }
+        })
+      );
+      if (!cancelled) {
+        setMarkdownTokenEstimate({
+          loading: false,
+          tokens,
+          readable,
+          included: includedDocs.length,
+          total: markdownDocs.length
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wizard.documents, wizard.workspaceRoot]);
+  const markdownDocumentCount = wizard.documents.filter((doc) => /\.md$/i.test(doc.path)).length;
+  const includedMarkdownDocumentCount = wizard.documents.filter(
+    (doc) => /\.md$/i.test(doc.path) && doc.autoInject !== false
+  ).length;
+  const toggleDocumentAutoInject = (path2, autoInject) => {
+    onChange({
+      ...wizard,
+      documents: wizard.documents.map(
+        (doc) => wizardDocumentPathKey$1(doc.path) === wizardDocumentPathKey$1(path2) ? { ...doc, autoInject } : doc
+      )
+    });
+  };
+  const hasTokenEstimateValue = markdownTokenEstimate.tokens > 0 || markdownTokenEstimate.readable > 0;
+  const markdownTokenEstimateText = markdownTokenEstimate.loading && !hasTokenEstimateValue ? "Calculating..." : `${formatTokenEstimate(markdownTokenEstimate.tokens)} tokens`;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel settings-panel", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-panel__header", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "settings-panel__title", children: "Wizard" }),
@@ -39403,70 +39657,102 @@ function WizardSettingsPanel({
           ) : /* @__PURE__ */ jsxRuntimeExports.jsx("input", { readOnly: true, value: wizard.model || "No model selected" })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${markdownDocumentsExpanded ? "is-expanded" : ""}`, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            className: "chat-thread-options__header",
-            onClick: () => setMarkdownDocumentsExpanded((v2) => !v2),
-            type: "button",
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "svg",
-                  {
-                    className: "chat-thread-options__chevron",
-                    width: "12",
-                    height: "12",
-                    viewBox: "0 0 12 12",
-                    fill: "none",
-                    "aria-hidden": true,
-                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                      "path",
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-doc-token-meter", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-doc-token-meter__copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Markdown context estimate" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: markdownTokenEstimateText })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-token-meter__meta", children: markdownTokenEstimate.total === 0 ? "No Markdown documents found" : markdownTokenEstimate.loading ? `${markdownTokenEstimate.included}/${markdownTokenEstimate.total} docs included` : markdownTokenEstimate.included === 0 ? `0/${markdownTokenEstimate.total} docs included` : `${markdownTokenEstimate.readable}/${markdownTokenEstimate.included} included docs readable (${markdownTokenEstimate.total} available)` })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `chat-thread-options chat-thread-options--settings ${markdownDocumentsExpanded ? "is-expanded" : ""}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: "chat-thread-options__header",
+              onClick: () => setMarkdownDocumentsExpanded((v2) => !v2),
+              type: "button",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__header-left", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "svg",
+                    {
+                      className: "chat-thread-options__chevron",
+                      width: "12",
+                      height: "12",
+                      viewBox: "0 0 12 12",
+                      fill: "none",
+                      "aria-hidden": true,
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "path",
+                        {
+                          d: "M4 2.5L7.5 6 4 9.5",
+                          stroke: "currentColor",
+                          strokeWidth: "1.4",
+                          strokeLinecap: "round",
+                          strokeLinejoin: "round"
+                        }
+                      )
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Markdown documents" })
+                ] }),
+                !markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__badge", children: [
+                  includedMarkdownDocumentCount,
+                  "/",
+                  markdownDocumentCount,
+                  " docs"
+                ] }) : null
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            motion.div,
+            {
+              initial: { height: 0, opacity: 0 },
+              animate: { height: "auto", opacity: 1 },
+              exit: { height: 0, opacity: 0 },
+              transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
+              style: { overflow: "hidden" },
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-thread-options__body", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-list", children: wizard.documents.map((doc) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "div",
+                {
+                  className: `wizard-doc-list__item ${doc.autoInject !== false ? "is-included" : "is-excluded"}`,
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "wizard-doc-list__toggle", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          checked: doc.autoInject !== false,
+                          onChange: (e) => toggleDocumentAutoInject(doc.path, e.target.checked),
+                          type: "checkbox"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "wizard-doc-list__text", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: doc.autoInject !== false ? "Auto-injected" : "Not injected" })
+                      ] }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
                       {
-                        d: "M4 2.5L7.5 6 4 9.5",
-                        stroke: "currentColor",
-                        strokeWidth: "1.4",
-                        strokeLinecap: "round",
-                        strokeLinejoin: "round"
+                        className: "wizard-doc-list__open",
+                        onClick: () => onOpenDocument(doc.path),
+                        title: `Open ${doc.path}`,
+                        type: "button",
+                        children: "Open"
                       }
                     )
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thread-options__title", children: "Markdown documents" })
-              ] }),
-              !markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chat-thread-options__badge", children: [
-                wizard.documents.length,
-                " docs"
-              ] }) : null
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: markdownDocumentsExpanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          motion.div,
-          {
-            initial: { height: 0, opacity: 0 },
-            animate: { height: "auto", opacity: 1 },
-            exit: { height: 0, opacity: 0 },
-            transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] },
-            style: { overflow: "hidden" },
-            children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-thread-options__body", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-doc-list", children: wizard.documents.map((doc) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                className: "wizard-doc-list__item",
-                onClick: () => onOpenDocument(doc.path),
-                type: "button",
-                children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
-                ]
-              },
-              doc.path
-            )) }) })
-          },
-          "wizard-markdown-documents"
-        ) : null })
-      ] }) }),
+                  ]
+                },
+                doc.path
+              )) }) })
+            },
+            "wizard-markdown-documents"
+          ) : null })
+        ] })
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { className: "settings-section__title", children: "Agent autonomy" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: `toggle-row toggle-row--warning ${wizard.fullAccess ? "is-active" : ""}`, children: [
@@ -41104,6 +41390,14 @@ function pathJoinFs(a, b) {
   return `${x}/${y}`;
 }
 const pathsEqual = (a, b) => a.replace(/\\/g, "/").replace(/\/+$/, "") === b.replace(/\\/g, "/").replace(/\/+$/, "");
+const wizardDocumentPathKey = (path2) => path2.replace(/\\/g, "/").replace(/\/+$/, "");
+function mergeWizardDocumentPreferences(fresh, previous2) {
+  const previousByPath = new Map((previous2 ?? []).map((doc) => [wizardDocumentPathKey(doc.path), doc]));
+  return fresh.map((doc) => {
+    const existing = previousByPath.get(wizardDocumentPathKey(doc.path));
+    return { ...doc, autoInject: existing?.autoInject ?? doc.autoInject ?? true };
+  });
+}
 function resolveWizardProfileForNexusTeam(diskWizard, metaWizard, nexusSharedRoot) {
   const trimmedShared = nexusSharedRoot.trim();
   const mistakenForShared = (w) => Boolean(trimmedShared && w?.workspaceRoot?.trim() && pathsEqual(w.workspaceRoot, trimmedShared));
@@ -41203,6 +41497,161 @@ const providerOptions = [
 ];
 const mediaProviderOptions = providerOptions.filter((option) => option.value !== "ollama");
 const providerLabel = (kind) => kind === "openrouter" ? "OpenRouter" : kind === "ollama" ? "Ollama" : "LM Studio";
+const RECOMMENDED_MODEL_COLUMNS = [
+  { key: "fast", label: "Fast" },
+  { key: "toolCalling", label: "Accurate tools" },
+  { key: "reasoning", label: "Deep reasoning" },
+  { key: "coding", label: "Coding" },
+  { key: "longContext", label: "Long context" },
+  { key: "value", label: "Good value" }
+];
+const MYTHRA_RECOMMENDED_MODELS = [
+  {
+    name: "DeepSeek V4 Flash",
+    id: "deepseek/deepseek-v4-flash",
+    bestFor: "Responsive, low-cost coding and research support.",
+    ratings: { fast: true, toolCalling: true, reasoning: true, coding: true, longContext: true, value: true }
+  },
+  {
+    name: "Grok 4.3",
+    id: "x-ai/grok-4.3",
+    bestFor: "Strong accessible frontier chat, coding, and agentic work.",
+    ratings: { fast: true, toolCalling: true, reasoning: true, coding: true, longContext: true, value: true }
+  },
+  {
+    name: "Kimi K2.6",
+    id: "moonshotai/kimi-k2.6",
+    bestFor: "Coding-heavy UI work and multi-agent style decomposition.",
+    ratings: { fast: false, toolCalling: true, reasoning: true, coding: true, longContext: false, value: true }
+  }
+];
+function ModelRatingMark({ value, label }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "span",
+    {
+      "aria-label": value ? `${label}: recommended` : `${label}: not recommended`,
+      className: `model-recommendations__mark ${value ? "is-yes" : "is-no"}`,
+      title: value ? `${label}: recommended` : `${label}: not recommended`,
+      children: value ? "✓" : "×"
+    }
+  );
+}
+function ModelRecommendationsDialog({
+  favoriteIds,
+  onClose,
+  onSelectModel,
+  onToggleFavorite,
+  selectedModelId
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      animate: { opacity: 1 },
+      className: "app-dialog-backdrop",
+      exit: { opacity: 0 },
+      initial: { opacity: 0 },
+      onClick: onClose,
+      role: "presentation",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        motion.div,
+        {
+          "aria-describedby": "model-recommendations-desc",
+          "aria-labelledby": "model-recommendations-title",
+          "aria-modal": "true",
+          animate: { opacity: 1, scale: 1, y: 0 },
+          className: "app-dialog app-dialog--scrollable model-recommendations-dialog",
+          exit: { opacity: 0, scale: 0.98, y: 8 },
+          initial: { opacity: 0, scale: 0.98, y: 8 },
+          onClick: (e) => e.stopPropagation(),
+          role: "dialog",
+          transition: { duration: 0.18, ease: "easeOut" },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Model Guide" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "model-recommendations-title", children: "Mythra recommended AI models" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: "model-recommendations-desc", children: "Mythra specifically chooses models that are cheap and effective. These recommendations prioritize usefulness and accessibility for users, then balance speed, tool calling, reasoning, coding, and context size. Local LM Studio and Ollama recommendations depend on your hardware and loaded model files." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "model-recommendations__table-wrap", role: "region", "aria-label": "Recommended model comparison", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("table", { className: "model-recommendations__table", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("thead", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("th", { scope: "col", children: "Model" }),
+                RECOMMENDED_MODEL_COLUMNS.map((column) => /* @__PURE__ */ jsxRuntimeExports.jsx("th", { scope: "col", children: column.label }, column.key)),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("th", { scope: "col", children: "Best fit" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("tbody", { children: MYTHRA_RECOMMENDED_MODELS.map((model) => /* @__PURE__ */ jsxRuntimeExports.jsxs("tr", { className: model.id === selectedModelId ? "is-selected" : "", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("th", { scope: "row", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "model-recommendations__identity", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      "aria-pressed": favoriteIds.includes(model.id),
+                      "aria-label": favoriteIds.includes(model.id) ? `Remove ${model.name} from favorites` : `Favorite ${model.name}`,
+                      className: "model-recommendations__favorite",
+                      onClick: () => onToggleFavorite(model.id),
+                      title: favoriteIds.includes(model.id) ? "Remove from favorites" : "Favorite this model",
+                      type: "button",
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "path",
+                        {
+                          d: "M12 2.5l2.4 5.3 5.8.5-4.3 3.7 1.3 5.6L12 16.1 6.8 17.5l1.3-5.6-4.3-3.7 5.8-.5L12 2.5z",
+                          stroke: "currentColor",
+                          strokeLinejoin: "round",
+                          fill: favoriteIds.includes(model.id) ? "currentColor" : "none",
+                          strokeWidth: "1.4"
+                        }
+                      ) })
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "button",
+                    {
+                      className: "model-recommendations__model-button",
+                      onClick: () => onSelectModel(model.id),
+                      title: `Use ${model.name} in Connection settings`,
+                      type: "button",
+                      children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model-recommendations__name", children: model.name }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: model.id })
+                      ]
+                    }
+                  )
+                ] }) }),
+                RECOMMENDED_MODEL_COLUMNS.map((column) => /* @__PURE__ */ jsxRuntimeExports.jsx("td", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ModelRatingMark, { label: column.label, value: model.ratings[column.key] }) }, column.key)),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("td", { className: "model-recommendations__fit", children: model.bestFor })
+              ] }, model.id)) })
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-dialog__links", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "a",
+                {
+                  className: "app-dialog__link",
+                  href: "https://openrouter.ai/collections/tool-calling-models",
+                  onClick: (e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl("https://openrouter.ai/collections/tool-calling-models");
+                  },
+                  rel: "noreferrer",
+                  children: "OpenRouter tool-calling models"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": true, className: "app-dialog__links-sep", children: "·" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "a",
+                {
+                  className: "app-dialog__link",
+                  href: "https://openrouter.ai/models",
+                  onClick: (e) => {
+                    e.preventDefault();
+                    void window.electronAPI.openExternalUrl("https://openrouter.ai/models");
+                  },
+                  rel: "noreferrer",
+                  children: "Full model catalog"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn btn--primary", onClick: onClose, type: "button", children: "Done" }) })
+          ]
+        }
+      )
+    }
+  );
+}
 const needsSearchApiKeyNotice = (settings) => {
   if (settings.search.provider === "duckduckgo") return false;
   const hasAny = settings.search.tavilyApiKey.trim().length > 0 || settings.search.braveApiKey.trim().length > 0;
@@ -41303,7 +41752,8 @@ const buildWizardDocsContext = async (wizard) => {
   } catch {
     return { message: null, loaded: [] };
   }
-  const mdDocs = docs2.filter((doc) => /\.md$/i.test(doc.path));
+  const docsWithPreferences = mergeWizardDocumentPreferences(docs2, wizard.documents);
+  const mdDocs = docsWithPreferences.filter((doc) => /\.md$/i.test(doc.path) && doc.autoInject !== false);
   if (mdDocs.length === 0) return { message: null, loaded: [] };
   const loaded = [];
   const parts = await Promise.all(
@@ -41327,7 +41777,7 @@ ${file.content}`;
       id: `wizard-docs-${Date.now()}`,
       role: "system",
       content: [
-        "Wizard Markdown workspace documents are injected below (every .md file Mythra could find under this workspace). Treat them as current private context; use read_file if something may have changed since this injection.",
+        "Wizard Markdown workspace documents selected for auto-injection are included below. Treat them as current private context; use read_file if something may have changed since this injection or if another listed document is needed on demand.",
         ...parts
       ].join("\n\n"),
       status: "done"
@@ -41381,6 +41831,10 @@ const diffPromptLines = (before, after) => {
   }
   return { left, right };
 };
+const diffLineSummary = (diff) => ({
+  added: diff.right.filter((line) => line.kind === "add").length,
+  removed: diff.left.filter((line) => line.kind === "remove").length
+});
 const stripNexusRelayControlMarkers = (raw) => raw.replace(/\[\s*NEXUS_(?:END|CONTINUE)\s*\]/gi, "").trimEnd();
 const parseNexusRelayWantsEnd = (raw) => /\[\s*NEXUS_END\s*\]/i.test(raw);
 const userRequestsEveryNexusWizard = (text2) => /\b(all|every|each)\s+(?:of\s+(?:you|the\s+)?|the\s+)?(?:wizards?|models?|members?|teammates?|agents?)\b/i.test(text2) || /\b(?:you\s+guys|you\s+all|y['’]?all|the\s+team|the\s+group)\b/i.test(text2) || /\b(?:everyone|everybody)'?s\s+(?:thoughts?|opinions?|perspectives?|takes?)\b/i.test(text2) || /\b(?:thoughts?|opinions?|perspectives?|takes?)\s+(?:from|of)\s+(?:everyone|everybody|the\s+team|all\s+of\s+you)\b/i.test(text2) || /\b(?:everyone|everybody)\b/i.test(text2) || /\beach\s+of\s+you\b/i.test(text2);
@@ -41733,6 +42187,7 @@ function App() {
   const [showSystemPromptModal, setShowSystemPromptModal] = reactExports.useState(false);
   const [showSystemPromptHelp, setShowSystemPromptHelp] = reactExports.useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = reactExports.useState(false);
+  const [showModelRecommendations, setShowModelRecommendations] = reactExports.useState(false);
   const [showAppUpdatesInfo, setShowAppUpdatesInfo] = reactExports.useState(false);
   const [updateCheck, setUpdateCheck] = reactExports.useState(null);
   const [updateToast, setUpdateToast] = reactExports.useState(null);
@@ -42702,7 +43157,10 @@ function App() {
             if (wid && cur && pathsEqual(cur.workspaceRoot, root2)) {
               const full = await window.electronAPI.loadChat(wid);
               if (full?.kind === "wizard" && full.wizard) {
-                const merged = { ...full.wizard, documents: docs2 };
+                const merged = {
+                  ...full.wizard,
+                  documents: mergeWizardDocumentPreferences(docs2, full.wizard.documents)
+                };
                 setWizardDraft(merged);
                 wizardDraftRef.current = merged;
                 await window.electronAPI.saveChat({ ...full, wizard: merged, updatedAt: Date.now() });
@@ -43094,6 +43552,54 @@ function App() {
       setSettingsStatus(`Could not save settings to disk: ${m}`);
     }
   };
+  const selectRecommendedModel = reactExports.useCallback(
+    (modelId) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const next = syncProviderSystemPromptFields(
+        {
+          ...current,
+          selectedProvider: "openrouter",
+          providers: {
+            ...current.providers,
+            openrouter: {
+              ...current.providers.openrouter,
+              model: modelId
+            }
+          }
+        },
+        current.selectedProvider
+      );
+      handleSettingsPanelChange(next);
+      setShowModelRecommendations(false);
+      setSettingsStatus(`Selected ${modelId}.`);
+    },
+    [handleSettingsPanelChange]
+  );
+  const toggleRecommendedModelFavorite = reactExports.useCallback(
+    (modelId) => {
+      const current = settingsRef.current;
+      if (!current) return;
+      const baseFav = current.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+      const nextSet = new Set(baseFav.openrouter ?? []);
+      if (nextSet.has(modelId)) nextSet.delete(modelId);
+      else nextSet.add(modelId);
+      const next = {
+        ...current,
+        ui: {
+          ...current.ui,
+          favoriteModels: {
+            ...baseFav,
+            openrouter: [...nextSet].sort((a, b) => a.localeCompare(b))
+          }
+        }
+      };
+      settingsRef.current = next;
+      setSettings(next);
+      void persistAfterPresetAction(next);
+    },
+    []
+  );
   const describeUpdateProgress = reactExports.useCallback((progress2) => {
     const total = progress2.total > 0 ? `${Math.round(progress2.total / 1024 / 1024)} MB` : "update";
     const speed = progress2.bytesPerSecond > 0 ? `${Math.round(progress2.bytesPerSecond / 1024)} KB/s` : "";
@@ -44016,7 +44522,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
           }
         }
         try {
-          profile = { ...profile, documents: await window.electronAPI.listWizardDocuments(profile.workspaceRoot) };
+          const docs2 = await window.electronAPI.listWizardDocuments(profile.workspaceRoot);
+          profile = { ...profile, documents: mergeWizardDocumentPreferences(docs2, profile.documents) };
         } catch {
         }
       }
@@ -44597,7 +45104,8 @@ Project mission: ${full.nexus.mission.trim()}` : "";
     }
     const parentWizardChat = activeDiskChat?.kind === "wizard-session" && activeDiskChat.wizardId ? await window.electronAPI.loadChat(activeDiskChat.wizardId) : activeDiskChat?.kind === "wizard" ? activeDiskChat : null;
     const parentNexusChat = activeDiskChat?.kind === "nexus-session" && activeDiskChat.nexusId ? await window.electronAPI.loadChat(activeDiskChat.nexusId) : activeDiskChat?.kind === "nexus" ? activeDiskChat : null;
-    const wizardForStream = parentWizardChat?.kind === "wizard" ? parentWizardChat.wizard ?? null : activeChatMeta?.kind === "wizard" ? activeChatMeta.wizard ?? null : null;
+    const savedWizardForStream = parentWizardChat?.kind === "wizard" ? parentWizardChat.wizard ?? null : activeChatMeta?.kind === "wizard" ? activeChatMeta.wizard ?? null : null;
+    const wizardForStream = savedWizardForStream && parentWizardChat?.id === activeWizardMeta?.id && wizardDraftRef.current ? wizardDraftRef.current : savedWizardForStream;
     const nexusForStream = parentNexusChat?.kind === "nexus" ? parentNexusChat.nexus ?? null : null;
     let nexusTeam = [];
     if (nexusForStream) {
@@ -45393,6 +45901,7 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
   const isDarwin = typeof window !== "undefined" && window.electronAPI?.platform === "darwin";
   const wizardPromptDiff = wizardPromptApproval ? diffPromptLines(wizardPromptApproval.before, wizardPromptApproval.after) : { left: [], right: [] };
   const toolApprovalDiff = toolApprovalRequest && typeof toolApprovalRequest.diffBefore === "string" && typeof toolApprovalRequest.diffAfter === "string" ? diffPromptLines(toolApprovalRequest.diffBefore, toolApprovalRequest.diffAfter) : null;
+  const toolApprovalDiffSummary = toolApprovalDiff ? diffLineSummary(toolApprovalDiff) : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "background-grid" }),
     updateProgress?.active ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-update-progress", role: "status", "aria-live": "polite", children: [
@@ -45891,6 +46400,18 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-dialog__kicker", children: "Approval required" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: toolApprovalRequest.title }),
               toolApprovalDiff ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                toolApprovalDiffSummary ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wizard-prompt-approval__line-summary", "aria-label": "Change summary", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "wizard-prompt-approval__line-summary-pill wizard-prompt-approval__line-summary-pill--add", children: [
+                    "+",
+                    toolApprovalDiffSummary.added,
+                    " lines added"
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "wizard-prompt-approval__line-summary-pill wizard-prompt-approval__line-summary-pill--remove", children: [
+                    "-",
+                    toolApprovalDiffSummary.removed,
+                    " lines removed"
+                  ] })
+                ] }) : null,
                 /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wizard-prompt-approval__intro", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: "tool-approval-desc", children: toolApprovalRequest.detail }) }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { "aria-describedby": "tool-approval-desc", className: "wizard-prompt-approval__compare", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
@@ -46062,6 +46583,16 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
         )
       }
     ) : null }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { children: showModelRecommendations ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ModelRecommendationsDialog,
+      {
+        favoriteIds: settings?.ui.favoriteModels?.openrouter ?? [],
+        onClose: () => setShowModelRecommendations(false),
+        onSelectModel: selectRecommendedModel,
+        onToggleFavorite: toggleRecommendedModelFavorite,
+        selectedModelId: settings?.providers.openrouter.model ?? ""
+      }
+    ) : null }),
     isDarwin ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "aria-hidden": true, className: "app-titlebar" }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "layout layout--atomic", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -46085,9 +46616,9 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.7.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.8.0"}`, children: [
                   "v",
-                  "0.7.0"
+                  "0.8.0"
                 ] })
               ] })
             ] }),
@@ -47393,7 +47924,7 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.7.0",
+                        appVersion: "0.8.0",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,
@@ -47403,6 +47934,7 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
                         onDownloadUpdate: () => void startUpdateInstall(),
                         onOpenAppUpdatesInfo: () => setShowAppUpdatesInfo(true),
                         onOpenConnectionHelp: () => setShowConnectionHelp(true),
+                        onOpenModelRecommendations: () => setShowModelRecommendations(true),
                         onOpenSystemPromptInfo: () => setShowSystemPromptHelp(true),
                         onOpenSystemPromptModal: () => setShowSystemPromptModal(true),
                         onOpenWebSearchInfo: () => setShowWebSearchNotice(true),
