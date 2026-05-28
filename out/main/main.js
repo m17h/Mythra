@@ -386,7 +386,7 @@ function syncProviderSystemPromptFields(settings, sourceProvider = settings.sele
 }
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
-  { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
+  { id: "sunset-terminal", name: "Dark Terminal", preview: "Gray / Slate / Charcoal" },
   { id: "ice-station", name: "Ice Station", preview: "Blue / Mint / Graphite" },
   { id: "kiwi", name: "Kiwi", preview: "Green / Teal / Graphite (light)" }
 ];

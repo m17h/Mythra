@@ -966,6 +966,7 @@ function ThinkingBlock({ active, reasoning }: { active: boolean; reasoning: stri
   const [open, setOpen] = useState(false);
   const summaryRef = useRef<HTMLButtonElement>(null);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasReasoning = reasoning.trim().length > 0;
 
   useEffect(
     () => () => {
@@ -1013,17 +1014,16 @@ function ThinkingBlock({ active, reasoning }: { active: boolean; reasoning: stri
     <div className={`chat-thinking ${open ? 'is-open' : ''}${active ? ' is-active' : ''}`}>
       <button
         ref={summaryRef}
-        className="chat-thinking__summary"
-        onClick={() => {
-          handleToggleThinking();
-        }}
+        aria-disabled={!hasReasoning}
+        className={`chat-thinking__summary${hasReasoning ? '' : ' is-empty'}`}
+        onClick={hasReasoning ? handleToggleThinking : undefined}
         type="button"
       >
-        <span className="chat-thinking__chevron" aria-hidden>&#x25B6;</span>
-        <span className="chat-thinking__label">Thinking</span>
+        {hasReasoning ? <span className="chat-thinking__chevron" aria-hidden>&#x25B6;</span> : null}
+        <span className="chat-thinking__label">{hasReasoning ? 'Thinking' : 'Working'}</span>
       </button>
       <AnimatePresence initial={false}>
-        {open && (
+        {open && hasReasoning && (
           <motion.div
             key="thinking-body"
             initial={{ height: 0, opacity: 0 }}
@@ -1807,15 +1807,11 @@ export function ChatPanel({
 
           const { entry } = chunk;
           const { message } = entry;
-          if (
+          const assistantWaitingForFirstOutput =
             message.role === 'assistant' &&
             message.status === 'streaming' &&
             !message.content.trim() &&
-            !message.attachments?.length &&
-            !message.reasoning?.trim()
-          ) {
-            return null;
-          }
+            !message.attachments?.length;
 
           return wrapVirtual(
             <motion.article
@@ -1843,8 +1839,8 @@ export function ChatPanel({
                   </button>
                 ) : null}
               </header>
-              {message.role === 'assistant' && message.reasoning?.trim() ? (
-                <ThinkingBlock active={message.status === 'streaming'} reasoning={message.reasoning.trim()} />
+              {message.role === 'assistant' && (message.reasoning?.trim() || assistantWaitingForFirstOutput) ? (
+                <ThinkingBlock active={message.status === 'streaming'} reasoning={message.reasoning?.trim() ?? ''} />
               ) : null}
               {message.attachments?.length ? (
                 <div className="chat-attachments">

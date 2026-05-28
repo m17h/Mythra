@@ -35791,6 +35791,7 @@ function ThinkingBlock({ active, reasoning }) {
   const [open, setOpen] = reactExports.useState(false);
   const summaryRef = reactExports.useRef(null);
   const settleTimerRef = reactExports.useRef(null);
+  const hasReasoning = reasoning.trim().length > 0;
   reactExports.useEffect(
     () => () => {
       if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
@@ -35832,18 +35833,17 @@ function ThinkingBlock({ active, reasoning }) {
       "button",
       {
         ref: summaryRef,
-        className: "chat-thinking__summary",
-        onClick: () => {
-          handleToggleThinking();
-        },
+        "aria-disabled": !hasReasoning,
+        className: `chat-thinking__summary${hasReasoning ? "" : " is-empty"}`,
+        onClick: hasReasoning ? handleToggleThinking : void 0,
         type: "button",
         children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__chevron", "aria-hidden": true, children: "▶" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__label", children: "Thinking" })
+          hasReasoning ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__chevron", "aria-hidden": true, children: "▶" }) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chat-thinking__label", children: hasReasoning ? "Thinking" : "Working" })
         ]
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open && /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(AnimatePresence, { initial: false, children: open && hasReasoning && /* @__PURE__ */ jsxRuntimeExports.jsx(
       motion.div,
       {
         initial: { height: 0, opacity: 0 },
@@ -36506,9 +36506,7 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
       }
       const { entry } = chunk;
       const { message } = entry;
-      if (message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length && !message.reasoning?.trim()) {
-        return null;
-      }
+      const assistantWaitingForFirstOutput = message.role === "assistant" && message.status === "streaming" && !message.content.trim() && !message.attachments?.length;
       return wrapVirtual(
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           motion.article,
@@ -36532,7 +36530,7 @@ ${draftCostTooltip.title}` : "Queue message for next teammate turn";
                   }
                 ) : null
               ] }),
-              message.role === "assistant" && message.reasoning?.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { active: message.status === "streaming", reasoning: message.reasoning.trim() }) : null,
+              message.role === "assistant" && (message.reasoning?.trim() || assistantWaitingForFirstOutput) ? /* @__PURE__ */ jsxRuntimeExports.jsx(ThinkingBlock, { active: message.status === "streaming", reasoning: message.reasoning?.trim() ?? "" }) : null,
               message.attachments?.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-attachments", children: message.attachments.map((att) => /* @__PURE__ */ jsxRuntimeExports.jsx(AttachmentPreview, { attachment: att }, att.id)) }) : null,
               message.content !== "" || message.status === "done" || message.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "chat-bubble__text", children: message.role === "assistant" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                 AssistantMessageContent,
@@ -37961,7 +37959,7 @@ const defaultSettings = {
 };
 const themeCatalog = [
   { id: "neon-grid", name: "Neon Grid", preview: "Cyan / Lime / Deep Navy" },
-  { id: "sunset-terminal", name: "Sunset Terminal", preview: "Coral / Amber / Plum" },
+  { id: "sunset-terminal", name: "Dark Terminal", preview: "Gray / Slate / Charcoal" },
   { id: "ice-station", name: "Ice Station", preview: "Blue / Mint / Graphite" },
   { id: "kiwi", name: "Kiwi", preview: "Green / Teal / Graphite (light)" }
 ];
@@ -39729,10 +39727,9 @@ function WizardSettingsPanel({
                         }
                       ),
                       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "wizard-doc-list__text", children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: doc.label }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() }),
                         /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: doc.autoInject !== false ? "Auto-injected" : "Not injected" })
-                      ] }),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.path.split(/[\\/]/).pop() })
+                      ] })
                     ] }),
                     /* @__PURE__ */ jsxRuntimeExports.jsx(
                       "button",
@@ -46616,9 +46613,9 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
                   },
                   settings?.ui.themeId ?? "default"
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.8.0"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "sidebar-brand__version", title: `Mythra ${"0.8.1"}`, children: [
                   "v",
-                  "0.8.0"
+                  "0.8.1"
                 ] })
               ] })
             ] }),
@@ -47924,7 +47921,7 @@ ${relayAssistantDigest.trim() || "[none yet]"}`,
                     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
                       SettingsPanel,
                       {
-                        appVersion: "0.8.0",
+                        appVersion: "0.8.1",
                         focusSearchSettingsKey: searchSettingsFocusKey,
                         isCheckingForUpdates,
                         isLoadingReleaseNotes,

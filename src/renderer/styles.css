@@ -129,26 +129,34 @@
 }
 
 :root[data-theme='sunset-terminal'] {
-  --bg-0: #130c14;
-  --bg-1: #1f1420;
-  --bg-2: #2d1c2e;
-  --bg-surface: rgba(31, 20, 32, 0.92);
-  --bg-elevated: rgba(45, 28, 46, 0.96);
-  --panel: rgba(31, 20, 32, 0.88);
-  --panel-strong: rgba(25, 16, 26, 0.96);
-  --terminal-bg: #19101a;
-  --line: rgba(204, 148, 170, 0.12);
-  --line-strong: rgba(204, 148, 170, 0.2);
-  --text-0: #fef2f2;
-  --text-1: rgba(240, 200, 210, 0.82);
-  --text-2: rgba(204, 148, 170, 0.62);
-  --accent: #f97316;
-  --accent-light: #fb923c;
-  --accent-subtle: rgba(249, 115, 22, 0.12);
-  --accent-2: #fbbf24;
-  --accent-2-subtle: rgba(251, 191, 36, 0.12);
-  --danger: #fb7185;
-  --danger-subtle: rgba(251, 113, 133, 0.1);
+  --bg-0: #101113;
+  --bg-1: #151619;
+  --bg-2: #1d1f23;
+  --bg-surface: rgba(21, 22, 25, 0.94);
+  --bg-elevated: rgba(29, 31, 35, 0.96);
+  --panel: rgba(21, 22, 25, 0.92);
+  --panel-strong: rgba(18, 19, 22, 0.96);
+  --terminal-bg: #111214;
+  --line: rgba(156, 163, 175, 0.09);
+  --line-strong: rgba(156, 163, 175, 0.16);
+  --text-0: #e5e7eb;
+  --text-1: rgba(203, 213, 225, 0.72);
+  --text-2: rgba(148, 163, 184, 0.5);
+  --accent: #8b929d;
+  --accent-light: #b7bec8;
+  --accent-rgb: 156, 163, 175;
+  --accent-subtle: rgba(156, 163, 175, 0.1);
+  --accent-2: #787f8a;
+  --accent-2-subtle: rgba(120, 127, 138, 0.1);
+  --chat-panel-bg: rgba(18, 19, 22, 0.96);
+  --chat-thread-bg: #151619;
+  --chat-assistant-bg: rgba(156, 163, 175, 0.055);
+  --chat-user-bg: rgba(156, 163, 175, 0.105);
+  --thinking-bg: rgba(156, 163, 175, 0.055);
+  --composer-bg: rgba(18, 19, 22, 0.7);
+  --composer-input-bg: rgba(156, 163, 175, 0.055);
+  --danger: #f87171;
+  --danger-subtle: rgba(248, 113, 113, 0.08);
 }
 
 :root[data-theme='ice-station'] {
@@ -2613,6 +2621,14 @@ html[data-platform='darwin'] .app-shell {
   filter: blur(4px);
 }
 
+:root[data-theme='sunset-terminal'] .chat-scroll__bg-img {
+  filter: grayscale(1) saturate(0) contrast(0.72) brightness(0.68);
+}
+
+:root[data-theme='sunset-terminal'] .chat-scroll__bg.is-blurred .chat-scroll__bg-img {
+  filter: grayscale(1) saturate(0) contrast(0.72) brightness(0.68) blur(4px);
+}
+
 .chat-scroll__bg-scrim {
   position: absolute;
   inset: 0;
@@ -3948,6 +3964,10 @@ html[data-platform='darwin'] .app-shell {
   user-select: none;
   text-align: left;
   font-family: inherit;
+}
+
+.chat-thinking__summary.is-empty {
+  cursor: default;
 }
 
 .chat-thinking__chevron {
@@ -6158,7 +6178,7 @@ html[data-platform='darwin'] .app-shell {
 
 .wizard-doc-list__toggle {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(72px, 42%);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 9px;
   flex: 1 1 auto;
@@ -6178,9 +6198,12 @@ html[data-platform='darwin'] .app-shell {
   min-width: 0;
 }
 
-.wizard-doc-list__text span {
-  color: var(--text-0);
-  font-size: 0.78rem;
+.wizard-doc-list__text code {
+  display: block;
+  min-width: 0;
+  color: var(--accent-light);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6191,17 +6214,6 @@ html[data-platform='darwin'] .app-shell {
   color: var(--text-2);
   font-size: 0.66rem;
   font-weight: 700;
-}
-
-.wizard-doc-list__toggle code {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--accent-light);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .wizard-doc-list__open {

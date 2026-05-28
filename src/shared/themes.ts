@@ -1,7 +1,7 @@
 /** Preset themes shown as tiles in Settings (when not on Custom). */
 export const themeCatalog = [
   { id: 'neon-grid' as const, name: 'Neon Grid', preview: 'Cyan / Lime / Deep Navy' },
-  { id: 'sunset-terminal' as const, name: 'Sunset Terminal', preview: 'Coral / Amber / Plum' },
+  { id: 'sunset-terminal' as const, name: 'Dark Terminal', preview: 'Gray / Slate / Charcoal' },
   { id: 'ice-station' as const, name: 'Ice Station', preview: 'Blue / Mint / Graphite' },
   { id: 'kiwi' as const, name: 'Kiwi', preview: 'Green / Teal / Graphite (light)' }
 ] as const;

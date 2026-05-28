@@ -345,10 +345,9 @@ export function WizardSettingsPanel({
                               type="checkbox"
                             />
                             <span className="wizard-doc-list__text">
-                              <span>{doc.label}</span>
+                              <code>{doc.path.split(/[\\/]/).pop()}</code>
                               <small>{doc.autoInject !== false ? 'Auto-injected' : 'Not injected'}</small>
                             </span>
-                            <code>{doc.path.split(/[\\/]/).pop()}</code>
                           </label>
                           <button
                             className="wizard-doc-list__open"
