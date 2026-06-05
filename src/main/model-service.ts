@@ -485,6 +485,21 @@ function resolveProviderUrl(pathOrUrl: string, baseUrl: string) {
   return new URL(pathOrUrl, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).href;
 }
 
+function shouldSendProviderAuthHeader(url: string, baseUrl: string) {
+  try {
+    const resolved = new URL(url);
+    const providerBase = new URL(baseUrl);
+    return resolved.origin === providerBase.origin;
+  } catch {
+    return false;
+  }
+}
+
+async function responseErrorDetail(response: Response) {
+  const text = await response.text().catch(() => '');
+  return text.trim().slice(0, 500);
+}
+
 function parseOpenRouterSseEvent(raw: string): unknown | null {
   const data = raw
     .split(/\r?\n/)
@@ -1579,28 +1594,34 @@ export class ModelService {
 
     const provider = settings.providers.openrouter;
     const baseUrl = normalizeBaseUrl('openrouter', provider.baseUrl);
-    const headers = {
+    const authHeaders = {
       Authorization: `Bearer ${provider.apiKey}`,
-      'Content-Type': 'application/json',
       'HTTP-Referer': provider.appUrl || 'https://example.local',
       'X-OpenRouter-Title': provider.appName || 'Mythra'
+    };
+    const jsonHeaders = {
+      ...authHeaders,
+      'Content-Type': 'application/json'
     };
     const signal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
 
     this.emitActivity(window, requestId, 'tool', 'Submitting video generation job.');
     const submitResponse = await fetch(`${baseUrl}/videos`, {
       method: 'POST',
-      headers,
+      headers: jsonHeaders,
       body: JSON.stringify({ model, prompt }),
       signal
     });
     if (!submitResponse.ok) {
-      throw new Error(`Video generation request failed (${submitResponse.status}).`);
+      const detail = await responseErrorDetail(submitResponse);
+      throw new Error(`Video generation request failed (${submitResponse.status})${detail ? `: ${detail}` : '.'}`);
     }
     const submitted = (await submitResponse.json()) as {
       id?: string;
       polling_url?: string;
       status?: string;
+      error?: string;
+      unsigned_urls?: string[];
     };
     const jobId = submitted.id;
     if (!jobId) {
@@ -1608,8 +1629,8 @@ export class ModelService {
     }
 
     const pollUrl = submitted.polling_url ? resolveProviderUrl(submitted.polling_url, baseUrl) : `${baseUrl}/videos/${jobId}`;
-    let status = submitted.status ?? 'pending';
-    let unsignedUrls: string[] = [];
+    let statusResponse = submitted;
+    let status = statusResponse.status ?? 'pending';
     let lastError = '';
     for (;;) {
       this.assertNotStopped(requestId);
@@ -1619,28 +1640,33 @@ export class ModelService {
       }
       this.emitActivity(window, requestId, 'tool', `Video generation status: ${status}.`);
       await wait(5000, signal);
-      const pollResponse = await fetch(pollUrl, { headers, signal });
+      const pollResponse = await fetch(pollUrl, { headers: authHeaders, signal });
       if (!pollResponse.ok) {
-        throw new Error(`Video generation polling failed (${pollResponse.status}).`);
+        const detail = await responseErrorDetail(pollResponse);
+        throw new Error(`Video generation polling failed (${pollResponse.status})${detail ? `: ${detail}` : '.'}`);
       }
       const polled = (await pollResponse.json()) as {
         status?: string;
         error?: string;
         unsigned_urls?: string[];
       };
-      status = polled.status ?? status;
-      unsignedUrls = Array.isArray(polled.unsigned_urls) ? polled.unsigned_urls.filter((url): url is string => typeof url === 'string') : [];
+      statusResponse = polled;
+      status = statusResponse.status ?? status;
       lastError = typeof polled.error === 'string' ? polled.error : '';
     }
 
     this.emitActivity(window, requestId, 'tool', 'Downloading generated video.');
-    const contentUrl = unsignedUrls[0] ?? `${baseUrl}/videos/${jobId}/content`;
+    const unsignedUrls = Array.isArray(statusResponse.unsigned_urls)
+      ? statusResponse.unsigned_urls.filter((url): url is string => typeof url === 'string')
+      : [];
+    const contentUrl = unsignedUrls[0] ? resolveProviderUrl(unsignedUrls[0], baseUrl) : `${baseUrl}/videos/${jobId}/content?index=0`;
     const videoResponse = await fetch(contentUrl, {
-      headers: unsignedUrls[0] ? undefined : headers,
+      headers: shouldSendProviderAuthHeader(contentUrl, baseUrl) ? authHeaders : undefined,
       signal
     });
     if (!videoResponse.ok) {
-      throw new Error(`Generated video download failed (${videoResponse.status}).`);
+      const detail = await responseErrorDetail(videoResponse);
+      throw new Error(`Generated video download failed (${videoResponse.status})${detail ? `: ${detail}` : '.'}`);
     }
     const mimeType = videoResponse.headers.get('content-type')?.split(';')[0]?.trim() || 'video/mp4';
     const bytes = Buffer.from(await videoResponse.arrayBuffer());
