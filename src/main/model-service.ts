@@ -41,6 +41,7 @@ import {
   SEMANTIC_CUSTOM_THEME_PALETTE_IDS
 } from '@shared/themes';
 import { CommandService } from './command-service';
+import { defineFunctionTool } from './tool-registry';
 import { formatToolActivityDone, formatToolActivityStart } from './tool-activity-phrases';
 import { searchWeb } from './web-search';
 import { WorkspaceService } from './workspace-service';
@@ -1872,19 +1873,15 @@ export class ModelService {
   }
 
   private buildCurrentTimeTool(): ChatCompletionTool {
-    return {
-      type: 'function',
-      function: {
-        name: 'get_current_time',
-        description:
-          'Return the current date and time from the user’s local machine clock, including local timezone, UTC timestamp, weekday, and UTC offset. Call this whenever the answer depends on current time/date.',
-        parameters: {
-          type: 'object',
-          properties: {},
-          additionalProperties: false
-        }
+    return defineFunctionTool(
+      'get_current_time',
+      'Return the current date and time from the user’s local machine clock, including local timezone, UTC timestamp, weekday, and UTC offset. Call this whenever the answer depends on current time/date.',
+      {
+        type: 'object',
+        properties: {},
+        additionalProperties: false
       }
-    };
+    );
   }
 
   private buildSearchChatHistoryTool(): ChatCompletionTool {

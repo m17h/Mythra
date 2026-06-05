@@ -14,6 +14,7 @@ import { ChatStore } from './chat-store';
 import { CommandService } from './command-service';
 import { ModelService } from './model-service';
 import { SettingsStore } from './settings-store';
+import { ProductivityStore } from './productivity-store';
 import { UpdateService } from './update-service';
 import { WorkspaceService } from './workspace-service';
 import { WorkspaceWatchController } from './workspace-watch';
@@ -48,7 +49,11 @@ import {
   type OpenRouterCreditsResult,
   type ReadChatThreadBackgroundRequest,
   type NexusTeamWorkspaceReference,
+  type ProjectSettings,
+  type PromptSnippet,
   type NexusSetupRequest,
+  type TestRunSummary,
+  type ToolHistoryEntry,
   type WizardSetupRequest
 } from '@shared/types';
 import { sanitizeWizardFolderSegment } from '@shared/wizard-folder';
@@ -142,6 +147,7 @@ function imageMimeFromFilename(filename: string): string {
 
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
+const productivityStore = new ProductivityStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
 let mainWindow: BrowserWindow | null = null;
@@ -839,6 +845,12 @@ ipcMain.handle('workspace:changes', async (_event, root: string) => {
   assertActiveWorkspace(root);
   return workspaceService.getChanges(root);
 });
+ipcMain.handle('workspace:discard-patch', async (_event, root: string, patch: string) => {
+  assertActiveWorkspace(root);
+  const changes = await workspaceService.discardPatch(root, patch);
+  mainWindow?.webContents.send('workspace:changed', { root });
+  return changes;
+});
 
 ipcMain.handle('wizard:recommended-workspace', async (_event, name: string) =>
   workspaceService.getRecommendedWizardWorkspace(name)
@@ -1306,8 +1318,19 @@ ipcMain.handle('commands:run', async (_event, command: string, cwd?: string) => 
 
 ipcMain.handle('commands:kill', async (_event, jobId: string) => commandService.kill(jobId));
 
+ipcMain.handle('commands:run-capture', async (_event, command: string, cwd?: string) => {
+  if (cwd != null) {
+    assertActiveWorkspace(cwd);
+  }
+  const startedAt = Date.now();
+  const result = await commandService.runAndCapture(command, cwd, 120_000);
+  return { ...result, startedAt, finishedAt: Date.now() };
+});
+
 ipcMain.handle('chats:list', async () => chatStore.listChats());
 ipcMain.handle('chats:load', async (_event, id: string) => chatStore.loadChat(id));
+ipcMain.handle('chats:search', async (_event, query: string, limit?: number) => chatStore.searchChats(query, limit));
+ipcMain.handle('chats:cost-summary', async () => chatStore.costSummary());
 ipcMain.handle('chats:save', async (_event, chat: SavedChat) => {
   await assertSavedChatWorkspaceRootsAreTrusted(chat);
   return chatStore.saveChat(chat);
@@ -1322,3 +1345,31 @@ ipcMain.handle('chats:delete', async (_event, id: string) => {
   }
   return chatStore.deleteChat(id);
 });
+
+ipcMain.handle('productivity:snippets:list', async () => productivityStore.listPromptSnippets());
+ipcMain.handle('productivity:snippets:save', async (_event, snippet: PromptSnippet) =>
+  productivityStore.savePromptSnippet(snippet)
+);
+ipcMain.handle('productivity:snippets:delete', async (_event, id: string) =>
+  productivityStore.deletePromptSnippet(id)
+);
+ipcMain.handle('productivity:project-settings:get', async (_event, workspaceRoot: string) => {
+  assertActiveWorkspace(workspaceRoot);
+  return productivityStore.getProjectSettings(workspaceRoot);
+});
+ipcMain.handle('productivity:project-settings:save', async (_event, settings: ProjectSettings) => {
+  assertActiveWorkspace(settings.workspaceRoot);
+  return productivityStore.saveProjectSettings(settings);
+});
+ipcMain.handle('productivity:tool-history:list', async (_event, limit?: number) =>
+  productivityStore.listToolHistory(limit)
+);
+ipcMain.handle('productivity:tool-history:append', async (_event, entry: ToolHistoryEntry) =>
+  productivityStore.appendToolHistory(entry)
+);
+ipcMain.handle('productivity:test-runs:list', async (_event, workspaceRoot?: string, limit?: number) =>
+  productivityStore.listTestRuns(workspaceRoot, limit)
+);
+ipcMain.handle('productivity:test-runs:save', async (_event, run: TestRunSummary) =>
+  productivityStore.saveTestRun(run)
+);

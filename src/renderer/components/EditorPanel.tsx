@@ -1,18 +1,34 @@
 import Editor from '@monaco-editor/react';
+import { monacoLanguageFromPath } from '@renderer/lib/editor-language';
 import { MythraMark } from './MythraMark';
 
 interface EditorPanelProps {
   filePath?: string;
   content: string;
+  openFiles?: Array<{ path: string; dirty: boolean; readOnly?: boolean }>;
   imagePreview?: { mimeType: string; dataUrl: string };
   readOnly?: boolean;
   readOnlyReason?: string;
   dirty: boolean;
   onChange: (next: string) => void;
+  onCloseFile?: (path: string) => void;
   onSave: () => void;
+  onSelectFile?: (path: string) => void;
 }
 
-export function EditorPanel({ filePath, content, imagePreview, readOnly, readOnlyReason, dirty, onChange, onSave }: EditorPanelProps) {
+export function EditorPanel({
+  filePath,
+  content,
+  openFiles = [],
+  imagePreview,
+  readOnly,
+  readOnlyReason,
+  dirty,
+  onChange,
+  onCloseFile,
+  onSave,
+  onSelectFile
+}: EditorPanelProps) {
   if (!filePath) {
     return (
       <section className="workspace-empty">
@@ -31,6 +47,35 @@ export function EditorPanel({ filePath, content, imagePreview, readOnly, readOnl
 
   return (
     <section className="editor-panel">
+      {openFiles.length > 0 ? (
+        <div className="editor-tabs" role="tablist" aria-label="Open files">
+          {openFiles.map((file) => (
+            <button
+              className={`editor-tab ${file.path === filePath ? 'is-active' : ''}`}
+              key={file.path}
+              onClick={() => onSelectFile?.(file.path)}
+              title={file.path}
+              type="button"
+            >
+              <span>{file.path.split(/[/\\]/).pop() ?? file.path}</span>
+              {file.dirty ? <b aria-label="Unsaved changes" /> : null}
+              {onCloseFile ? (
+                <i
+                  aria-label="Close file"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCloseFile(file.path);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  x
+                </i>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="editor-panel__header">
         <div>
           <div className="section-kicker">Editor Matrix</div>
@@ -58,7 +103,8 @@ export function EditorPanel({ filePath, content, imagePreview, readOnly, readOnl
         <div className="editor-shell">
           <Editor
             height="100%"
-            defaultLanguage="typescript"
+            defaultLanguage={monacoLanguageFromPath(filePath)}
+            language={monacoLanguageFromPath(filePath)}
             path={filePath}
             value={content}
             onChange={(next) => {

@@ -19,9 +19,15 @@ import type {
   NexusSetupResult,
   OpenFile,
   OpenRouterCreditsResult,
+  ProjectSettings,
+  PromptSnippet,
   SavedChat,
   SavedChatMeta,
+  ChatSearchResult,
+  CostDashboardSummary,
   ToolApprovalRequest,
+  TestRunSummary,
+  ToolHistoryEntry,
   WorkspaceChanged,
   WorkspaceChanges,
   WorkspaceNode,
@@ -62,6 +68,8 @@ const electronAPI = {
     ipcRenderer.invoke('workspace:save-file', root, target, content) as Promise<OpenFile>,
   getWorkspaceChanges: (root: string) =>
     ipcRenderer.invoke('workspace:changes', root) as Promise<WorkspaceChanges>,
+  discardWorkspacePatch: (root: string, patch: string) =>
+    ipcRenderer.invoke('workspace:discard-patch', root, patch) as Promise<WorkspaceChanges>,
   getRecommendedWizardWorkspace: (name: string) =>
     ipcRenderer.invoke('wizard:recommended-workspace', name) as Promise<string>,
   chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) =>
@@ -140,6 +148,15 @@ const electronAPI = {
   stopChat: (requestId: string) => ipcRenderer.invoke('chat:stop', requestId) as Promise<boolean>,
   runCommand: (command: string, cwd?: string) =>
     ipcRenderer.invoke('commands:run', command, cwd) as Promise<{ jobId: string }>,
+  runCommandCapture: (command: string, cwd?: string) =>
+    ipcRenderer.invoke('commands:run-capture', command, cwd) as Promise<{
+      stdout: string;
+      stderr: string;
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      startedAt: number;
+      finishedAt: number;
+    }>,
   killCommand: (jobId: string) => ipcRenderer.invoke('commands:kill', jobId) as Promise<boolean>,
   onCommandChunk: (callback: (payload: CommandChunk) => void) => {
     const listener = (_event: unknown, payload: CommandChunk) => callback(payload);
@@ -188,8 +205,30 @@ const electronAPI = {
   },
   listChats: () => ipcRenderer.invoke('chats:list') as Promise<SavedChatMeta[]>,
   loadChat: (id: string) => ipcRenderer.invoke('chats:load', id) as Promise<SavedChat | null>,
+  searchChats: (query: string, limit?: number) =>
+    ipcRenderer.invoke('chats:search', query, limit) as Promise<ChatSearchResult[]>,
+  getCostDashboardSummary: () =>
+    ipcRenderer.invoke('chats:cost-summary') as Promise<CostDashboardSummary>,
   saveChat: (chat: SavedChat) => ipcRenderer.invoke('chats:save', chat) as Promise<void>,
   deleteChat: (id: string) => ipcRenderer.invoke('chats:delete', id) as Promise<boolean>,
+  listPromptSnippets: () =>
+    ipcRenderer.invoke('productivity:snippets:list') as Promise<PromptSnippet[]>,
+  savePromptSnippet: (snippet: PromptSnippet) =>
+    ipcRenderer.invoke('productivity:snippets:save', snippet) as Promise<PromptSnippet>,
+  deletePromptSnippet: (id: string) =>
+    ipcRenderer.invoke('productivity:snippets:delete', id) as Promise<boolean>,
+  getProjectSettings: (workspaceRoot: string) =>
+    ipcRenderer.invoke('productivity:project-settings:get', workspaceRoot) as Promise<ProjectSettings>,
+  saveProjectSettings: (settings: ProjectSettings) =>
+    ipcRenderer.invoke('productivity:project-settings:save', settings) as Promise<ProjectSettings>,
+  listToolHistory: (limit?: number) =>
+    ipcRenderer.invoke('productivity:tool-history:list', limit) as Promise<ToolHistoryEntry[]>,
+  appendToolHistory: (entry: ToolHistoryEntry) =>
+    ipcRenderer.invoke('productivity:tool-history:append', entry) as Promise<ToolHistoryEntry>,
+  listTestRuns: (workspaceRoot?: string, limit?: number) =>
+    ipcRenderer.invoke('productivity:test-runs:list', workspaceRoot, limit) as Promise<TestRunSummary[]>,
+  saveTestRun: (run: TestRunSummary) =>
+    ipcRenderer.invoke('productivity:test-runs:save', run) as Promise<TestRunSummary>,
   chooseChatThreadBackground: () =>
     ipcRenderer.invoke('ui:choose-chat-thread-background') as Promise<ChooseChatThreadBackgroundResult>,
   readChatThreadBackground: (request: ReadChatThreadBackgroundRequest | string) =>

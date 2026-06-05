@@ -5398,6 +5398,100 @@ html[data-platform='darwin'] .app-shell {
   padding: 0 !important;
 }
 
+.changes-diff-groups {
+  min-height: 240px;
+}
+
+.changes-diff__truncated {
+  margin: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+.changes-diff-file {
+  border-bottom: 1px solid var(--line);
+}
+
+.changes-diff-file:last-child {
+  border-bottom: 0;
+}
+
+.changes-diff-file summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+  color: var(--text-0);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.changes-diff-file summary small {
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.changes-diff-file__actions,
+.changes-hunk__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.changes-diff-file__actions button,
+.changes-hunk__actions button {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  color: var(--text-1);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.changes-diff-file__actions button:hover,
+.changes-hunk__actions button:hover {
+  border-color: var(--accent);
+  color: var(--text-0);
+}
+
+.changes-diff-file__actions button:disabled,
+.changes-hunk__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.changes-hunks {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.changes-hunk {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.changes-hunk summary {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .changes-diff__line {
   display: block;
   min-height: 1.45em;
@@ -5443,6 +5537,284 @@ html[data-platform='darwin'] .app-shell {
 :root:not([data-custom-light='true']):not([data-theme='ice-station']):not([data-theme='kiwi']) .changes-diff__line--del {
   color: #fecaca;
   background: rgba(239, 68, 68, 0.16);
+}
+
+/* ───────────────── Productivity surfaces ───────────────── */
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.command-palette {
+  width: min(620px, calc(100vw - 32px));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.command-palette input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 16px;
+  background: transparent;
+  color: var(--text-0);
+  font: inherit;
+  font-size: 1rem;
+  outline: none;
+}
+
+.command-palette__list {
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.command-palette__row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+}
+
+.command-palette__row.is-selected,
+.command-palette__row:hover {
+  background: var(--accent-subtle);
+  color: var(--text-0);
+}
+
+.command-palette__row span,
+.command-palette__empty,
+.productivity-empty {
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+
+.command-palette__empty {
+  padding: 14px 12px;
+}
+
+.productivity-input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text-0);
+  font: inherit;
+  outline: none;
+}
+
+.chat-search-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.chat-search-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chat-search-result {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--text-1);
+  text-align: left;
+}
+
+.chat-search-result:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.chat-search-result strong {
+  color: var(--text-0);
+}
+
+.chat-search-result small {
+  color: var(--text-2);
+}
+
+.productivity-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  color: var(--text-0);
+}
+
+.productivity-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.productivity-panel__header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.productivity-panel__header p {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+
+.productivity-panel__body {
+  display: grid;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.productivity-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.productivity-card h4 {
+  margin: 0;
+  color: var(--text-0);
+  font-size: 0.82rem;
+}
+
+.productivity-actions,
+.productivity-row__actions,
+.productivity-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.productivity-field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.productivity-field input,
+.productivity-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  color: var(--text-0);
+  font: inherit;
+  font-weight: 500;
+  resize: vertical;
+}
+
+.productivity-field textarea {
+  min-height: 80px;
+}
+
+.productivity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.productivity-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  color: var(--text-1);
+}
+
+.productivity-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.productivity-row strong {
+  color: var(--text-0);
+}
+
+.productivity-row span,
+.productivity-row small,
+.productivity-status {
+  color: var(--text-2);
+  font-size: 0.74rem;
+}
+
+.productivity-row__actions button {
+  border: 0;
+  background: transparent;
+  color: var(--accent-light);
+  cursor: pointer;
+}
+
+.productivity-stats span {
+  display: grid;
+  gap: 2px;
+  min-width: 82px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
+.productivity-stats strong {
+  color: var(--text-0);
+  font-size: 0.95rem;
+}
+
+.productivity-row--details {
+  display: block;
+}
+
+.productivity-row--details summary {
+  cursor: pointer;
+}
+
+.productivity-row--details pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--terminal-bg);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  white-space: pre-wrap;
 }
 
 /* ───────────────── Settings Panel ───────────────── */
@@ -7457,6 +7829,55 @@ html[data-platform='darwin'] .app-shell {
   height: 100%;
 }
 
+.editor-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
+.editor-tab.is-active {
+  background: var(--panel-strong);
+  color: var(--text-0);
+}
+
+.editor-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab b {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  flex-shrink: 0;
+}
+
+.editor-tab i {
+  color: var(--text-2);
+  font-style: normal;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .editor-panel__header {
   display: flex;
   align-items: flex-start;
@@ -7613,9 +8034,55 @@ html[data-platform='darwin'] .app-shell {
 
 /* ───────────────── File Tree ───────────────── */
 
+.tree-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.tree-search {
+  display: grid;
+  gap: 6px;
+  padding: 0 0 10px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tree-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  color: var(--text-0);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.tree-search input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
 .tree {
   margin-top: 0;
   overflow: auto;
+}
+
+.tree__empty {
+  padding: 12px 10px;
+  color: var(--text-2);
+  font-size: 0.78rem;
 }
 
 .tree__branch + .tree__branch { margin-top: 1px; }

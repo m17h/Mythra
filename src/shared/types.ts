@@ -443,6 +443,31 @@ export interface ChatMessageCostEstimate {
   note?: string;
 }
 
+export interface ChatSearchResult {
+  chatId: string;
+  title: string;
+  kind?: ChatKind;
+  updatedAt: number;
+  snippet: string;
+  matchCount: number;
+}
+
+export interface CostDashboardRow {
+  provider: ProviderKind;
+  model: string;
+  messages: number;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
+export interface CostDashboardSummary {
+  chats: number;
+  pricedMessages: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  byModel: CostDashboardRow[];
+}
+
 export interface ChatStreamDone {
   requestId: string;
   content: string;
@@ -465,6 +490,42 @@ export interface ChatActivity {
   requestId: string;
   kind: 'info' | 'tool' | 'command' | 'approval' | 'reasoning' | 'warning' | 'success' | 'finished' | 'stopped' | 'error';
   message: string;
+}
+
+export interface ToolHistoryEntry {
+  id: string;
+  at: number;
+  chatId?: string;
+  requestId: string;
+  kind: ChatActivity['kind'];
+  message: string;
+}
+
+export interface PromptSnippet {
+  id: string;
+  name: string;
+  text: string;
+  updatedAt: number;
+}
+
+export interface ProjectSettings {
+  workspaceRoot: string;
+  defaultTestCommand: string;
+  notes: string;
+  updatedAt: number;
+}
+
+export interface TestRunSummary {
+  id: string;
+  workspaceRoot: string;
+  command: string;
+  startedAt: number;
+  finishedAt: number;
+  code: number | null;
+  signal: string | null;
+  summary: string;
+  stdoutTail: string;
+  stderrTail: string;
 }
 
 export type ChatTimelineEntry =

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type WheelEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type WheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import type {
@@ -1040,6 +1040,118 @@ function ThinkingBlock({ active, reasoning }: { active: boolean; reasoning: stri
   );
 }
 
+const ChatMessageBubble = memo(function ChatMessageBubble({
+  entry,
+  chatMessages,
+  copiedMessageId,
+  mentionNames,
+  onCopyMessage,
+  onSessionModeToggle,
+  onSubmitQuizAnswers,
+  onWebSearchChange,
+  onAfterCollapsibleLayout: _onAfterCollapsibleLayout,
+  onSessionModeToggleDisabled,
+  sessionMode,
+  showModelOutputCosts,
+  webSearch,
+  webSearchDisabled
+}: {
+  entry: MessageTimelineEntry;
+  chatMessages: ChatMessage[];
+  copiedMessageId: string | null;
+  mentionNames: string[];
+  onCopyMessage: (messageId: string, rawContent: string) => void | Promise<void>;
+  onSessionModeToggle: () => void;
+  onSubmitQuizAnswers: (answersText: string) => void;
+  onWebSearchChange: (next: boolean) => void;
+  onAfterCollapsibleLayout?: () => void;
+  onSessionModeToggleDisabled: boolean;
+  sessionMode: SessionMode;
+  showModelOutputCosts: boolean;
+  webSearch: boolean;
+  webSearchDisabled: boolean;
+}) {
+  const { message } = entry;
+  const copyableText = getCopyableMessageText(message.content);
+  const completedQuizSelections = useMemo(
+    () =>
+      message.role === 'assistant'
+        ? completedQuizSelectionsAfterMessage(chatMessages, message.id)
+        : undefined,
+    [chatMessages, message.id, message.role]
+  );
+  const assistantWaitingForFirstOutput =
+    message.role === 'assistant' &&
+    message.status === 'streaming' &&
+    !message.content.trim() &&
+    !message.attachments?.length;
+
+  return (
+    <motion.article
+      animate={{ opacity: 1, y: 0 }}
+      className={`chat-bubble chat-bubble--${message.role}`}
+      initial={{ opacity: 0, y: 8 }}
+      key={entry.id}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+    >
+      <header className="chat-bubble__header">
+        <span className="chat-bubble__header-title">
+          {message.role === 'user'
+            ? 'You'
+            : message.assistantDisplayName?.trim() || 'Assistant'}
+        </span>
+        {copyableText.length > 0 ? (
+          <button
+            className={`chat-bubble__copy${copiedMessageId === entry.id ? ' is-done' : ''}`}
+            aria-label={copiedMessageId === entry.id ? 'Copied' : 'Copy message'}
+            title={copiedMessageId === entry.id ? 'Copied' : 'Copy'}
+            type="button"
+            onClick={() => void onCopyMessage(entry.id, message.content)}
+          >
+            <CopyMessageIcon copied={copiedMessageId === entry.id} />
+          </button>
+        ) : null}
+      </header>
+      {message.role === 'assistant' && (message.reasoning?.trim() || assistantWaitingForFirstOutput) ? (
+        <ThinkingBlock active={message.status === 'streaming'} reasoning={message.reasoning?.trim() ?? ''} />
+      ) : null}
+      {message.attachments?.length ? (
+        <div className="chat-attachments">
+          {message.attachments.map((att) => (
+            <AttachmentPreview attachment={att} key={att.id} />
+          ))}
+        </div>
+      ) : null}
+      {message.content !== '' || message.status === 'done' || message.status === 'error' ? (
+        <div className="chat-bubble__text">
+          {message.role === 'assistant' ? (
+            <AssistantMessageContent
+              completedQuizSelections={completedQuizSelections}
+              onSessionModeToggle={onSessionModeToggle}
+              onSubmitQuizAnswers={onSubmitQuizAnswers}
+              onWebSearchChange={onWebSearchChange}
+              quizSubmitDisabled={message.status === 'streaming'}
+              sessionMode={sessionMode}
+              sessionModeToggleDisabled={onSessionModeToggleDisabled}
+              mentionNames={mentionNames}
+              text={message.content}
+              webSearch={webSearch}
+              webSearchDisabled={webSearchDisabled}
+            />
+          ) : (
+            <ChatMarkdown mentionNames={mentionNames} text={copyableText} />
+          )}
+        </div>
+      ) : null}
+      {showModelOutputCosts && message.role === 'assistant' && message.costEstimate ? (
+        <div className="chat-bubble__cost" title={messageCostTitle(message.costEstimate)}>
+          Estimated cost: {message.costEstimate.display}
+        </div>
+      ) : null}
+    </motion.article>
+  );
+});
+
 export function ChatPanel({
   timeline,
   input,
@@ -1805,77 +1917,24 @@ export function ChatPanel({
             );
           }
 
-          const { entry } = chunk;
-          const { message } = entry;
-          const assistantWaitingForFirstOutput =
-            message.role === 'assistant' &&
-            message.status === 'streaming' &&
-            !message.content.trim() &&
-            !message.attachments?.length;
-
           return wrapVirtual(
-            <motion.article
-              animate={{ opacity: 1, y: 0 }}
-              className={`chat-bubble chat-bubble--${message.role}`}
-              initial={{ opacity: 0, y: 8 }}
-              key={entry.id}
-              transition={{ duration: 0.22, ease: 'easeOut' }}
-            >
-              <header className="chat-bubble__header">
-                <span className="chat-bubble__header-title">
-                  {message.role === 'user'
-                    ? 'You'
-                    : message.assistantDisplayName?.trim() || 'Assistant'}
-                </span>
-                {getCopyableMessageText(message.content).length > 0 ? (
-                  <button
-                    className={`chat-bubble__copy${copiedMessageId === entry.id ? ' is-done' : ''}`}
-                    aria-label={copiedMessageId === entry.id ? 'Copied' : 'Copy message'}
-                    title={copiedMessageId === entry.id ? 'Copied' : 'Copy'}
-                    type="button"
-                    onClick={() => void handleCopyMessage(entry.id, message.content)}
-                  >
-                    <CopyMessageIcon copied={copiedMessageId === entry.id} />
-                  </button>
-                ) : null}
-              </header>
-              {message.role === 'assistant' && (message.reasoning?.trim() || assistantWaitingForFirstOutput) ? (
-                <ThinkingBlock active={message.status === 'streaming'} reasoning={message.reasoning?.trim() ?? ''} />
-              ) : null}
-              {message.attachments?.length ? (
-                <div className="chat-attachments">
-                  {message.attachments.map((att) => (
-                    <AttachmentPreview attachment={att} key={att.id} />
-                  ))}
-                </div>
-              ) : null}
-              {message.content !== '' || message.status === 'done' || message.status === 'error' ? (
-                <div className="chat-bubble__text">
-                  {message.role === 'assistant' ? (
-                    <AssistantMessageContent
-                      completedQuizSelections={completedQuizSelectionsAfterMessage(chatMessages, message.id)}
-                      onSessionModeToggle={onSessionModeToggle}
-                      onSubmitQuizAnswers={onSubmitQuizAnswers}
-                      onWebSearchChange={onWebSearchChange}
-                      quizSubmitDisabled={message.status === 'streaming'}
-                      sessionMode={sessionMode}
-                      sessionModeToggleDisabled={sessionModeToggleDisabled}
-                      mentionNames={mentionNames}
-                      text={message.content}
-                      webSearch={webSearch}
-                      webSearchDisabled={webSearchDisabled}
-                    />
-                  ) : (
-                    <ChatMarkdown mentionNames={mentionNames} text={getCopyableMessageText(message.content)} />
-                  )}
-                </div>
-              ) : null}
-              {showModelOutputCosts && message.role === 'assistant' && message.costEstimate ? (
-                <div className="chat-bubble__cost" title={messageCostTitle(message.costEstimate)}>
-                  Estimated cost: {message.costEstimate.display}
-                </div>
-              ) : null}
-            </motion.article>
+            <ChatMessageBubble
+              chatMessages={chatMessages}
+              copiedMessageId={copiedMessageId}
+              entry={chunk.entry}
+              key={chunk.entry.id}
+              mentionNames={mentionNames}
+              onAfterCollapsibleLayout={afterCollapsibleLayout}
+              onCopyMessage={handleCopyMessage}
+              onSessionModeToggle={onSessionModeToggle}
+              onSessionModeToggleDisabled={sessionModeToggleDisabled}
+              onSubmitQuizAnswers={onSubmitQuizAnswers}
+              onWebSearchChange={onWebSearchChange}
+              sessionMode={sessionMode}
+              showModelOutputCosts={showModelOutputCosts}
+              webSearch={webSearch}
+              webSearchDisabled={webSearchDisabled}
+            />
           );
         })}
         {virtualWindow.enabled && virtualWindow.bottom > 0 ? (

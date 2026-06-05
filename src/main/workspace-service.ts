@@ -338,6 +338,43 @@ const walkFiles = async (
   }
 };
 
+async function listWorkspaceFileEntriesFast(root: string): Promise<Array<{ path: string; type: 'file' }>> {
+  try {
+    const result = await execFileAsync(
+      'rg',
+      [
+        '--files',
+        '--hidden',
+        '--glob',
+        '!.git',
+        '--glob',
+        '!node_modules',
+        '--glob',
+        '!.next',
+        '--glob',
+        '!dist',
+        '--glob',
+        '!out',
+        '--glob',
+        '!build',
+        '--glob',
+        '!coverage'
+      ],
+      { cwd: root, maxBuffer: 2_000_000 }
+    );
+    return result.stdout
+      .split(/\r?\n/)
+      .map((path) => path.trim())
+      .filter(Boolean)
+      .slice(0, MAX_LIST_ENTRIES)
+      .map((path) => ({ path, type: 'file' as const }));
+  } catch {
+    const bucket: Array<{ path: string; type: WorkspaceNode['type'] }> = [];
+    await walkFiles(root, root, bucket);
+    return bucket.filter((entry): entry is { path: string; type: 'file' } => entry.type === 'file');
+  }
+}
+
 const RASTER_IMAGE_EXT: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -1192,7 +1229,7 @@ export class WorkspaceService {
   async listRecentFiles(root: string, limit = 25): Promise<Array<{ path: string; bytes: number; modifiedAt: string }>> {
     const resolvedRoot = resolve(root);
     const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    const files = (await this.listFiles(resolvedRoot)).filter((entry) => entry.type === 'file');
+    const files = await listWorkspaceFileEntriesFast(resolvedRoot);
     const rows: Array<{ path: string; bytes: number; modifiedAt: string; mtimeMs: number }> = [];
     for (const entry of files) {
       try {
@@ -1269,14 +1306,21 @@ export class WorkspaceService {
     return this.getChanges(root);
   }
 
+  async discardPatch(root: string, patch: string) {
+    if (!patch.trim()) {
+      throw new Error('Patch cannot be empty.');
+    }
+    const cwd = resolve(root);
+    await spawnWithInput('git', ['apply', '-R', '--whitespace=nowarn', '-'], cwd, patch);
+    return this.getChanges(root);
+  }
+
   async searchSymbols(root: string, query: string, limit = 50) {
     const q = query.trim().toLowerCase();
     if (!q) {
       throw new Error('search_symbols requires a query.');
     }
-    const files = (await this.listFiles(root))
-      .filter((entry) => entry.type === 'file')
-      .slice(0, MAX_SEARCH_FILES);
+    const files = (await listWorkspaceFileEntriesFast(resolve(root))).slice(0, MAX_SEARCH_FILES);
     const results: Array<{ path: string; line: number; text: string }> = [];
     for (const entry of files) {
       if (results.length >= limit) break;

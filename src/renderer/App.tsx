@@ -6,9 +6,12 @@ import { AppUpdatesInfoDialog } from './components/AppUpdatesInfoDialog';
 import { AppSelect } from './components/AppSelect';
 import { ChatPanel, type ChatContextMeterOption, type ChatMentionOption } from './components/ChatPanel';
 import { ChangesPanel } from './components/ChangesPanel';
+import { ChatSearchDialog } from './components/ChatSearchDialog';
+import { CommandPalette, type CommandPaletteAction } from './components/CommandPalette';
 import { EditorPanel } from './components/EditorPanel';
 import { FileTree } from './components/FileTree';
 import { ModelSearch } from './components/ModelSearch';
+import { ProductivityPanel } from './components/ProductivityPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SystemPromptInfoDialog } from './components/SystemPromptInfoDialog';
 import { SystemPromptModal } from './components/SystemPromptModal';
@@ -1008,7 +1011,7 @@ interface FileBuffer extends OpenFile {
   dirty: boolean;
 }
 
-type InspectorTab = 'editor' | 'changes' | 'settings';
+type InspectorTab = 'editor' | 'changes' | 'settings' | 'tools';
 type SettingsInspectorScope = 'general' | 'wizard' | 'nexus';
 type SidebarTab = 'chats' | 'wizards' | 'files';
 type WizardsSidebarPane = 'wizards' | 'nexus';
@@ -1259,6 +1262,8 @@ export function App() {
   const [wizardsSidebarPane, setWizardsSidebarPane] = useState<WizardsSidebarPane>('wizards');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showChatSearch, setShowChatSearch] = useState(false);
   const [showWizardSetup, setShowWizardSetup] = useState(false);
   const [showNexusSetup, setShowNexusSetup] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -1564,6 +1569,22 @@ export function App() {
       setChangesLoading(false);
     }
   }, []);
+
+  const discardWorkspacePatch = useCallback(async (patch: string) => {
+    const root = workspaceRootRef.current;
+    if (!root) return;
+    setChangesLoading(true);
+    try {
+      const next = await window.electronAPI.discardWorkspacePatch(root, patch);
+      setWorkspaceChanges(next);
+      setSettingsStatus('Discarded selected hunk.');
+    } catch (error) {
+      setSettingsStatus(error instanceof Error ? error.message : 'Could not discard hunk.');
+      await refreshWorkspaceChanges(root);
+    } finally {
+      setChangesLoading(false);
+    }
+  }, [refreshWorkspaceChanges]);
 
   const saveChatSnapshot = useCallback(
     async (chatId: string, msgs: ChatMessage[], tl: ChatTimelineEntry[]) => {
@@ -1924,6 +1945,17 @@ export function App() {
       await refreshChatList();
     };
     void boot();
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setShowCommandPalette(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -2377,6 +2409,14 @@ export function App() {
     });
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
+      void window.electronAPI.appendToolHistory({
+        id: `${payload.id}-${Date.now()}`,
+        at: Date.now(),
+        chatId: activeChatIdRef.current,
+        requestId: payload.requestId,
+        kind: payload.kind,
+        message: payload.message
+      });
     });
     const offSettingsUpdated = window.electronAPI.onSettingsUpdated((next) => {
       setSettings(next);
@@ -3275,6 +3315,41 @@ export function App() {
     setLastTokenUsage(null);
     setChatStreaming(Boolean(inFlight));
     setActiveRequestId(inFlight?.requestId);
+  };
+
+  const forkActiveChat = async () => {
+    const sourceId = activeChatIdRef.current;
+    if (!sourceId) return;
+    const source = await window.electronAPI.loadChat(sourceId);
+    if (!source) return;
+    const now = Date.now();
+    const id = uid();
+    const fork: SavedChat = {
+      ...source,
+      id,
+      title: `Fork: ${source.title}`,
+      titleOverride: `Fork: ${source.titleOverride ?? source.title}`,
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      chatOrder: null,
+      messages: chatMessages.map((message) => ({ ...message, status: message.status === 'streaming' ? 'done' : message.status })),
+      timeline: chatTimeline.map((entry) =>
+        entry.type === 'message'
+          ? {
+              ...entry,
+              message: {
+                ...entry.message,
+                status: entry.message.status === 'streaming' ? 'done' : entry.message.status
+              }
+            }
+          : entry
+      )
+    };
+    await window.electronAPI.saveChat(fork);
+    await refreshChatList();
+    await loadChat(id);
+    setSettingsStatus('Forked current chat.');
   };
 
   const handleWizardSidebarRowActivate = async (chat: SavedChatMeta) => {
@@ -5393,6 +5468,25 @@ export function App() {
     setInlineTerminalLogs((c) => c + '\n[termination requested]\n');
   }, [inlineTerminalJobId]);
 
+  const insertPromptSnippet = useCallback((text: string) => {
+    setChatInput((current) => (current.trim() ? `${current.trimEnd()}\n\n${text}` : text));
+  }, []);
+
+  const commandPaletteActions = useMemo<CommandPaletteAction[]>(
+    () => [
+      { id: 'new-chat', title: 'New chat', subtitle: 'Start a blank conversation', run: () => void startNewChat() },
+      { id: 'search-chats', title: 'Search chats', subtitle: 'Find previous Chat, Wizard, and Nexus sessions', run: () => setShowChatSearch(true) },
+      { id: 'open-workspace', title: workspaceRoot ? 'Switch workspace' : 'Open workspace', subtitle: 'Attach a local project folder', run: () => void chooseWorkspace() },
+      { id: 'files', title: 'Show files', subtitle: 'Open the workspace file browser', run: () => setSidebarTab('files') },
+      { id: 'settings', title: 'Open settings', subtitle: 'Show the Settings inspector', run: () => setInspectorTab('settings') },
+      { id: 'changes', title: 'Open changes', subtitle: 'Show git status and diff', run: () => { setInspectorTab('changes'); void refreshWorkspaceChanges(); } },
+      { id: 'tools', title: 'Open tools dashboard', subtitle: 'Snippets, test runs, tool history, and costs', run: () => setInspectorTab('tools') },
+      { id: 'fork-chat', title: 'Fork current chat', subtitle: 'Create a branch from this conversation', run: () => void forkActiveChat() },
+      { id: 'run-tests', title: 'Run project tests', subtitle: 'Use the project test command in Tools', run: () => setInspectorTab('tools') }
+    ],
+    [workspaceRoot, refreshWorkspaceChanges]
+  );
+
   const nexusSettingsParticipants = useMemo(() => {
     if (!nexusDraft) return [];
     const sorted = [...nexusDraft.members].sort((a, b) => {
@@ -5620,6 +5714,16 @@ export function App() {
         ) : null}
       </AnimatePresence>
       <OnboardingDialog onComplete={completeOnboarding} open={showOnboarding} />
+      <CommandPalette
+        actions={commandPaletteActions}
+        onClose={() => setShowCommandPalette(false)}
+        open={showCommandPalette}
+      />
+      <ChatSearchDialog
+        onClose={() => setShowChatSearch(false)}
+        onOpenChat={(id) => void loadChat(id)}
+        open={showChatSearch}
+      />
       <AnimatePresence>
         {mediaPickerKind ? (
           <motion.div
@@ -6346,6 +6450,18 @@ export function App() {
                   ) : null}
                 </AnimatePresence>
               </div>
+              <button
+                className="sidebar-quick__btn"
+                onClick={() => setShowChatSearch(true)}
+                type="button"
+                title="Search saved chat history"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                  <circle cx="6" cy="6" r="3.5" stroke="currentColor" strokeWidth="1.4" />
+                  <path d="M8.6 8.6L12 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+                Search chats
+              </button>
               <button
                 className="sidebar-quick__btn"
                 disabled={Boolean(activeWizard || activeNexus)}
@@ -7442,6 +7558,13 @@ export function App() {
               >
                 Settings
               </button>
+              <button
+                className={`inspector-tab ${inspectorTab === 'tools' ? 'is-active' : ''}`}
+                onClick={() => setInspectorTab('tools')}
+                type="button"
+              >
+                Tools
+              </button>
             </div>
 
             <AnimatePresence mode="wait">
@@ -7457,6 +7580,11 @@ export function App() {
                     content={activeBuffer?.content ?? ''}
                     dirty={activeBuffer?.dirty ?? false}
                     filePath={activeFilePath}
+                    openFiles={Object.entries(buffers).map(([path, buffer]) => ({
+                      path,
+                      dirty: buffer.dirty,
+                      readOnly: buffer.readOnly
+                    }))}
                     imagePreview={activeBuffer?.imagePreview}
                     readOnly={activeBuffer?.readOnly}
                     readOnlyReason={activeBuffer?.readOnlyReason}
@@ -7469,14 +7597,35 @@ export function App() {
                         [activeFilePath]: { ...current[activeFilePath], content: next, dirty: true }
                       }));
                     }}
+                    onCloseFile={(path) => {
+                      setBuffers((current) => {
+                        const key = Object.keys(current).find((candidate) => candidate === path || current[candidate].path === path);
+                        if (!key) return current;
+                        const { [key]: _removed, ...rest } = current;
+                        setActiveFilePath((active) => (active === key || active === path ? Object.keys(rest)[0] : active));
+                        return rest;
+                      });
+                    }}
                     onSave={saveActiveFile}
+                    onSelectFile={(path) => setActiveFilePath(path)}
                   />
                 ) : null}
                 {inspectorTab === 'changes' ? (
                   <ChangesPanel
                     changes={workspaceChanges}
                     loading={changesLoading}
+                    onDiscardPatch={(patch) => void discardWorkspacePatch(patch)}
+                    onOpenFile={(path) => void openFile(path)}
                     onRefresh={() => void refreshWorkspaceChanges()}
+                    workspaceRoot={workspaceRoot}
+                  />
+                ) : null}
+                {inspectorTab === 'tools' ? (
+                  <ProductivityPanel
+                    activeChatId={activeChatId}
+                    onForkChat={() => void forkActiveChat()}
+                    onInsertSnippet={insertPromptSnippet}
+                    onOpenChatSearch={() => setShowChatSearch(true)}
                     workspaceRoot={workspaceRoot}
                   />
                 ) : null}

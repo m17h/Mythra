@@ -1,5 +1,10 @@
 node_modules/
 dist/
+out/
+Release Assets/
+.codex/
+test-results/
+playwright-report/
 .DS_Store
 
 # Generated from Images/app_icon.png (see npm run icons:mac)

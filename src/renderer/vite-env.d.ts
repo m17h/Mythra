@@ -20,8 +20,14 @@ import type {
   NexusSetupResult,
   OpenFile,
   OpenRouterCreditsResult,
+  ProjectSettings,
+  PromptSnippet,
+  ChatSearchResult,
+  CostDashboardSummary,
   SavedChat,
   SavedChatMeta,
+  TestRunSummary,
+  ToolHistoryEntry,
   ToolApprovalRequest,
   WorkspaceChanged,
   WorkspaceChanges,
@@ -60,6 +66,7 @@ declare global {
       openFile: (root: string, target: string) => Promise<OpenFile>;
       saveFile: (root: string, target: string, content: string) => Promise<OpenFile>;
       getWorkspaceChanges: (root: string) => Promise<WorkspaceChanges>;
+      discardWorkspacePatch: (root: string, patch: string) => Promise<WorkspaceChanges>;
       getRecommendedWizardWorkspace: (name: string) => Promise<string>;
       chooseWizardWorkspace: (name: string, preferredDefaultPath?: string) => Promise<string | null>;
       chooseWizardProjectsFolder: (preferredDefaultPath?: string) => Promise<string | null>;
@@ -107,6 +114,14 @@ declare global {
       ) => Promise<{ ok: boolean }>;
       stopChat: (requestId: string) => Promise<boolean>;
       runCommand: (command: string, cwd?: string) => Promise<{ jobId: string }>;
+      runCommandCapture: (command: string, cwd?: string) => Promise<{
+        stdout: string;
+        stderr: string;
+        code: number | null;
+        signal: NodeJS.Signals | null;
+        startedAt: number;
+        finishedAt: number;
+      }>;
       killCommand: (jobId: string) => Promise<boolean>;
       onCommandChunk: (callback: (payload: CommandChunk) => void) => () => void;
       onCommandDone: (callback: (payload: CommandResult) => void) => () => void;
@@ -119,8 +134,19 @@ declare global {
       onChatsUpdated: (callback: () => void) => () => void;
       listChats: () => Promise<SavedChatMeta[]>;
       loadChat: (id: string) => Promise<SavedChat | null>;
+      searchChats: (query: string, limit?: number) => Promise<ChatSearchResult[]>;
+      getCostDashboardSummary: () => Promise<CostDashboardSummary>;
       saveChat: (chat: SavedChat) => Promise<void>;
       deleteChat: (id: string) => Promise<boolean>;
+      listPromptSnippets: () => Promise<PromptSnippet[]>;
+      savePromptSnippet: (snippet: PromptSnippet) => Promise<PromptSnippet>;
+      deletePromptSnippet: (id: string) => Promise<boolean>;
+      getProjectSettings: (workspaceRoot: string) => Promise<ProjectSettings>;
+      saveProjectSettings: (settings: ProjectSettings) => Promise<ProjectSettings>;
+      listToolHistory: (limit?: number) => Promise<ToolHistoryEntry[]>;
+      appendToolHistory: (entry: ToolHistoryEntry) => Promise<ToolHistoryEntry>;
+      listTestRuns: (workspaceRoot?: string, limit?: number) => Promise<TestRunSummary[]>;
+      saveTestRun: (run: TestRunSummary) => Promise<TestRunSummary>;
       chooseChatThreadBackground: () => Promise<ChooseChatThreadBackgroundResult>;
       readChatThreadBackground: (request: ReadChatThreadBackgroundRequest | string) => Promise<ReadChatThreadBackgroundResult>;
     };
