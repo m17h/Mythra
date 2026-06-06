@@ -885,28 +885,6 @@ export function SettingsPanel({
           <div className="inline-hint inline-hint--warning">
             AI can write, delete files, and run commands without approval.
           </div>
-
-          <label className={`toggle-row ${settings.agent.autoContinue ? 'is-active-soft' : ''}`}>
-            <span>Continue until done</span>
-            <input
-              checked={settings.agent.autoContinue}
-              onChange={(e) => onChange({ ...settings, agent: { ...settings.agent, autoContinue: e.target.checked } })}
-              type="checkbox"
-            />
-          </label>
-
-          <label className="field">
-            <span>Auto Step Limit</span>
-            <select
-              onChange={(e) => onChange({ ...settings, agent: { ...settings.agent, maxAutoSteps: Number(e.target.value) } })}
-              value={String(settings.agent.maxAutoSteps)}
-            >
-              <option value="12">12 steps</option>
-              <option value="24">24 steps</option>
-              <option value="40">40 steps</option>
-              <option value="60">60 steps</option>
-            </select>
-          </label>
         </div>
 
         {statusMessage && statusMessage.trim() !== 'Saved.' ? <div className="status-line">{statusMessage}</div> : null}

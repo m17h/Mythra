@@ -299,8 +299,6 @@ export type ReadChatThreadBackgroundRequest =
 
 export interface AgentSettings {
   fullAccess: boolean;
-  autoContinue: boolean;
-  maxAutoSteps: number;
 }
 
 export interface AppSettings {
@@ -703,9 +701,7 @@ export const defaultSettings: AppSettings = {
     allowModelSystemPrompt: false
   },
   agent: {
-    fullAccess: false,
-    autoContinue: true,
-    maxAutoSteps: 24
+    fullAccess: false
   },
   ui: {
     themeId: 'neon-grid',

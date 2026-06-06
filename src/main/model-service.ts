@@ -568,7 +568,7 @@ const mythraProductFeaturesInstruction = [
   'Good Wizard examples to suggest when useful: a writing-style or brand-voice assistant; a complex note system (PARA/Zettelkasten/second brain); a project or coding-stack specialist; meeting/research/journal workflows with dated notes; a creative persona or role-play character with a lore bible. Mythra does **not** create todo.md by default; users or Wizards can add extra `.md` guides/tasks if wanted.',
   'Nexus UI and behavior: the Wizards area has a **Wizards / Nexus** switch. New → Nexus creates a shared project workspace for two or more Wizards; the user picks one parent folder and Mythra creates a named project folder. Nexus projects can be pinned. Each member keeps private identity/personality/memory docs, while Nexus has a leader Wizard, mission text, relay mode, parallel mode, team/leader approval options, and a shared project workspace for file tools.',
   'Settings UI exact order in the right Inspector **SETTINGS** tab: **App Updates**, collapsible **Theme**, **Connection**, **System Prompt**, **Web Search**, **Tool Access**, then **Agent Autonomy** at the bottom. Do not tell users Session mode is under Theme; it is controlled from the Chat/Agent switch in the chat header or from the inline switch you can embed when appropriate.',
-  'Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Connection keeps the model selector visible and has collapsible details for provider, OpenRouter credits toggle, output cost estimates toggle, API key/base URL, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search keeps the search provider visible and has collapsible details for provider notes plus Tavily/Brave keys. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode, Continue until done, and Auto Step Limit.',
+  'Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Connection keeps the model selector visible and has collapsible details for provider, OpenRouter credits toggle, output cost estimates toggle, API key/base URL, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search keeps the search provider visible and has collapsible details for provider notes plus Tavily/Brave keys. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode.',
   'Full access mode location: if a user asks where to turn on Full access mode, say: open the right Inspector → SETTINGS, scroll to the bottom, find **Agent Autonomy**, then toggle **Full access mode**. It is not inside Theme and not one of the Tool Access checkboxes. Explain that Full access lets AI write/delete files and run commands without per-action approval.',
   'Message formatting: Mythra supports safe colored text tags in assistant output, so when users ask for green/orange/red/etc. text, use the supported `[color=... tone=...]...[/color]` syntax rather than HTML. Mythra also supports interactive multiple-choice quiz blocks with clickable answer bubbles, interactive data tables, summary stat cards, and inline chart blocks for financial/numerical data; mention those features when users ask about studying, practice, quizzes, analysis, finance, reports, dashboards, or what Mythra can do. Thinking content appears in collapsible Thinking blocks while capable models stream reasoning.'
 ].join(' ');
@@ -636,14 +636,14 @@ function parseToolCallArgumentsJson(raw: string): { ok: true; args: Record<strin
   return { ok: false };
 }
 
-/** Default 30 minutes per `streamChat` invocation; override with `MYTHRA_STREAM_CHAT_WALL_MS` (milliseconds). */
+/** No app-imposed wall-clock timeout by default; set `MYTHRA_STREAM_CHAT_WALL_MS` to add one for debugging. */
 function resolveStreamChatWallMs(): number {
   const raw = process.env.MYTHRA_STREAM_CHAT_WALL_MS;
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 1_800_000;
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Abort when either the user stops the request or the wall-clock deadline is reached (requires runtime AbortSignal.timeout/any). */
+/** Abort when the user stops the request, or when an opt-in debug wall-clock deadline is reached. */
 function mergeStreamDeadline(controller: AbortController, wallMs: number): AbortSignal {
   if (wallMs <= 0) {
     return controller.signal;
@@ -955,7 +955,6 @@ export class ModelService {
       const client = createClient(settings);
       const isTalk = settings.ui.sessionMode === 'talk';
       const sessionContext = await this.buildSessionContext(settings, runtime);
-      let lastVisibleAssistantContent = '';
       const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
 
       const apiMessages: ChatCompletionMessageParam[] = [
@@ -984,12 +983,9 @@ export class ModelService {
         return;
       }
 
-      const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
-
       let turnUsage: ChatCompletionTokenUsage | undefined;
-      let lastRoundUsage: ChatCompletionTokenUsage | undefined;
 
-      for (let step = 0; step < maxAutoSteps; step += 1) {
+      for (;;) {
         this.assertNotStopped(requestId);
 
         const stream = await client.chat.completions.create(
@@ -1047,7 +1043,6 @@ export class ModelService {
 
         this.assertNotStopped(requestId);
         if (lastStreamUsage) {
-          lastRoundUsage = lastStreamUsage;
           turnUsage = addCompletionUsage(turnUsage, lastStreamUsage);
         }
 
@@ -1164,8 +1159,6 @@ export class ModelService {
           continue;
         }
 
-        lastVisibleAssistantContent = normalizedContent;
-
         const done: ChatStreamDone = {
           requestId,
           content: normalizedContent,
@@ -1177,24 +1170,6 @@ export class ModelService {
         this.activeRequests.delete(requestId);
         return;
       }
-
-      this.emitActivity(
-        window,
-        requestId,
-        'warning',
-        `Step limit (${maxAutoSteps} tool rounds) reached. Returning the latest reply instead of failing.`
-      );
-      const done: ChatStreamDone = {
-        requestId,
-        content:
-          lastVisibleAssistantContent ||
-          `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`,
-        usage: turnUsage ?? lastRoundUsage,
-        costEstimate: await this.estimateOpenRouterResponseCost(settings, provider.model, turnUsage ?? lastRoundUsage)
-      };
-      window.webContents.send('chat:done', done);
-      this.activeRequests.delete(requestId);
-      return;
     } finally {
       this.activeRequests.delete(requestId);
     }
@@ -2715,7 +2690,7 @@ export class ModelService {
       runtime.nexusTeamWorkspaces?.length
         ? 'Nexus teammate Wizard workspaces are NOT auto-loaded into this prompt. You have read-only tools to inspect teammate identity/memory/docs on demand: list_nexus_teammate_workspaces and read_nexus_teammate_file. These tools never grant write access to teammate Wizard folders; normal file write tools still target only the shared Nexus workspace.'
         : '',
-      `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
+      'In one user message you may get several model turns: use tools when needed, then reply in plain language. Mythra does not impose a tool-round cap; continue until the work is done or the user presses Stop.',
       'If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.',
       ...(settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : []),
       'Visible workspace entries (truncated):',
@@ -2866,8 +2841,7 @@ export class ModelService {
           },
           agentAutonomy: {
             fullAccessMode: settings.agent.fullAccess,
-            continueUntilDone: settings.agent.autoContinue,
-            autoStepLimit: settings.agent.maxAutoSteps
+            toolRounds: 'uncapped until the model finishes, the provider errors, or the user presses Stop'
           },
           settingsUi: {
             exactOrder: [

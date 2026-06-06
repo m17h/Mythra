@@ -61,8 +61,10 @@ const mergeSettings = (saved: Partial<AppSettings> | undefined): AppSettings =>
       ...saved?.tools
     },
     agent: {
-      ...defaultSettings.agent,
-      ...saved?.agent
+      fullAccess:
+        typeof saved?.agent?.fullAccess === 'boolean'
+          ? saved.agent.fullAccess
+          : defaultSettings.agent.fullAccess
     },
     ui: {
     ...defaultSettings.ui,

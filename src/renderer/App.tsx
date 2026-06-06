@@ -5156,8 +5156,7 @@ export function App() {
               allowModelSystemPrompt: false
             },
             agent: {
-              ...sendSettings.agent,
-              autoContinue: false
+              ...sendSettings.agent
             },
             ui: {
               ...sendSettings.ui,
