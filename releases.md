@@ -1,6 +1,6 @@
 # Mythra Release Process
 
-Mythra is free but closed-source, so release downloads are published manually in the public `m17h/Mythra-Releases` repo instead of the private source repo.
+Mythra is open source, but release downloads are still published manually in the public `m17h/Mythra-Releases` repo so the app updater has a stable place to fetch signed installer assets and metadata.
 
 ## Release Assets Folder
 
