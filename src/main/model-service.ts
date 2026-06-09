@@ -371,6 +371,18 @@ function safeChatToolLimit(value: unknown, fallback: number, max: number) {
   return Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : fallback;
 }
 
+/** Coerce a tool argument to boolean. Models often emit booleans as the strings "false"/"0"/"no". */
+function coerceToolBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    if (v === 'true' || v === '1' || v === 'yes' || v === 'y') return true;
+    if (v === 'false' || v === '0' || v === 'no' || v === 'n' || v === '') return false;
+  }
+  return fallback;
+}
+
 function formatUsd(value: number) {
   if (!Number.isFinite(value)) return null;
   if (value === 0) return '$0.00';
@@ -508,7 +520,12 @@ function parseOpenRouterSseEvent(raw: string): unknown | null {
     .join('\n')
     .trim();
   if (!data || data === '[DONE]') return null;
-  return JSON.parse(data);
+  try {
+    return JSON.parse(data);
+  } catch {
+    // Ignore malformed/partial SSE payloads from provider glitches.
+    return null;
+  }
 }
 
 /** Shown in the second system block so models can emit a placeholder replaced by a real UI control in the client. */
@@ -931,7 +948,9 @@ export class ModelService {
 
     active.stopped = true;
     active.controller.abort();
-    this.activeRequests.delete(requestId);
+    // Keep the entry so cooperative `assertNotStopped` checks and in-flight tool
+    // abort signals (e.g. run_command, summarize_file) still resolve. The stream
+    // path's `finally` removes the entry once the request actually unwinds.
     return true;
   }
 
@@ -1222,6 +1241,8 @@ export class ModelService {
         const ch = chunk.choices[0];
         if (ch?.finish_reason === 'tool_calls') {
           sawTool = true;
+          // Close the HTTP stream early instead of leaving it open until timeout.
+          stream.controller.abort();
           break;
         }
 
@@ -1387,6 +1408,34 @@ export class ModelService {
     const decoder = new TextDecoder();
     let buffer = '';
 
+    const handleEvent = (event: string) => {
+      if (!event.trim()) return;
+      const parsed = parseOpenRouterSseEvent(event) as
+        | {
+            usage?: {
+              prompt_tokens?: number | null;
+              completion_tokens?: number | null;
+              total_tokens?: number | null;
+              completion_tokens_details?: { reasoning_tokens?: number | null } | null;
+            } | null;
+            choices?: Array<{
+              delta?: {
+                content?: unknown;
+                audio?: { data?: unknown; transcript?: unknown };
+              };
+            }>;
+          }
+        | null;
+      if (!parsed) return;
+      const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : undefined;
+      if (mappedUsage) usage = mappedUsage;
+      const delta = parsed.choices?.[0]?.delta;
+      if (!delta) return;
+      if (typeof delta.content === 'string') text += delta.content;
+      if (typeof delta.audio?.data === 'string' && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
+      if (typeof delta.audio?.transcript === 'string' && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+    };
+
     for (;;) {
       this.assertNotStopped(requestId);
       const { done, value } = await reader.read();
@@ -1395,32 +1444,14 @@ export class ModelService {
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? '';
       for (const event of events) {
-        if (!event.trim()) continue;
-        const parsed = parseOpenRouterSseEvent(event) as
-          | {
-              usage?: {
-                prompt_tokens?: number | null;
-                completion_tokens?: number | null;
-                total_tokens?: number | null;
-                completion_tokens_details?: { reasoning_tokens?: number | null } | null;
-              } | null;
-              choices?: Array<{
-                delta?: {
-                  content?: unknown;
-                  audio?: { data?: unknown; transcript?: unknown };
-                };
-              }>;
-            }
-          | null;
-        if (!parsed) continue;
-        const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : undefined;
-        if (mappedUsage) usage = mappedUsage;
-        const delta = parsed.choices?.[0]?.delta;
-        if (!delta) continue;
-        if (typeof delta.content === 'string') text += delta.content;
-        if (typeof delta.audio?.data === 'string' && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
-        if (typeof delta.audio?.transcript === 'string' && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+        handleEvent(event);
       }
+    }
+
+    // Flush any trailing bytes and a final event left in the buffer (no terminating blank line).
+    buffer += decoder.decode();
+    for (const event of buffer.split(/\r?\n\r?\n/)) {
+      handleEvent(event);
     }
 
     return { audioChunks, transcript, text, usage };
@@ -1435,6 +1466,9 @@ export class ModelService {
     controller: AbortController,
     conversationId: string | undefined
   ) {
+    if (settings.selectedProvider !== 'openrouter') {
+      throw new Error('Music generation is currently supported for OpenRouter models only.');
+    }
     let result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ['text', 'audio']);
 
     this.assertNotStopped(requestId);
@@ -3708,7 +3742,7 @@ export class ModelService {
         const path = String(args.path ?? '');
         const search = String(args.search ?? '');
         const replacement = String(args.replacement ?? '');
-        const replaceAll = Boolean(args.replace_all);
+        const replaceAll = coerceToolBoolean(args.replace_all);
         if (!path) throw new Error('replace_in_file requires a path.');
 
         const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
@@ -3865,7 +3899,7 @@ export class ModelService {
           throw new Error('The search_symbols tool is disabled in settings.');
         }
         const query = String(args.query ?? '');
-        const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(200, args.limit)) : 50;
+        const limit = safeChatToolLimit(args.limit, 50, 200);
         return JSON.stringify({ ok: true, results: await this.workspaceService.searchSymbols(workspaceRoot, query, limit) }, null, 2);
       }
 

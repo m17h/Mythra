@@ -1318,6 +1318,8 @@ export function App() {
   const [expandedNexusIds, setExpandedNexusIds] = useState<Set<string>>(new Set());
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Latest args queued by the debounced chat save, so navigation can flush them before clearing the timer. */
+  const pendingChatSaveRef = useRef<{ msgs: ChatMessage[]; tl: ChatTimelineEntry[]; chatId?: string } | null>(null);
   const settingsAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wizardAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nexusAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1586,21 +1588,32 @@ export function App() {
     }
   }, [refreshWorkspaceChanges]);
 
+  /**
+   * Persist a streamed snapshot back to disk.
+   * Returns `'saved'` on success, `'missing'` when the chat no longer exists (nothing to persist),
+   * or `'error'` when the write failed — callers use this to avoid dropping in-flight state on failure.
+   */
   const saveChatSnapshot = useCallback(
-    async (chatId: string, msgs: ChatMessage[], tl: ChatTimelineEntry[]) => {
-      const disk = await window.electronAPI.loadChat(chatId);
-      if (!disk) return;
-      await window.electronAPI.saveChat({
-        ...disk,
-        title:
-          disk.kind === 'wizard-session' || disk.kind === 'nexus-session'
-            ? resolveSessionTitle(msgs, disk.titleOverride)
-            : resolveChatTitle(msgs, disk.titleOverride),
-        messages: msgs,
-        timeline: tl,
-        updatedAt: Date.now()
-      });
-      await refreshChatList();
+    async (chatId: string, msgs: ChatMessage[], tl: ChatTimelineEntry[]): Promise<'saved' | 'missing' | 'error'> => {
+      try {
+        const disk = await window.electronAPI.loadChat(chatId);
+        if (!disk) return 'missing';
+        await window.electronAPI.saveChat({
+          ...disk,
+          title:
+            disk.kind === 'wizard-session' || disk.kind === 'nexus-session'
+              ? resolveSessionTitle(msgs, disk.titleOverride)
+              : resolveChatTitle(msgs, disk.titleOverride),
+          messages: msgs,
+          timeline: tl,
+          updatedAt: Date.now()
+        });
+        await refreshChatList();
+        return 'saved';
+      } catch (error) {
+        console.error('Failed to save chat snapshot', error);
+        return 'error';
+      }
     },
     [refreshChatList]
   );
@@ -1619,8 +1632,9 @@ export function App() {
     }
     const finalSnapshot = inFlightChatsRef.current.get(group.messageId) ?? snapshot;
     if (finalSnapshot) {
-      void saveChatSnapshot(finalSnapshot.chatId, finalSnapshot.messages, finalSnapshot.timeline).finally(() => {
-        if (inFlightChatsRef.current.get(group.messageId) === finalSnapshot) {
+      void saveChatSnapshot(finalSnapshot.chatId, finalSnapshot.messages, finalSnapshot.timeline).then((result) => {
+        // Keep in-flight state if the disk write errored so a later flush can retry without losing data.
+        if (result !== 'error' && inFlightChatsRef.current.get(group.messageId) === finalSnapshot) {
           forgetInFlight(group.messageId);
         }
       });
@@ -1686,6 +1700,9 @@ export function App() {
     return sidebarWizardListMeta;
   }, [activeChatMeta, chatList, sidebarWizardListMeta]);
   const activeWizard = activeWizardMeta?.wizard ?? null;
+  /** Mirror of the active wizard id for use inside long-lived IPC effects without re-subscribing. */
+  const activeWizardMetaIdRef = useRef<string | undefined>(undefined);
+  activeWizardMetaIdRef.current = activeWizardMeta?.id;
   const activeNexusMeta = useMemo(() => {
     if (activeChatMeta?.kind === 'nexus-session' && activeChatMeta.nexusId) {
       return chatList.find((c) => c.id === activeChatMeta.nexusId && c.kind === 'nexus');
@@ -1927,12 +1944,39 @@ export function App() {
   const debouncedSave = useCallback(
     (msgs: ChatMessage[], tl: ChatTimelineEntry[], chatId?: string) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      pendingChatSaveRef.current = { msgs, tl, chatId };
       saveTimerRef.current = setTimeout(() => {
-        void persistCurrentChat(msgs, tl, chatId);
+        saveTimerRef.current = null;
+        const pending = pendingChatSaveRef.current;
+        if (!pending) return;
+        void persistCurrentChat(pending.msgs, pending.tl, pending.chatId)
+          .then(() => {
+            if (pendingChatSaveRef.current === pending) pendingChatSaveRef.current = null;
+          })
+          .catch((error) => {
+            console.error('Failed to save pending chat', error);
+          });
       }, 1500);
     },
     [persistCurrentChat]
   );
+
+  /** Run any pending debounced chat save immediately. Call before navigating away to avoid losing in-window edits. */
+  const flushChatSaveTimer = useCallback(async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pending = pendingChatSaveRef.current;
+    if (pending) {
+      try {
+        await persistCurrentChat(pending.msgs, pending.tl, pending.chatId);
+        if (pendingChatSaveRef.current === pending) pendingChatSaveRef.current = null;
+      } catch (error) {
+        console.error('Failed to flush pending chat save', error);
+      }
+    }
+  }, [persistCurrentChat]);
 
   const appliedCustomTokensRef = useRef(new Set<string>());
 
@@ -2331,15 +2375,19 @@ export function App() {
           setChatStreaming(false);
           setActiveRequestId(undefined);
         }
-        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
-          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).then((result) => {
+          if (result !== 'error' && inFlightChatsRef.current.get(requestId) === snapshot) {
             forgetInFlight(requestId);
           }
         });
         return;
       }
-      setChatStreaming(false);
-      setActiveRequestId(undefined);
+      // No in-flight entry for this request: only clear streaming UI if this orphaned event
+      // belongs to the request the user is currently watching (avoid killing a newer stream).
+      if (activeRequestIdRef.current === requestId) {
+        setChatStreaming(false);
+        setActiveRequestId(undefined);
+      }
     });
     const offError = window.electronAPI.onChatError(({ requestId, error }) => {
       const hiddenRouter = hiddenNexusRouterRequestsRef.current.get(requestId);
@@ -2397,22 +2445,30 @@ export function App() {
           setChatStreaming(false);
           setActiveRequestId(undefined);
         }
-        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).finally(() => {
-          if (inFlightChatsRef.current.get(requestId) === snapshot) {
+        void saveChatSnapshot(snapshot.chatId, snapshot.messages, snapshot.timeline).then((result) => {
+          if (result !== 'error' && inFlightChatsRef.current.get(requestId) === snapshot) {
             forgetInFlight(requestId);
           }
         });
         return;
       }
-      setChatStreaming(false);
-      setActiveRequestId(undefined);
+      // Orphaned error event: only clear streaming UI for the request being watched.
+      if (activeRequestIdRef.current === requestId) {
+        setChatStreaming(false);
+        setActiveRequestId(undefined);
+      }
     });
     const offActivity = window.electronAPI.onChatActivity((payload) => {
       appendActivity(payload);
+      // Attribute history to the chat that owns this request, not whatever chat is currently on screen.
+      const owningChatId =
+        inFlightChatsRef.current.get(payload.requestId)?.chatId ??
+        nexusMultiResponseGroupsRef.current.get(payload.requestId)?.chatId ??
+        activeChatIdRef.current;
       void window.electronAPI.appendToolHistory({
         id: `${payload.id}-${Date.now()}`,
         at: Date.now(),
-        chatId: activeChatIdRef.current,
+        chatId: owningChatId,
         requestId: payload.requestId,
         kind: payload.kind,
         message: payload.message
@@ -2440,7 +2496,7 @@ export function App() {
         if (wDraft && pathsEqual(wDraft.workspaceRoot, root)) {
           try {
             const docs = await window.electronAPI.listWizardDocuments(root);
-            const wid = activeWizardMeta?.id;
+            const wid = activeWizardMetaIdRef.current;
             const cur = wizardDraftRef.current;
             if (wid && cur && pathsEqual(cur.workspaceRoot, root)) {
               const full = await window.electronAPI.loadChat(wid);
@@ -2476,13 +2532,16 @@ export function App() {
         }
 
         if (fileDeleted) {
-          setBuffers((c) => {
-            const key = Object.keys(c).find((k) => k === fileDeleted || c[k].path === fileDeleted);
-            if (key == null) return c;
-            const { [key]: _removed, ...rest } = c;
+          const current = buffersRef.current;
+          const key = Object.keys(current).find((k) => k === fileDeleted || current[k].path === fileDeleted);
+          if (key != null) {
+            setBuffers((c) => {
+              if (!(key in c)) return c;
+              const { [key]: _removed, ...rest } = c;
+              return rest;
+            });
             setActiveFilePath((a) => (a != null && (a === key || a === fileDeleted) ? undefined : a));
-            return rest;
-          });
+          }
         }
 
         if (fileWritten) {
@@ -2515,7 +2574,7 @@ export function App() {
       offToolApproval();
       offWorkspaceChanged();
     };
-  }, [activeWizardMeta?.id, refreshChatList, refreshWorkspaceChanges]);
+  }, [refreshChatList, refreshWorkspaceChanges]);
 
   useEffect(() => {
     if (chatMessages.length > 0 && !chatStreaming) {
@@ -3165,10 +3224,7 @@ export function App() {
   };
 
   const startNewChat = async () => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
     setSidebarFocusedWizardId(undefined);
     setSidebarFocusedNexusId(undefined);
     await switchAwayFromWizardMountedWorkspace();
@@ -3252,10 +3308,7 @@ export function App() {
   };
 
   const loadChat = async (id: string, opts?: { expandWizardInSidebar?: boolean }) => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
     const chat = await window.electronAPI.loadChat(id);
     if (!chat) return;
 
@@ -3355,10 +3408,7 @@ export function App() {
   const handleWizardSidebarRowActivate = async (chat: SavedChatMeta) => {
     if (!chat.wizard?.workspaceRoot) return;
 
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
 
     const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
     const sessionOpenForThisWizard =
@@ -3429,10 +3479,7 @@ export function App() {
   const handleNexusSidebarRowActivate = async (project: SavedChatMeta) => {
     if (project.kind !== 'nexus' || !project.nexus?.workspaceRoot) return;
 
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
 
     const active = activeChatId ? chatList.find((c) => c.id === activeChatId) : undefined;
     const sessionOpenForThisNexus =
@@ -3536,10 +3583,7 @@ export function App() {
   };
 
   const clearActiveConversation = async () => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
     setSidebarFocusedWizardId(undefined);
     setSidebarFocusedNexusId(undefined);
     await switchAwayFromWizardMountedWorkspace();
@@ -3746,10 +3790,7 @@ export function App() {
   const createWizardSession = async (wizardMeta: SavedChatMeta) => {
     const full = await window.electronAPI.loadChat(wizardMeta.id);
     if (!full || full.kind !== 'wizard' || !full.wizard) return;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
     const bootstrap = await createWizardSessionBootstrapOnDisk(full);
     if (!bootstrap) return;
     const { assistantMessage, timeline, sessionId } = bootstrap;
@@ -3817,10 +3858,7 @@ export function App() {
   const createNexusSession = async (nexusMeta: SavedChatMeta) => {
     const full = await window.electronAPI.loadChat(nexusMeta.id);
     if (!full || full.kind !== 'nexus' || !full.nexus) return;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
+    await flushChatSaveTimer();
     const bootstrap = await createNexusSessionBootstrapOnDisk(full);
     if (!bootstrap) return;
     const { assistantMessage, timeline, sessionId } = bootstrap;
@@ -4619,10 +4657,7 @@ export function App() {
     let disk: SavedChat | null = stableChatId ? await window.electronAPI.loadChat(stableChatId) : null;
 
     if (activeWizard && activeWizardMeta?.id && (!disk || disk.kind === 'wizard')) {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
+      await flushChatSaveTimer();
       const fullWizard = await window.electronAPI.loadChat(activeWizardMeta.id);
       if (
         !fullWizard ||

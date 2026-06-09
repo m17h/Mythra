@@ -20,3 +20,5 @@ Etc
 I know I didn't word those well so you do better but basically like that. Those examples were
 From another app but you get the idea. This file will change with every release but it helps 
 me post the changes to the release repo without having to keep track of every single change we made together. Thanks! ALSO make sure to actually look at the edits we've made since the last version we built by looking through the git changes I guess or whatever you need to look at. Sometimes I do end up making changes to the app inside of Cursor and I want you to catch those changes as well.
+
+ALSO do not put something in release notes like "updated to 0.9.2" because that is unnecessary information. The update is 0.9.2 so we can assume that was done.
