@@ -16,7 +16,7 @@ At a glance, Mythra gives you:
 - Support for OpenRouter, LM Studio, and Ollama.
 - A polished Electron desktop interface with Monaco editing, file browsing, changes review, themes, onboarding, and auto-updates.
 
-> Status: Mythra is actively developed. Current app version: `0.9.2`.
+> Status: Mythra is actively developed. Current app version: `0.9.3`.
 
 ## Contents
 
@@ -433,4 +433,3 @@ npm run test:e2e
 ## License
 
 This repository does not currently include a `LICENSE` file. Since the project has just moved into the open, add an explicit license before relying on the code for redistribution, reuse, or packaged forks.
-
