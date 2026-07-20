@@ -23,7 +23,10 @@ export function ModelSearch({
   favoriteIds = [],
   onChange,
   onToggleFavorite,
-  portalDropdown = false
+  portalDropdown = false,
+  disabled = false,
+  placeholder = 'Search models...',
+  emptyMessage
 }: {
   models: ModelInfo[];
   value: string;
@@ -32,6 +35,9 @@ export function ModelSearch({
   onToggleFavorite?: (id: string) => void;
   /** Render dropdown in a portal so it escapes overflow-hidden ancestors. */
   portalDropdown?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+  emptyMessage?: string;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -172,7 +178,9 @@ export function ModelSearch({
       onScroll={hideHoverTooltip}
     >
       {filtered.length === 0 ? (
-        <div className="model-search__empty">No models match &ldquo;{query}&rdquo;</div>
+        <div className="model-search__empty">
+          {emptyMessage ?? (query ? <>No models match &ldquo;{query}&rdquo;</> : 'No models available')}
+        </div>
       ) : (
         filtered.slice(0, 50).map((m) => {
           const isFav = favoriteIds.includes(m.id);
@@ -242,13 +250,16 @@ export function ModelSearch({
       <input
         ref={inputRef}
         className="model-search__input"
-        placeholder="Search models..."
+        disabled={disabled}
+        placeholder={placeholder}
         value={open ? query : displayValue}
         onFocus={() => {
+          if (disabled) return;
           setOpen(true);
           setQuery('');
         }}
         onChange={(e) => {
+          if (disabled) return;
           setQuery(e.target.value);
           setOpen(true);
         }}

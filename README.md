@@ -4,19 +4,18 @@
 
 # Mythra
 
-Mythra is a desktop AI workspace for coding, research, chat, local files, media generation, persistent assistant profiles, and multi-agent collaboration. It is built for people who want the speed and privacy of local models when possible, the reach of hosted models when useful, and a real desktop app around both.
+Mythra is a desktop context studio for persistent AI assistants called Wizards. Each Wizard can use any supported OpenRouter or local model while carrying your selected Markdown instructions, knowledge, examples, corrections, and memory into every conversation.
 
 At a glance, Mythra gives you:
 
-- Normal AI chat with saved history, chat search, model overrides, cost estimates, and rich Markdown.
-- Agent mode that can inspect a workspace, read and edit files, run commands, review diffs, and keep working until you press Stop.
-- Persistent Wizards: specialized assistants with their own model, prompt, memory files, workspace folder, and export/import format.
-- Nexus projects: teams of Wizards that collaborate inside a shared project workspace.
-- Media chats for image, music/audio, and video generation through supported models.
-- Support for OpenRouter, LM Studio, and Ollama.
-- A polished Electron desktop interface with Monaco editing, file browsing, changes review, themes, onboarding, and auto-updates.
+- Persistent Wizards with their own model, system prompt, sessions, tools, and local Markdown context.
+- Selectable always-on documents with a visible context estimate before you send.
+- Normal saved chats when you do not need a persistent specialist.
+- OpenRouter, LM Studio, and Ollama support, with model choice per Wizard.
+- Search, web access, file tools, command execution, approvals, and other capabilities available when useful.
+- Local ownership, editable Markdown, and portable Wizard import/export bundles.
 
-> Status: Mythra is actively developed. Current app version: `0.9.3`.
+> Status: Mythra is actively developed. Current app version: `0.9.4`.
 
 ## Contents
 
@@ -39,18 +38,18 @@ At a glance, Mythra gives you:
 
 ## Why Mythra Exists
 
-Most AI coding tools are either web chats with limited file access, IDE extensions that inherit the shape of the editor, or agent CLIs that assume you are comfortable living in a terminal. Mythra takes a different path: it is a full desktop app for working with AI in a project folder.
+Most AI chats make you repeat the same background, examples, corrections, and preferences whenever you begin again. Prompt presets help with instructions, but they are not a transparent, evolving body of context that you can inspect and own.
 
-The goal is not just "ask a model questions." The goal is to make AI work feel like a real local workspace:
+Mythra takes a different path. Its goal is to make specialized AI context persistent, visible, and portable:
 
-- The model can see the relevant files when you allow it.
-- You can review changes in a dedicated Changes panel.
-- You can keep normal chat separate from file-editing Agent work.
-- You can create specialized assistants that remember their role across sessions.
-- You can use local models, hosted models, or both.
-- You can stop long-running work at any time from the message bar.
+- A Wizard receives its selected Markdown documents on every message.
+- You can see which documents are included and how much context they consume.
+- You can refine identity, personality, knowledge, memory, and corrections over time.
+- You can switch models without rebuilding the Wizard.
+- You can keep normal chat separate for one-off conversations.
+- Tools remain available without turning Mythra into a coding environment.
 
-Mythra is intentionally personal and tool-heavy. It is closer to an AI workshop than a generic SaaS chat box.
+Mythra is intentionally personal and transparent. It is closer to a workshop for shaping long-lived AI specialists than a generic chat box.
 
 ## Screenshots
 
@@ -315,9 +314,9 @@ Tool execution is guarded by:
 
 ## Install for Users
 
-Packaged releases are published separately from this source repo:
+Signed, notarized builds are published with this source repository:
 
-[Mythra Releases](https://github.com/m17h/Mythra-Releases)
+[Mythra Releases](https://github.com/m17h/Mythra/releases)
 
 Typical release assets include:
 
@@ -326,7 +325,7 @@ Typical release assets include:
 - `Mythra-Setup-<version>.exe` for Windows install.
 - `latest-mac.yml` and `latest.yml` for Electron auto-updater metadata.
 
-The app’s built-in updater checks the public release repo.
+The app’s built-in updater checks this repository’s public releases.
 
 ## Run from Source
 
@@ -401,7 +400,7 @@ High-level flow:
 9. Create, sign, notarize, and staple the DMG.
 10. Build the release asset folder.
 11. Update `Release Assets/release_notes.md`.
-12. Upload assets to the public release repo.
+12. Upload assets to this repository’s GitHub release.
 
 ## Contributing
 

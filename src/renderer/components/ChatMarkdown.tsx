@@ -167,14 +167,36 @@ function remarkChatMentionText(names: string[]) {
   };
 }
 
+// Reject SVG (and XML) data URLs: they can carry inline scripts/event handlers
+// that execute in the Electron renderer. Only allow raster/known-safe media data.
+const SAFE_IMAGE_DATA_RE = /^data:image\/(png|jpe?g|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)[;,]/i;
+const SAFE_VIDEO_DATA_RE = /^data:video\/(mp4|webm|ogg|quicktime)[;,]/i;
+const SAFE_AUDIO_DATA_RE = /^data:audio\/(mpeg|mp3|wav|x-wav|ogg|webm|aac|flac|mp4)[;,]/i;
+
+// Schemes considered safe for plain (non-media) links rendered in the renderer.
+const SAFE_LINK_SCHEME_RE = /^(https?|mailto|tel):/i;
+
+function isSafeLinkHref(rawHref: unknown): boolean {
+  if (typeof rawHref !== 'string') return false;
+  const href = rawHref.trim();
+  if (!href) return false;
+  // Allow in-app/relative and fragment links.
+  if (/^(#|\/|\.\.?\/)/.test(href)) return true;
+  // Block dangerous schemes like javascript:, data:, vbscript:, file:, blob:.
+  return SAFE_LINK_SCHEME_RE.test(href);
+}
+
 function mediaKindFromHref(rawHref: unknown): MediaKind | null {
   if (typeof rawHref !== 'string') return null;
   const href = rawHref.trim();
   if (!href) return null;
-  if (/^data:image\//i.test(href)) return 'image';
-  if (/^data:video\//i.test(href)) return 'video';
-  if (/^data:audio\//i.test(href)) return 'audio';
-  if (!/^(https?:|blob:|data:)/i.test(href)) return null;
+  if (/^data:/i.test(href)) {
+    if (SAFE_IMAGE_DATA_RE.test(href)) return 'image';
+    if (SAFE_VIDEO_DATA_RE.test(href)) return 'video';
+    if (SAFE_AUDIO_DATA_RE.test(href)) return 'audio';
+    return null;
+  }
+  if (!/^(https?:|blob:)/i.test(href)) return null;
   if (IMAGE_EXT_RE.test(href)) return 'image';
   if (VIDEO_EXT_RE.test(href)) return 'video';
   if (AUDIO_EXT_RE.test(href)) return 'audio';
@@ -194,6 +216,11 @@ function mediaDownloadName(href: string, fallback = 'media') {
 function MediaMarkdownLink({ href, children }: { href: string; children: ReactNode }) {
   const kind = mediaKindFromHref(href);
   if (!kind) {
+    if (!isSafeLinkHref(href)) {
+      // Unsafe scheme (e.g. javascript:, data:, file:) — render inert text so it
+      // can never navigate or execute in the Electron renderer.
+      return <span className="chat-unsafe-link">{children}</span>;
+    }
     return (
       <a href={href} rel="noopener noreferrer" target="_blank">
         {children}
@@ -229,10 +256,15 @@ const markdownComponents: Components = {
     href ? (
       <MediaMarkdownLink href={href}>{children}</MediaMarkdownLink>
     ) : (
-      <a {...rest} rel="noopener noreferrer" target="_blank">
-        {children}
-      </a>
+      <span className="chat-unsafe-link">{children}</span>
     ),
+  img: ({ node, src, alt, ...rest }) => {
+    // Only allow raster/safe media; block javascript:, svg data URLs, etc.
+    if (typeof src === 'string' && mediaKindFromHref(src) === 'image') {
+      return <img {...rest} alt={alt ?? ''} src={src} />;
+    }
+    return <span className="chat-unsafe-link">{alt || ''}</span>;
+  },
   table: ({ children, node, ...rest }) => (
     <div className="table-wrap">
       <table {...rest}>{children}</table>

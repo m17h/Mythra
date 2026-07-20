@@ -267,40 +267,37 @@ export function SettingsPanel({
           <div className="field-row">
             <div className="field">
               <span>Model</span>
-              {modelOptions.length > 0 ? (
-                <ModelSearch
-                  favoriteIds={settings.ui.favoriteModels?.[settings.selectedProvider] ?? []}
-                  models={modelOptions}
-                  onChange={(id) => updateProvider({ model: id })}
-                  portalDropdown
-                  onToggleFavorite={(id) => {
-                    const k = settings.selectedProvider;
-                    const baseFav =
-                      settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
-                    const nextSet = new Set(baseFav[k] ?? []);
-                    if (nextSet.has(id)) nextSet.delete(id);
-                    else nextSet.add(id);
-                    const next: AppSettings = {
-                      ...settings,
-                      ui: {
-                        ...settings.ui,
-                        favoriteModels: {
-                          ...baseFav,
-                          [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
-                        }
+              <ModelSearch
+                disabled={modelOptions.length === 0}
+                emptyMessage="No models available for this provider"
+                favoriteIds={settings.ui.favoriteModels?.[settings.selectedProvider] ?? []}
+                models={modelOptions}
+                onChange={(id) => updateProvider({ model: id })}
+                placeholder="Select a model"
+                portalDropdown
+                onToggleFavorite={(id) => {
+                  const k = settings.selectedProvider;
+                  const baseFav =
+                    settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                  const nextSet = new Set(baseFav[k] ?? []);
+                  if (nextSet.has(id)) nextSet.delete(id);
+                  else nextSet.add(id);
+                  const next: AppSettings = {
+                    ...settings,
+                    ui: {
+                      ...settings.ui,
+                      favoriteModels: {
+                        ...baseFav,
+                        [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
                       }
-                    };
-                    onChange(next);
-                    // Same as web search / custom presets: persist immediately so favorites survive restart (dev or prod).
-                    void onPresetPersist(next);
-                  }}
-                  value={provider.model}
-                />
-              ) : (
-                <select onChange={(e) => updateProvider({ model: e.target.value })} value={provider.model}>
-                  <option value="">Select model</option>
-                </select>
-              )}
+                    }
+                  };
+                  onChange(next);
+                  // Same as web search / custom presets: persist immediately so favorites survive restart (dev or prod).
+                  void onPresetPersist(next);
+                }}
+                value={provider.model}
+              />
             </div>
             {isLmStudio || isOllama ? (
               <button className="btn btn--secondary field-row__button" onClick={onRefreshModels} type="button">
@@ -852,8 +849,8 @@ export function SettingsPanel({
             {([
               ['fileRead', 'Read files'],
               ['fileWrite', 'Write files'],
-              ['workspaceSearch', 'Workspace search'],
-              ['commandDeck', 'Command deck'],
+              ['workspaceSearch', 'Search local context'],
+              ['commandDeck', 'Run commands'],
               ['allowModelSystemPrompt', 'AI can change system prompt']
             ] as const).map(([key, label]) => (
               <label className={`toggle-row ${settings.tools[key] ? 'is-active-soft' : ''}`} key={key}>
@@ -867,13 +864,13 @@ export function SettingsPanel({
             ))}
           </div>
           <div className="inline-hint">
-            When <strong>AI can change system prompt</strong> is on, Agent mode may call <code>set_system_prompt</code>{' '}
+            When <strong>AI can change system prompt</strong> is on, Tools mode may call <code>set_system_prompt</code>{' '}
             after you ask—saved to Settings for the selected provider (with approval unless Full access).
           </div>
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">Agent Autonomy</h4>
+          <h4 className="settings-section__title">Tool Approvals</h4>
           <label className={`toggle-row toggle-row--warning ${settings.agent.fullAccess ? 'is-active' : ''}`}>
             <span>Full access mode</span>
             <input
@@ -883,7 +880,7 @@ export function SettingsPanel({
             />
           </label>
           <div className="inline-hint inline-hint--warning">
-            AI can write, delete files, and run commands without approval.
+            Enabled tools can make changes and run actions without asking each time.
           </div>
         </div>
 

@@ -177,12 +177,23 @@ export function WizardSettingsPanel({
     <section className="panel settings-panel">
       <div className="settings-panel__header">
         <div>
-          <h3 className="settings-panel__title">Wizard</h3>
-          <p className="settings-panel__subtitle">Model, memory, and private workspace</p>
+          <h3 className="settings-panel__title">Wizard context</h3>
+          <p className="settings-panel__subtitle">What this AI knows every time you talk</p>
         </div>
       </div>
 
       <div className="settings-scroll">
+        <div className="wizard-context-hero">
+          <div>
+            <span>Always-on Markdown</span>
+            <strong>{markdownTokenEstimateText}</strong>
+          </div>
+          <p>
+            {markdownTokenEstimate.total === 0
+              ? 'Add Markdown files to give this Wizard persistent knowledge, instructions, examples, and memory.'
+              : `${markdownTokenEstimate.included}/${markdownTokenEstimate.total} documents will be added to every message you send.`}
+          </p>
+        </div>
         <div className="settings-section">
           <h4 className="settings-section__title">Identity</h4>
           <label className="field">
@@ -239,44 +250,43 @@ export function WizardSettingsPanel({
           </div>
           <div className="field">
             <span>Model</span>
-            {localModels.length ? (
-              <ModelSearch
-                favoriteIds={settings.ui.favoriteModels?.[wizard.provider] ?? defaultSettings.ui.favoriteModels[wizard.provider]}
-                models={localModels}
-                onChange={(model) => onChange({ ...wizard, model })}
-                portalDropdown
-                onToggleFavorite={(id) => {
-                  const k = wizard.provider;
-                  const baseFav =
-                    settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
-                  const nextSet = new Set(baseFav[k] ?? []);
-                  if (nextSet.has(id)) nextSet.delete(id);
-                  else nextSet.add(id);
-                  const next: AppSettings = {
-                    ...settings,
-                    ui: {
-                      ...settings.ui,
-                      favoriteModels: {
-                        ...baseFav,
-                        [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
-                      }
+            <ModelSearch
+              disabled={localModels.length === 0}
+              emptyMessage="No models available for this provider"
+              favoriteIds={settings.ui.favoriteModels?.[wizard.provider] ?? defaultSettings.ui.favoriteModels[wizard.provider]}
+              models={localModels}
+              onChange={(model) => onChange({ ...wizard, model })}
+              placeholder="Select a model"
+              portalDropdown
+              onToggleFavorite={(id) => {
+                const k = wizard.provider;
+                const baseFav =
+                  settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                const nextSet = new Set(baseFav[k] ?? []);
+                if (nextSet.has(id)) nextSet.delete(id);
+                else nextSet.add(id);
+                const next: AppSettings = {
+                  ...settings,
+                  ui: {
+                    ...settings.ui,
+                    favoriteModels: {
+                      ...baseFav,
+                      [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
                     }
-                  };
-                  onSettingsChangeForFavorites(next);
-                  void onPresetPersist(next);
-                }}
-                value={wizard.model}
-              />
-            ) : (
-              <input readOnly value={wizard.model || 'No model selected'} />
-            )}
+                  }
+                };
+                onSettingsChangeForFavorites(next);
+                void onPresetPersist(next);
+              }}
+              value={wizard.model}
+            />
           </div>
         </div>
 
         <div className="settings-section">
           <div className="wizard-doc-token-meter">
             <div className="wizard-doc-token-meter__copy">
-              <span>Markdown context estimate</span>
+              <span>Included context</span>
               <strong>{markdownTokenEstimateText}</strong>
             </div>
             <div className="wizard-doc-token-meter__meta">
@@ -312,7 +322,7 @@ export function WizardSettingsPanel({
                     strokeLinejoin="round"
                   />
                 </svg>
-                <span className="chat-thread-options__title">Markdown documents</span>
+                <span className="chat-thread-options__title">Context documents</span>
               </span>
               {!markdownDocumentsExpanded ? (
                 <span className="chat-thread-options__badge">
@@ -346,7 +356,7 @@ export function WizardSettingsPanel({
                             />
                             <span className="wizard-doc-list__text">
                               <code>{doc.path.split(/[\\/]/).pop()}</code>
-                              <small>{doc.autoInject !== false ? 'Auto-injected' : 'Not injected'}</small>
+                              <small>{doc.autoInject !== false ? 'Included every message' : 'Not included'}</small>
                             </span>
                           </label>
                           <button
@@ -355,7 +365,7 @@ export function WizardSettingsPanel({
                             title={`Open ${doc.path}`}
                             type="button"
                           >
-                            Open
+                            Edit
                           </button>
                         </div>
                       ))}
@@ -368,7 +378,7 @@ export function WizardSettingsPanel({
         </div>
 
         <div className="settings-section">
-          <h4 className="settings-section__title">Agent autonomy</h4>
+          <h4 className="settings-section__title">Tools &amp; permissions</h4>
           <label className={`toggle-row toggle-row--warning ${wizard.fullAccess ? 'is-active' : ''}`}>
             <span>Full access mode</span>
             <input
@@ -378,8 +388,7 @@ export function WizardSettingsPanel({
             />
           </label>
           <div className="inline-hint inline-hint--warning">
-            When on, this Wizard can write, delete files, and run commands without per-action approval — same idea as
-            Settings → Agent autonomy → Full access for normal chats.
+            When on, this Wizard can make changes and run enabled tool actions without asking for approval each time.
           </div>
           <label className={`toggle-row toggle-row--warning ${wizard.allowOutsideWorkspace ? 'is-active' : ''}`}>
             <span>Allow paths outside workspace</span>
@@ -390,9 +399,8 @@ export function WizardSettingsPanel({
             />
           </label>
           <div className="inline-hint inline-hint--warning">
-            When on, read/write/replace/rename/delete/outline tools may use ../ or absolute paths elsewhere on this Mac
-            (cloud-sync locations remain blocked). list_files, symbol search, apply_patch, git diff, and shell cwd stay
-            inside this Wizard folder—copy files here if they need listing or patching.
+            When on, file-based tools may use local paths outside this Wizard’s context folder. Cloud-synced locations
+            remain blocked, and some tools stay scoped to the Wizard folder for safety.
           </div>
         </div>
 

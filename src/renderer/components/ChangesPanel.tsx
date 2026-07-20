@@ -69,50 +69,63 @@ function DiffView({
           Showing first {MAX_RENDERED_DIFF_LINES.toLocaleString()} of {parsed.originalLineCount.toLocaleString()} diff lines.
         </div>
       ) : null}
-      {parsed.groups.map((group, index) => (
-        <details className="changes-diff-file" key={group.id} open={index < 4}>
-          <summary>
-            <span>{group.title}</span>
-            <small>{group.lines.length.toLocaleString()} lines</small>
-          </summary>
-          <div className="changes-diff-file__actions">
-            <button disabled={!filePathFromDiffTitle(group.title)} onClick={() => onOpenFile?.(filePathFromDiffTitle(group.title))} type="button">
-              Open file
-            </button>
-            <button onClick={() => void navigator.clipboard.writeText(group.lines.map((line) => line.text).join('\n'))} type="button">
-              Copy file diff
-            </button>
-          </div>
-          <div className="changes-hunks">
-            {hunksForGroup(group).map((hunk) => (
-              <details className="changes-hunk" key={hunk.id}>
-                <summary>
-                  <span>{hunk.title}</span>
-                  <small>{hunk.lines.length.toLocaleString()} lines</small>
-                </summary>
-                <div className="changes-hunk__actions">
-                  <button onClick={() => void navigator.clipboard.writeText(hunk.patch)} type="button">Copy hunk patch</button>
-                  <button disabled={!onDiscardPatch} onClick={() => onDiscardPatch?.(hunk.patch)} type="button">Discard hunk</button>
-                </div>
-                <pre className="changes-diff">
-                  {hunk.lines.map((line) => (
-                    <span className={`changes-diff__line ${line.className}`} key={line.id}>
-                      {line.text}
-                    </span>
-                  ))}
-                </pre>
-              </details>
-            ))}
-          </div>
-          <pre className="changes-diff">
-            {group.lines.map((line) => (
-              <span className={`changes-diff__line ${line.className}`} key={line.id}>
-                {line.text}
-              </span>
-            ))}
-          </pre>
-        </details>
-      ))}
+      {parsed.groups.map((group, index) => {
+        const hunks = hunksForGroup(group);
+        return (
+          <details className="changes-diff-file" key={group.id} open={index < 4}>
+            <summary>
+              <span>{group.title}</span>
+              <small>{group.lines.length.toLocaleString()} lines</small>
+            </summary>
+            <div className="changes-diff-file__actions">
+              <button disabled={!filePathFromDiffTitle(group.title)} onClick={() => onOpenFile?.(filePathFromDiffTitle(group.title))} type="button">
+                Open file
+              </button>
+              <button onClick={() => void navigator.clipboard.writeText(group.lines.map((line) => line.text).join('\n'))} type="button">
+                Copy file diff
+              </button>
+            </div>
+            {hunks.length > 0 ? (
+              <div className="changes-hunks">
+                {hunks.map((hunk) => (
+                  <details className="changes-hunk" key={hunk.id}>
+                    <summary>
+                      <span>{hunk.title}</span>
+                      <small>{hunk.lines.length.toLocaleString()} lines</small>
+                    </summary>
+                    <div className="changes-hunk__actions">
+                      <button onClick={() => void navigator.clipboard.writeText(hunk.patch)} type="button">Copy hunk patch</button>
+                      <button
+                        disabled={!onDiscardPatch || parsed.truncated}
+                        onClick={() => onDiscardPatch?.(hunk.patch)}
+                        title={parsed.truncated ? 'Discard is disabled while the diff is truncated to avoid applying an incomplete patch.' : undefined}
+                        type="button"
+                      >
+                        Discard hunk
+                      </button>
+                    </div>
+                    <pre className="changes-diff">
+                      {hunk.lines.map((line) => (
+                        <span className={`changes-diff__line ${line.className}`} key={line.id}>
+                          {line.text}
+                        </span>
+                      ))}
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            ) : (
+              <pre className="changes-diff">
+                {group.lines.map((line) => (
+                  <span className={`changes-diff__line ${line.className}`} key={line.id}>
+                    {line.text}
+                  </span>
+                ))}
+              </pre>
+            )}
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -133,7 +146,7 @@ export function ChangesPanel({ changes, loading, workspaceRoot, onRefresh, onDis
       {!workspaceRoot ? (
         <div className="changes-panel__empty">No workspace is open.</div>
       ) : changes?.error ? (
-        <div className="changes-panel__empty">{changes.error}</div>
+        <div className="changes-panel__empty changes-panel__error" role="alert">{changes.error}</div>
       ) : (
         <div className="changes-panel__body">
           <section className="changes-panel__block">

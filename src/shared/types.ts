@@ -705,7 +705,7 @@ export const defaultSettings: AppSettings = {
   },
   ui: {
     themeId: 'neon-grid',
-    sessionMode: 'agent',
+    sessionMode: 'talk',
     webSearch: false,
     showOpenRouterCredits: false,
     showModelOutputCosts: true,

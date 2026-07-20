@@ -701,6 +701,8 @@ interface ChatPanelProps {
   chatMessages: ChatMessage[];
   /** Max context from model catalog, or a default when unknown. */
   contextLimit: number;
+  /** Always-injected Wizard Markdown included before the next request. */
+  injectedContextTokens?: number;
   /** Nexus-only: alternate wizard context windows that can be shown in the footer meter. */
   contextMeterOptions?: ChatContextMeterOption[];
   /** Last API usage for this thread, if the provider reported it. */
@@ -1186,6 +1188,7 @@ export function ChatPanel({
   onStop,
   chatMessages,
   contextLimit,
+  injectedContextTokens = 0,
   contextMeterOptions = [],
   lastTokenUsage,
   onSessionModeToggle,
@@ -1293,12 +1296,12 @@ export function ChatPanel({
 
   const contextUsedEstimate = useMemo(() => {
     const threadRough =
-      roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS;
+      roughTokensFromMessages(chatMessages) + DEFAULT_HIDDEN_SYSTEM_OVERHEAD_TOKENS + injectedContextTokens;
     const draftRough = roughTokensForDraft(input, attachments);
     const rough = threadRough + draftRough;
     if (lastTokenUsage == null) return rough;
     return Math.max(rough, lastTokenUsage.totalTokens);
-  }, [attachments, chatMessages, input, lastTokenUsage]);
+  }, [attachments, chatMessages, injectedContextTokens, input, lastTokenUsage]);
 
   const draftCostTooltip = useMemo<DraftCostTooltip | null>(() => {
     if (selectedProviderKind !== 'openrouter') return null;
@@ -1838,11 +1841,12 @@ export function ChatPanel({
               />
             </svg>
           </div>
-          <h3 className="chat-empty__title">Select a wizard to get started</h3>
+          <div className="chat-empty__eyebrow">Persistent AI context</div>
+          <h3 className="chat-empty__title">Talk to an AI that already knows what matters</h3>
           <p className="chat-empty__desc wizard-hub-desc">
-            Pick one from the list on the left,
+            Every selected Markdown document stays in context every time you talk.
             <br />
-            or create one{' '}
+            Choose a Wizard, or create one{' '}
             <button type="button" className="wizard-hub-desc__here" onClick={() => onOpenWizardCreator?.()}>
               here
             </button>
@@ -1866,18 +1870,18 @@ export function ChatPanel({
               </svg>
             </div>
             <h3 className="chat-empty__title">
-              {isNexus ? 'Nexus ready' : isWizard ? 'Wizard ready' : isTalk ? 'Start a conversation' : 'Ready to build'}
+              {isNexus ? 'Nexus ready' : isWizard ? 'Your Wizard is ready' : isTalk ? 'Start a conversation' : 'Tools are ready'}
             </h3>
             <p className="chat-empty__desc">
               {providerConnected
                 ? isTalk
-                  ? 'You\'re in Chat mode. Ask anything or switch to Agent for tools and file access.'
+                  ? 'Ask anything, or turn on Tools when this conversation needs search, files, or actions.'
                   : isNexus
                     ? 'The leader Wizard can plan with its team and work in the shared Nexus workspace.'
                   : isWizard
-                    ? 'This Wizard is connected to its own local workspace and memory documents.'
-                  : `${selectedProviderLabel} is connected. Ask for code, architecture, or refactors.`
-                : 'Connect in Settings → Connection, then pick a model.'}
+                    ? 'Its selected Markdown context will be included every time you send a message.'
+                    : `${selectedProviderLabel} is connected. Ask anything, and Mythra can use enabled tools when needed.`
+                : 'Open App settings → Connection to add a provider key or choose a model.'}
             </p>
           </div>
         ) : null}
@@ -1953,7 +1957,7 @@ export function ChatPanel({
             {isWizard || isNexus ? (
               <div
                 className={`chat-panel__wizard-pill ${isNexus ? 'chat-panel__wizard-pill--nexus' : ''}`}
-                title={isNexus ? 'Nexus projects coordinate multiple Wizards in a shared workspace' : 'Wizards always work with tools and their own workspace'}
+                title={isNexus ? 'Nexus projects coordinate multiple Wizards' : 'Wizards keep their selected Markdown context in every conversation'}
               >
                 {isNexus ? 'Nexus' : 'Wizard'}
               </div>
@@ -1963,7 +1967,7 @@ export function ChatPanel({
                   className={`chat-panel__mode-option ${isTalk ? 'is-active' : ''}`}
                   disabled={sessionModeToggleDisabled}
                   onClick={() => { if (!isTalk) onSessionModeToggle(); }}
-                  title="Chat mode (no tools)"
+                  title="Plain chat (tools off)"
                   type="button"
                 >
                   Chat
@@ -1972,10 +1976,10 @@ export function ChatPanel({
                   className={`chat-panel__mode-option ${!isTalk ? 'is-active' : ''}`}
                   disabled={sessionModeToggleDisabled}
                   onClick={() => { if (isTalk) onSessionModeToggle(); }}
-                  title="Agent mode (tools & workspace)"
+                  title="Tools on"
                   type="button"
                 >
-                  Agent
+                  Tools
                 </button>
                 <span
                   className="chat-panel__mode-slider"

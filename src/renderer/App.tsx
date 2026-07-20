@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import { applyChatModelOverride, formatOverrideLabel } from '@renderer/lib/apply-model-override';
+import { roughTokensFromText } from '@renderer/lib/estimate-context-tokens';
 import { AppConfirmDialog } from './components/AppConfirmDialog';
 import { AppUpdatesInfoDialog } from './components/AppUpdatesInfoDialog';
 import { AppSelect } from './components/AppSelect';
@@ -1011,7 +1012,7 @@ interface FileBuffer extends OpenFile {
   dirty: boolean;
 }
 
-type InspectorTab = 'editor' | 'changes' | 'settings' | 'tools';
+type InspectorTab = 'overview' | 'editor' | 'changes' | 'settings' | 'tools';
 type SettingsInspectorScope = 'general' | 'wizard' | 'nexus';
 type SidebarTab = 'chats' | 'wizards' | 'files';
 type WizardsSidebarPane = 'wizards' | 'nexus';
@@ -1251,17 +1252,46 @@ export function App() {
   const [inlineTerminalLogs, setInlineTerminalLogs] = useState('');
   const [inlineTerminalJobId, setInlineTerminalJobId] = useState<string>();
   const inlineTerminalJobIdRef = useRef<string | undefined>(undefined);
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('settings');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('overview');
   const [settingsInspectorScope, setSettingsInspectorScope] = useState<SettingsInspectorScope>('general');
   const settingsInspectorWizardIdRef = useRef<string | undefined>(undefined);
   const settingsInspectorNexusIdRef = useRef<string | undefined>(undefined);
   const lastInspectorTabRef = useRef<InspectorTab>(inspectorTab);
   const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChanges | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('wizards');
   const [wizardsSidebarPane, setWizardsSidebarPane] = useState<WizardsSidebarPane>('wizards');
   const [showNewMenu, setShowNewMenu] = useState(false);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
+  const [genericConfirm, setGenericConfirm] = useState<{
+    title: string;
+    description: ReactNode;
+    confirmLabel: string;
+    cancelLabel?: string;
+    confirmVariant?: 'primary' | 'danger';
+  } | null>(null);
+  const genericConfirmResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const requestConfirm = useCallback(
+    (opts: {
+      title: string;
+      description: ReactNode;
+      confirmLabel: string;
+      cancelLabel?: string;
+      confirmVariant?: 'primary' | 'danger';
+    }) =>
+      new Promise<boolean>((resolve) => {
+        genericConfirmResolveRef.current?.(false);
+        genericConfirmResolveRef.current = resolve;
+        setGenericConfirm(opts);
+      }),
+    []
+  );
+  const resolveGenericConfirm = useCallback((ok: boolean) => {
+    const resolve = genericConfirmResolveRef.current;
+    genericConfirmResolveRef.current = null;
+    setGenericConfirm(null);
+    resolve?.(ok);
+  }, []);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [showWizardSetup, setShowWizardSetup] = useState(false);
@@ -1750,6 +1780,45 @@ export function App() {
   useEffect(() => {
     wizardDraftRef.current = wizardDraft;
   }, [wizardDraft]);
+
+  const [wizardInjectedContextTokens, setWizardInjectedContextTokens] = useState(0);
+  useEffect(() => {
+    const profile = wizardDraft ?? activeWizard;
+    let cancelled = false;
+    if (!profile?.workspaceRoot) {
+      setWizardInjectedContextTokens(0);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const docs = await window.electronAPI.listWizardDocuments(profile.workspaceRoot);
+        const included = mergeWizardDocumentPreferences(docs, profile.documents).filter(
+          (doc) => /\.md$/i.test(doc.path) && doc.autoInject !== false
+        );
+        const tokenCounts = await Promise.all(
+          included.map(async (doc) => {
+            try {
+              const file = await window.electronAPI.readWizardDocument(profile.workspaceRoot, doc.path);
+              const displayPath = workspaceRelativeDisplay(profile.workspaceRoot, doc.path) || doc.label || pathLabel(doc.path);
+              return roughTokensFromText(`## ${displayPath}\n${file.content}`);
+            } catch {
+              return 0;
+            }
+          })
+        );
+        if (!cancelled) setWizardInjectedContextTokens(tokenCounts.reduce((sum, count) => sum + count, 0));
+      } catch {
+        if (!cancelled) setWizardInjectedContextTokens(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWizard, wizardDraft]);
 
   useEffect(() => {
     nexusDraftRef.current = nexusDraft;
@@ -2552,6 +2621,11 @@ export function App() {
                 (k) => k === fileWritten || k === reloaded.path || current[k].path === reloaded.path
               );
               if (key == null) return current;
+              // Don't clobber unsaved local edits with an external write. Mark the
+              // buffer dirty so the user sees a conflict instead of losing work.
+              if (current[key]?.dirty) {
+                return { ...current, [key]: { ...current[key], dirty: true } };
+              }
               return { ...current, [key]: { ...reloaded, dirty: false } };
             });
           } catch {
@@ -2610,17 +2684,45 @@ export function App() {
       setSettingsStatus('Wizard and Nexus workspaces stay attached while selected.');
       return;
     }
-    void window.electronAPI.detachWorkspace().finally(() => {
-      setWorkspaceRoot(undefined);
-      setWorkspaceTree([]);
-      setWorkspaceChanges(null);
-      setBuffers({});
-      setActiveFilePath(undefined);
-      setInlineTerminalLogs((c) => c + '\n[workspace cleared]\n');
-    });
+    void flushDirtyBuffers(workspaceRoot)
+      .then(() => window.electronAPI.detachWorkspace())
+      .finally(() => {
+        setWorkspaceRoot(undefined);
+        setWorkspaceTree([]);
+        setWorkspaceChanges(null);
+        setBuffers({});
+        setActiveFilePath(undefined);
+        setInlineTerminalLogs((c) => c + '\n[workspace cleared]\n');
+      });
+  };
+
+  /**
+   * Persist any dirty editor buffers to disk before we clear them on a workspace
+   * switch. Without this, switching context (or opening a Wizard/Nexus folder)
+   * silently discarded unsaved edits. Buffers are keyed by their workspace-relative
+   * path, so we save against the workspace root that owned them.
+   */
+  const flushDirtyBuffers = async (root: string | undefined) => {
+    if (!root) return;
+    const dirty = Object.entries(buffersRef.current).filter(
+      ([, b]) => b?.dirty && !b.imagePreview && !b.readOnly
+    );
+    if (dirty.length === 0) return;
+    for (const [key, buf] of dirty) {
+      try {
+        await window.electronAPI.saveFile(root, buf.path, buf.content);
+      } catch {
+        // Best-effort: a save failure should not block the workspace switch.
+        void key;
+      }
+    }
+    setInlineTerminalLogs(
+      (c) => c + `\n[auto-saved ${dirty.length} unsaved file${dirty.length === 1 ? '' : 's'} before switching workspace]\n`
+    );
   };
 
   const activateWorkspace = async (root: string) => {
+    await flushDirtyBuffers(workspaceRootRef.current);
     const result = await window.electronAPI.activateWorkspace(root);
     setWorkspaceRoot(result.root);
     setWorkspaceTree(result.tree);
@@ -2647,6 +2749,7 @@ export function App() {
     const root = workspaceRootRef.current;
     if (!root || !isWizardOwnedWorkspaceRoot(root)) return;
 
+    await flushDirtyBuffers(root);
     await window.electronAPI.detachWorkspace();
     setWorkspaceRoot(undefined);
     setWorkspaceTree([]);
@@ -3243,6 +3346,8 @@ export function App() {
     setChatSessionId(nextSid);
     chatSessionIdRef.current = nextSid;
     setSidebarTab('chats');
+    setInspectorTab('overview');
+    setSettingsInspectorScope('general');
     setShowNewMenu(false);
   };
 
@@ -5102,6 +5207,7 @@ export function App() {
             workspaceRoot: nexusForStream.workspaceRoot,
             activeFilePath: activeFilePathRef.current,
             conversationId: `${chatSessionIdRef.current}:${member.id}`,
+            nexusId: parentNexusChat?.kind === 'nexus' ? parentNexusChat.id : undefined,
             wizardId: undefined,
             wizardName: undefined,
             wizardSystemPrompt: undefined,
@@ -5235,6 +5341,7 @@ export function App() {
               workspaceRoot: nexusForStream.workspaceRoot,
               activeFilePath: activeFilePathRef.current,
               conversationId: `${chatSessionIdRef.current}:leader-router:${turn}`,
+              nexusId: parentNexusChat?.kind === 'nexus' ? parentNexusChat.id : undefined,
               wizardId: undefined,
               wizardName: undefined,
               wizardSystemPrompt: undefined,
@@ -5367,6 +5474,7 @@ export function App() {
             workspaceRoot: nexusForStream.workspaceRoot,
             activeFilePath: activeFilePathRef.current,
             conversationId: `${chatSessionIdRef.current}:${member.id}:relay:${turn}`,
+            nexusId: parentNexusChat?.kind === 'nexus' ? parentNexusChat.id : undefined,
             wizardId: undefined,
             wizardName: undefined,
             wizardSystemPrompt: undefined,
@@ -5437,6 +5545,7 @@ export function App() {
       activeFilePath: activeFilePathRef.current,
       conversationId: chatSessionIdRef.current,
       wizardId: nexusForStream ? undefined : parentWizardChat?.kind === 'wizard' ? parentWizardChat.id : undefined,
+      nexusId: nexusForStream && parentNexusChat?.kind === 'nexus' ? parentNexusChat.id : undefined,
       wizardName: nexusForStream ? undefined : wizardForStream?.name,
       wizardSystemPrompt: nexusForStream ? undefined : wizardForStream?.systemPrompt,
       wizardFullAccess: nexusForStream ? undefined : wizardForStream ? Boolean(wizardForStream.fullAccess) : undefined,
@@ -5454,6 +5563,12 @@ export function App() {
           }
         : {})
     });
+  };
+
+  const markStreamingMessageStopped = (requestId: string) => {
+    updateInFlightMessage(requestId, (m) =>
+      m.status === 'streaming' ? { ...m, status: 'done' as const } : m
+    );
   };
 
   const stopChat = async () => {
@@ -5478,9 +5593,13 @@ export function App() {
       for (const rid of hiddenRouterRequestIds) {
         hiddenNexusRouterRequestsRef.current.delete(rid);
       }
+      markStreamingMessageStopped(group.messageId);
       forgetInFlight(group.messageId);
     } else {
       await window.electronAPI.stopChat(activeRequestId);
+      // Optimistically clear the streaming state on the message so the bubble
+      // doesn't spin forever if the matching onChatError event never arrives.
+      markStreamingMessageStopped(activeRequestId);
     }
     setChatStreaming(false);
     setActiveRequestId(undefined);
@@ -5508,17 +5627,22 @@ export function App() {
 
   const commandPaletteActions = useMemo<CommandPaletteAction[]>(
     () => [
-      { id: 'new-chat', title: 'New chat', subtitle: 'Start a blank conversation', run: () => void startNewChat() },
-      { id: 'search-chats', title: 'Search chats', subtitle: 'Find previous Chat, Wizard, and Nexus sessions', run: () => setShowChatSearch(true) },
-      { id: 'open-workspace', title: workspaceRoot ? 'Switch workspace' : 'Open workspace', subtitle: 'Attach a local project folder', run: () => void chooseWorkspace() },
-      { id: 'files', title: 'Show files', subtitle: 'Open the workspace file browser', run: () => setSidebarTab('files') },
-      { id: 'settings', title: 'Open settings', subtitle: 'Show the Settings inspector', run: () => setInspectorTab('settings') },
-      { id: 'changes', title: 'Open changes', subtitle: 'Show git status and diff', run: () => { setInspectorTab('changes'); void refreshWorkspaceChanges(); } },
-      { id: 'tools', title: 'Open tools dashboard', subtitle: 'Snippets, test runs, tool history, and costs', run: () => setInspectorTab('tools') },
-      { id: 'fork-chat', title: 'Fork current chat', subtitle: 'Create a branch from this conversation', run: () => void forkActiveChat() },
-      { id: 'run-tests', title: 'Run project tests', subtitle: 'Use the project test command in Tools', run: () => setInspectorTab('tools') }
+      { id: 'new-wizard', title: 'New Wizard', subtitle: 'Create an AI with persistent Markdown context', run: () => setShowWizardSetup(true) },
+      { id: 'new-chat', title: 'Quick chat', subtitle: 'Start a regular conversation', run: () => void startNewChat() },
+      { id: 'search-chats', title: 'Search conversations', subtitle: 'Find previous chats and Wizard sessions', run: () => setShowChatSearch(true) },
+      {
+        id: 'wizard-context',
+        title: 'Open Wizard context',
+        subtitle: 'Review the selected Wizard\'s model, Markdown, and permissions',
+        run: () => {
+          setInspectorTab('settings');
+          setSettingsInspectorScope(activeWizard ? 'wizard' : 'general');
+        }
+      },
+      { id: 'settings', title: 'Open app settings', subtitle: 'Connections, models, search, and appearance', run: () => { setInspectorTab('settings'); setSettingsInspectorScope('general'); } },
+      { id: 'fork-chat', title: 'Fork current chat', subtitle: 'Create a branch from this conversation', run: () => void forkActiveChat() }
     ],
-    [workspaceRoot, refreshWorkspaceChanges]
+    [activeWizard]
   );
 
   const nexusSettingsParticipants = useMemo(() => {
@@ -5583,10 +5707,21 @@ export function App() {
     settings && settings.selectedProvider === 'openrouter'
       ? Boolean(settings.providers.openrouter.apiKey?.trim())
       : true;
+  const activeWizardProviderReady =
+    !activeWizard ||
+    activeWizard.provider !== 'openrouter' ||
+    Boolean(settings?.providers.openrouter.apiKey?.trim());
+  const activeNexusLeader = activeNexus
+    ? chatList.find((chat) => chat.id === activeNexus.leaderWizardId)?.wizard
+    : undefined;
+  const activeNexusProviderReady =
+    !activeNexusLeader ||
+    activeNexusLeader.provider !== 'openrouter' ||
+    Boolean(settings?.providers.openrouter.apiKey?.trim());
   const providerConnected = activeNexus
-    ? Boolean(effectiveHeaderModelId)
+    ? Boolean(effectiveHeaderModelId && activeNexusProviderReady)
     : activeWizard
-    ? Boolean(activeWizard.model)
+    ? Boolean(activeWizard.model && activeWizardProviderReady)
     : Boolean(settings && openRouterReady && models.length > 0 && selectedProvider?.model);
   /** Catalog row for context window size (respects per-chat provider override lists). */
   const modelCatalogForLimit = effectiveModelOverride ? overrideModels : models;
@@ -5985,6 +6120,16 @@ export function App() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+      <AppConfirmDialog
+        cancelLabel={genericConfirm?.cancelLabel ?? 'Cancel'}
+        confirmLabel={genericConfirm?.confirmLabel ?? 'Confirm'}
+        confirmVariant={genericConfirm?.confirmVariant ?? 'primary'}
+        description={genericConfirm?.description ?? ''}
+        onCancel={() => resolveGenericConfirm(false)}
+        onConfirm={() => resolveGenericConfirm(true)}
+        open={Boolean(genericConfirm)}
+        title={genericConfirm?.title ?? ''}
+      />
       <AppConfirmDialog
         cancelLabel="Cancel"
         confirmLabel="Delete Wizard"
@@ -6433,57 +6578,31 @@ export function App() {
                 </span>
               </div>
             </div>
+            <p className="sidebar-brand__promise">Persistent AI context, your way.</p>
 
             <div className="sidebar-quick">
-              <div className={`sidebar-new ${showNewMenu ? 'is-open' : ''}`} ref={newMenuRef}>
+              <div className="sidebar-new">
                 <button
                   className="sidebar-quick__btn sidebar-quick__btn--primary"
-                  onClick={() => setShowNewMenu((v) => !v)}
+                  onClick={() => setShowWizardSetup(true)}
                   type="button"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
-                  New
+                  New Wizard
                 </button>
-                <AnimatePresence>
-                  {showNewMenu ? (
-                    <motion.div
-                      animate={{ opacity: 1, y: 0 }}
-                      className="sidebar-new__menu"
-                      exit={{ opacity: 0, y: -4 }}
-                      initial={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.15 }}
-                    >
-                      <button onClick={() => void startNewChat()} type="button">
-                        <strong>Normal Chat</strong>
-                        <span>Regular chat with Chat and Agent modes.</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowNewMenu(false);
-                          setShowWizardSetup(true);
-                        }}
-                        type="button"
-                      >
-                        <strong>Wizard</strong>
-                        <span>Named AI with its own model, memory, and local workspace.</span>
-                      </button>
-                      <button
-                        disabled={wizardChatList.length < 2}
-                        onClick={() => {
-                          setShowNewMenu(false);
-                          setShowNexusSetup(true);
-                        }}
-                        type="button"
-                      >
-                        <strong>Nexus</strong>
-                        <span>Shared project room where multiple Wizards coordinate.</span>
-                      </button>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
               </div>
+              <button
+                className="sidebar-quick__btn"
+                onClick={() => void startNewChat()}
+                type="button"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                  <path d="M2 2.5h10v7H6l-3 2v-2H2v-7z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                </svg>
+                Quick chat
+              </button>
               <button
                 className="sidebar-quick__btn"
                 onClick={() => setShowChatSearch(true)}
@@ -6494,108 +6613,11 @@ export function App() {
                   <circle cx="6" cy="6" r="3.5" stroke="currentColor" strokeWidth="1.4" />
                   <path d="M8.6 8.6L12 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                 </svg>
-                Search chats
+                Search conversations
               </button>
-              <button
-                className="sidebar-quick__btn"
-                disabled={Boolean(activeWizard || activeNexus)}
-                onClick={chooseWorkspace}
-                title={activeWizard || activeNexus ? 'This session uses its own workspace.' : undefined}
-                type="button"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M1 4.5l5-3 5 3v6l-5 3-5-3v-6z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                </svg>
-                {activeWizard ? 'Wizard workspace' : activeNexus ? 'Nexus workspace' : workspaceRoot ? 'Switch workspace' : 'Open workspace'}
-              </button>
-              {workspaceRoot && (activeWizard || activeNexus) ? (
-                <button
-                  className="sidebar-quick__btn"
-                  disabled
-                  type="button"
-                  title="This workspace stays attached while the Wizard or Nexus is selected"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path
-                      d="M4 4l6 6M10 4l-6 6"
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  Clear workspace
-                </button>
-              ) : workspaceRoot ? (
-                <button
-                  className="sidebar-quick__btn"
-                  onClick={clearWorkspace}
-                  type="button"
-                  title="Unmount the current folder"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path
-                      d="M4 4l6 6M10 4l-6 6"
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  Clear workspace
-                </button>
-              ) : settings?.lastWorkspaceRoot ? (
-                <button
-                  className="sidebar-quick__btn"
-                  onClick={() => void openLastWorkspace()}
-                  type="button"
-                  title={`Reopen ${settings.lastWorkspaceRoot}`}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path
-                      d="M8.25 11V7.25A2.75 2.75 0 005.5 4.5H3.25"
-                      stroke="currentColor"
-                      strokeWidth="1.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M5.5 2.25L3.25 4.5 5.5 6.75"
-                      stroke="currentColor"
-                      strokeWidth="1.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  Open last workspace
-                </button>
-              ) : (
-                <button
-                  className="sidebar-quick__btn"
-                  disabled
-                  type="button"
-                  title="No workspace open"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                    <path
-                      d="M4 4l6 6M10 4l-6 6"
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  Clear workspace
-                </button>
-              )}
             </div>
 
             <div className="sidebar-tabs" role="tablist">
-              <button
-                className={`sidebar-tabs__tab ${sidebarTab === 'chats' ? 'is-active' : ''}`}
-                onClick={handleChatsTabClick}
-                type="button"
-                role="tab"
-              >
-                Chats
-              </button>
               <button
                 className={`sidebar-tabs__tab ${sidebarTab === 'wizards' ? 'is-active' : ''}`}
                 onClick={() => setSidebarTab('wizards')}
@@ -6605,12 +6627,12 @@ export function App() {
                 Wizards
               </button>
               <button
-                className={`sidebar-tabs__tab ${sidebarTab === 'files' ? 'is-active' : ''}`}
-                onClick={() => setSidebarTab('files')}
+                className={`sidebar-tabs__tab ${sidebarTab === 'chats' ? 'is-active' : ''}`}
+                onClick={handleChatsTabClick}
                 type="button"
                 role="tab"
               >
-                Files
+                Chats
               </button>
             </div>
 
@@ -7397,12 +7419,7 @@ export function App() {
                       </div>
                     ) : (
                       <div className="sidebar-empty">
-                        <p>No Wizards yet. Create one from <strong>New</strong>.</p>
-                        {nexusProjectList.length > 0 ? (
-                          <p>
-                            Or switch to <strong>Nexus</strong> below for shared projects.
-                          </p>
-                        ) : null}
+                        <p>No Wizards yet. Create one to give an AI persistent instructions, knowledge, and memory.</p>
                       </div>
                     )}
                   </motion.div>
@@ -7440,53 +7457,9 @@ export function App() {
             </div>
 
             <div className="sidebar-footer">
-              {sidebarTab === 'chats' ? (
-                <div className="media-launcher" aria-label="Start media generation chat">
-                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('music')} type="button">
-                    Music
-                  </button>
-                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('video')} type="button">
-                    Video
-                  </button>
-                  <button className="media-launcher__btn" onClick={() => openMediaModelPicker('image')} type="button">
-                    Images
-                  </button>
-                </div>
-              ) : null}
-              {sidebarTab === 'wizards' ? (
-                <div className="wizards-pane-mode-toggle" role="tablist" aria-label="Wizards sidebar view">
-                  <button
-                    aria-selected={wizardsSidebarPane === 'wizards'}
-                    className={`wizards-pane-mode-toggle__btn ${wizardsSidebarPane === 'wizards' ? 'is-active' : ''}`}
-                    onClick={() => {
-                      setWizardsSidebarPane('wizards');
-                      setSidebarFocusedNexusId(undefined);
-                    }}
-                    role="tab"
-                    type="button"
-                  >
-                    Wizards
-                  </button>
-                  <button
-                    aria-selected={wizardsSidebarPane === 'nexus'}
-                    className={`wizards-pane-mode-toggle__btn ${wizardsSidebarPane === 'nexus' ? 'is-active' : ''}`}
-                    onClick={() => {
-                      setWizardsSidebarPane('nexus');
-                      setSidebarFocusedWizardId(undefined);
-                    }}
-                    role="tab"
-                    type="button"
-                  >
-                    Nexus
-                  </button>
-                  <span
-                    className="wizards-pane-mode-toggle__slider"
-                    style={{
-                      transform: wizardsSidebarPane === 'wizards' ? 'translateX(0)' : 'translateX(100%)'
-                    }}
-                  />
-                </div>
-              ) : null}
+              <div className="sidebar-footer__promise">
+                Selected Markdown stays in every Wizard conversation.
+              </div>
               <div className="sidebar-footer__meta">
                 <span>{selectedProviderLabel}</span>
                 <span
@@ -7513,6 +7486,7 @@ export function App() {
             chatMessages={chatMessages}
             contextLimit={resolvedContextLimit}
             contextMeterOptions={nexusContextMeterOptions}
+            injectedContextTokens={chatPanelIsWizard ? wizardInjectedContextTokens : 0}
             input={chatInput}
             isStreaming={chatStreaming}
             composerDisabled={Boolean(composerDisabledReason)}
@@ -7568,36 +7542,45 @@ export function App() {
         >
           <div className="inspector-card">
             <div className="inspector-switcher">
+              {!activeWizard ? (
+                <button
+                  className={`inspector-tab ${inspectorTab === 'overview' ? 'is-active' : ''}`}
+                  onClick={() => setInspectorTab('overview')}
+                  type="button"
+                >
+                  About
+                </button>
+              ) : null}
+              {activeWizard ? (
+                <button
+                  className={`inspector-tab ${inspectorTab === 'settings' && settingsInspectorScope === 'wizard' ? 'is-active' : ''}`}
+                  onClick={() => {
+                    setInspectorTab('settings');
+                    setSettingsInspectorScope('wizard');
+                  }}
+                  type="button"
+                >
+                  Context
+                </button>
+              ) : null}
+              {activeWizard && activeBuffer ? (
+                <button
+                  className={`inspector-tab ${inspectorTab === 'editor' ? 'is-active' : ''}`}
+                  onClick={() => setInspectorTab('editor')}
+                  type="button"
+                >
+                  Document
+                </button>
+              ) : null}
               <button
-                className={`inspector-tab ${inspectorTab === 'editor' ? 'is-active' : ''}`}
-                onClick={() => setInspectorTab('editor')}
-                type="button"
-              >
-                Editor
-              </button>
-              <button
-                className={`inspector-tab ${inspectorTab === 'changes' ? 'is-active' : ''}`}
+                className={`inspector-tab ${inspectorTab === 'settings' && settingsInspectorScope === 'general' ? 'is-active' : ''}`}
                 onClick={() => {
-                  setInspectorTab('changes');
-                  void refreshWorkspaceChanges();
+                  setInspectorTab('settings');
+                  setSettingsInspectorScope('general');
                 }}
                 type="button"
               >
-                Changes
-              </button>
-              <button
-                className={`inspector-tab ${inspectorTab === 'settings' ? 'is-active' : ''}`}
-                onClick={() => setInspectorTab('settings')}
-                type="button"
-              >
-                Settings
-              </button>
-              <button
-                className={`inspector-tab ${inspectorTab === 'tools' ? 'is-active' : ''}`}
-                onClick={() => setInspectorTab('tools')}
-                type="button"
-              >
-                Tools
+                App settings
               </button>
             </div>
 
@@ -7609,6 +7592,27 @@ export function App() {
                 key={inspectorTab}
                 transition={{ duration: 0.2 }}
               >
+                {inspectorTab === 'overview' ? (
+                  <section className="wizard-library-inspector">
+                    <div className="wizard-library-inspector__kicker">Why Wizards</div>
+                    <h3>Context that survives the conversation</h3>
+                    <p>
+                      A Wizard combines a model with the Markdown you choose. Those documents are included again every
+                      time you send a message, so the AI keeps your instructions, source material, examples, and memory in mind.
+                    </p>
+                    <div className="wizard-library-inspector__steps">
+                      <div><span>1</span><strong>Create a Wizard</strong><small>Choose its model and purpose.</small></div>
+                      <div><span>2</span><strong>Add Markdown context</strong><small>Knowledge, style, examples, or memory.</small></div>
+                      <div><span>3</span><strong>Keep talking</strong><small>Start fresh sessions without starting over.</small></div>
+                    </div>
+                    <button className="btn btn--primary" onClick={() => setShowWizardSetup(true)} type="button">
+                      Create a Wizard
+                    </button>
+                    <button className="btn btn--secondary" onClick={() => void startNewChat()} type="button">
+                      Start a quick chat
+                    </button>
+                  </section>
+                ) : null}
                 {inspectorTab === 'editor' ? (
                   <EditorPanel
                     content={activeBuffer?.content ?? ''}
@@ -7632,13 +7636,30 @@ export function App() {
                       }));
                     }}
                     onCloseFile={(path) => {
-                      setBuffers((current) => {
-                        const key = Object.keys(current).find((candidate) => candidate === path || current[candidate].path === path);
-                        if (!key) return current;
-                        const { [key]: _removed, ...rest } = current;
-                        setActiveFilePath((active) => (active === key || active === path ? Object.keys(rest)[0] : active));
-                        return rest;
-                      });
+                      void (async () => {
+                        const current = buffersRef.current;
+                        const key = Object.keys(current).find(
+                          (candidate) => candidate === path || current[candidate].path === path
+                        );
+                        if (!key) return;
+                        if (current[key]?.dirty) {
+                          const name = current[key].path.split(/[\\/]/).pop() || current[key].path;
+                          const ok = await requestConfirm({
+                            title: 'Close without saving?',
+                            description: `${name} has unsaved changes. Closing this tab will discard them.`,
+                            confirmLabel: 'Discard and close',
+                            cancelLabel: 'Keep editing',
+                            confirmVariant: 'danger'
+                          });
+                          if (!ok) return;
+                        }
+                        setBuffers((curr) => {
+                          if (!(key in curr)) return curr;
+                          const { [key]: _removed, ...rest } = curr;
+                          setActiveFilePath((active) => (active === key || active === path ? Object.keys(rest)[0] : active));
+                          return rest;
+                        });
+                      })();
                     }}
                     onSave={saveActiveFile}
                     onSelectFile={(path) => setActiveFilePath(path)}

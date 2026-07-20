@@ -22,131 +22,81 @@ interface OnboardingDialogProps {
 const pages = [
   {
     kicker: 'Welcome',
-    title: 'Meet Mythra',
+    title: 'Give an AI the context that matters to you',
     body:
-      'Mythra is a local AI workspace for chatting, coding, editing files, searching the web, and building longer-running AI assistants called Wizards.',
+      'Mythra is built around Wizards: persistent AI assistants that carry your selected Markdown instructions, knowledge, examples, and memory into every conversation.',
     points: [
-      'Start simple with a normal chat.',
-      'Open a workspace when you want AI help with files.',
-      'Use Wizards and Nexus projects when you want persistent AI teammates.'
+      'Choose any supported OpenRouter or local model.',
+      'Keep your source material in transparent local Markdown files.',
+      'Start new sessions without teaching the same context again.'
     ],
-    imageLabel: 'Main app overview screenshot',
+    imageLabel: 'Mythra Wizard workspace',
     imageSrc: mythraTextImage,
     imageClassName: 'onboarding-dialog__image--welcome'
   },
   {
-    kicker: 'Normal Chats',
-    title: 'Chat mode and Agent mode',
-    body:
-      'Normal chats can switch between two behaviors. Chat mode is for regular conversation. Agent mode gives the model access to tools, your open workspace, and coding actions.',
-    points: [
-      'Use Chat for questions, brainstorming, and writing.',
-      'Use Agent when you want the AI to inspect files, make edits, run commands, or explain a project.',
-      'The mode switch is at the top of the conversation.'
-    ],
-    imageLabel: 'Chat / Agent mode switch screenshots',
-    imageList: [
-      { src: chatsImage1, alt: 'Normal chat list screenshot' },
-      { src: chatsImage2, alt: 'Chat mode screenshot' },
-      { src: chatsImage3, alt: 'Agent mode screenshot' }
-    ],
-    imageClassName: 'onboarding-dialog__image--chat'
-  },
-  {
-    kicker: 'Web Search',
-    title: 'Let models look things up',
-    body:
-      'The Web toggle gives the AI a search tool. Without an API key, search can still work, but results may be thin. API keys connect Mythra to better search services.',
-    points: [
-      'An API key is like a password from a service that lets this app use that service.',
-      'Tavily is recommended for AI-ready search results.',
-      'Brave Search is a strong general web-search option.'
-    ],
-    imageLabel: 'Web toggle and search settings screenshots',
-    imageList: [
-      { src: webImage1, alt: 'Web search toggle screenshot' },
-      { src: webImage2, alt: 'Web search API key settings screenshot' }
-    ],
-    imageClassName: 'onboarding-dialog__image--web',
-    imageStripClassName: 'onboarding-dialog__image-strip--two'
-  },
-  {
-    kicker: 'Connection',
-    title: 'Choose where models come from',
-    body:
-      'Mythra can talk to models through LM Studio, OpenRouter, or Ollama. You can change providers and models in Settings.',
-    points: [
-      'LM Studio and Ollama run models on your own computer.',
-      'OpenRouter connects to hosted cloud models through one API key.',
-      'The selected model controls how smart, fast, and expensive a response may be.'
-    ],
-    imageLabel: 'Provider and model settings screenshot',
-    imageSrc: connectionImage,
-    imageClassName: 'onboarding-dialog__image--connection'
-  },
-  {
-    kicker: 'System Prompt',
-    title: 'Set the AI’s default instructions',
-    body:
-      'The system prompt is the instruction layer the model reads before your messages. It can define tone, rules, workflows, and what the model should remember during a chat.',
-    points: [
-      'Keep it clear and practical.',
-      'Use presets when you want different default behaviors.',
-      'In Agent mode, you can optionally allow models to suggest prompt changes.'
-    ],
-    imageLabel: 'System prompt section screenshot',
-    imageSrc: systemPromptImage,
-    imageClassName: 'onboarding-dialog__image--system-prompt'
-  },
-  {
     kicker: 'Wizards',
-    title: 'Create persistent AI assistants',
+    title: 'Build a specialist once, then keep talking',
     body:
-      'A Wizard is a named AI with its own model, private local workspace, system prompt, and Markdown memory documents.',
+      'A Wizard combines a model, a system prompt, persistent sessions, enabled tools, and a private folder of Markdown context you control.',
     points: [
-      'Each Wizard gets documents like identity.md, personality.md, tools.md, memory.md, and corrections.md.',
-      'Those documents are injected into Wizard chats automatically.',
-      'A Wizard can have multiple sessions while keeping the same identity and memory files.'
+      'Use identity and personality files to shape how it responds.',
+      'Add learning material, writing samples, research, or reference notes.',
+      'Create multiple Wizards for different subjects, styles, or workflows.'
     ],
-    imageLabel: 'Wizard sidebar and settings screenshot',
+    imageLabel: 'Wizard library and context settings',
     imageList: [
-      { src: wizardOnboarding1, alt: 'Wizard sidebar screenshot' },
-      { src: wizardOnboarding2, alt: 'Wizard settings screenshot' }
+      { src: wizardOnboarding1, alt: 'Wizard library' },
+      { src: wizardOnboarding2, alt: 'Wizard context settings' }
     ],
     imageClassName: 'onboarding-dialog__image--wizard',
     imageStripClassName: 'onboarding-dialog__image-strip--two'
   },
   {
-    kicker: 'Nexus',
-    title: 'Bring Wizards together on a project',
+    kicker: 'Always-on context',
+    title: 'Know exactly what the model receives',
     body:
-      'A Nexus project lets multiple Wizards work in one shared project folder while keeping their own private identities and memory documents.',
+      'Selected Markdown documents are included every time you send a message. Mythra shows which files are included and estimates how much context they use.',
     points: [
-      'Choose a leader Wizard and teammates.',
-      'Each Wizard can respond as itself and use the shared Nexus workspace.',
-      'Nexus is built for planning, delegation, coding, review, and project collaboration.'
+      'Turn individual documents on or off without deleting them.',
+      'Edit context directly and use the updated version on the next message.',
+      'Keep corrections and durable memory alongside the source material.'
     ],
-    imageLabel: 'Nexus project room screenshot',
-    imageList: [
-      { src: nexusOnboarding1, alt: 'Nexus project overview screenshot' },
-      { src: nexusOnboarding2, alt: 'Nexus workspace screenshot' },
-      { src: nexusOnboarding3, alt: 'Nexus collaboration screenshot' }
-    ],
-    imageClassName: 'onboarding-dialog__image--nexus'
+    imageLabel: 'Wizard context document controls',
+    imageSrc: wizardOnboarding2,
+    imageClassName: 'onboarding-dialog__image--wizard'
   },
   {
-    kicker: 'Ready',
-    title: 'You can start small',
+    kicker: 'Models & tools',
+    title: 'Use the right intelligence for each Wizard',
     body:
-      'You do not need to set everything up at once. Start with a normal chat, connect a model, and add Wizards or Nexus projects when you are ready.',
+      'Connect OpenRouter, LM Studio, or Ollama, then choose a model per Wizard. Wizards can also use enabled tools for search, files, commands, and other actions when useful.',
     points: [
-      'Open Settings first if you need to add an API key or choose a model.',
-      'Create a normal chat for everyday work.',
-      'Create a Wizard when you want a persistent assistant.'
+      'Switch models without rebuilding the Wizard’s context.',
+      'Keep sensitive actions behind approvals or enable full access intentionally.',
+      'Use Web search when the Wizard needs current public information.'
     ],
-    imageLabel: 'Main app overview screenshot',
-    imageSrc: mythraTextImage,
-    imageClassName: 'onboarding-dialog__image--welcome'
+    imageLabel: 'Provider and model settings',
+    imageSrc: connectionImage,
+    imageClassName: 'onboarding-dialog__image--connection'
+  },
+  {
+    kicker: 'Regular chats',
+    title: 'Quick conversations are still here',
+    body:
+      'Use Quick chat when you do not need a persistent specialist. Plain Chat keeps tools off; Tools mode makes enabled capabilities available for that conversation.',
+    points: [
+      'Start a disposable conversation in one click.',
+      'Search across regular chats and Wizard sessions.',
+      'Create a Wizard when the same context will be valuable again.'
+    ],
+    imageLabel: 'Regular chat controls',
+    imageList: [
+      { src: chatsImage1, alt: 'Regular chat list' },
+      { src: chatsImage2, alt: 'Chat and Tools controls' }
+    ],
+    imageClassName: 'onboarding-dialog__image--chat',
+    imageStripClassName: 'onboarding-dialog__image-strip--two'
   }
 ];
 

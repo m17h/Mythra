@@ -37,7 +37,14 @@ export function ChatSearchDialog({
       window.electronAPI
         .searchChats(q, 40)
         .then((rows) => {
-          if (!cancelled) setResults(rows);
+          if (!cancelled) {
+            setResults(
+              rows.filter((row) => {
+                const kind = row.kind ?? 'normal';
+                return kind === 'normal' || kind === 'wizard' || kind === 'wizard-session';
+              })
+            );
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -64,7 +71,7 @@ export function ChatSearchDialog({
           onKeyDown={(event) => {
             if (event.key === 'Escape') onClose();
           }}
-          placeholder="Search previous chats, Wizard sessions, and Nexus rooms"
+          placeholder="Search previous chats and Wizard sessions"
           type="search"
         />
         <div className="chat-search-results">

@@ -1,6 +1,6 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { copyFile, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron';
@@ -48,6 +48,7 @@ import {
   type WizardPromptApprovalRequest,
   type OpenRouterCreditsResult,
   type ReadChatThreadBackgroundRequest,
+  type NexusProject,
   type NexusTeamWorkspaceReference,
   type ProjectSettings,
   type PromptSnippet,
@@ -235,6 +236,18 @@ const assertTrustedWorkspaceRoot = async (root: string) => {
   if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
 
   throw new Error('Workspace is not trusted. Use Open workspace or a saved Wizard/Nexus workspace to attach it.');
+};
+
+/**
+ * SECURITY: strict authority for Wizard document IPC. Only a folder that is the
+ * registered workspaceRoot of a saved Wizard/Nexus may be listed/read/exported,
+ * preventing the renderer from enumerating or exfiltrating arbitrary directories.
+ */
+const assertRegisteredWizardWorkspaceRoot = async (root: string) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
+  throw new Error('Wizard workspace is not registered.');
 };
 
 const assertRegisteredOrPendingDeleteRoot = async (root: string) => {
@@ -589,11 +602,12 @@ const assertActiveWorkspace = (root: string | undefined) => {
   }
 };
 
-const sanitizeRuntime = (runtime: {
+const sanitizeRuntime = async (runtime: {
   workspaceRoot?: string;
   activeFilePath?: string;
   conversationId?: string;
   wizardId?: string;
+  nexusId?: string;
   wizardName?: string;
   wizardSystemPrompt?: string;
   wizardFullAccess?: boolean;
@@ -616,17 +630,53 @@ const sanitizeRuntime = (runtime: {
       ? runtime.activeFilePath
       : undefined;
 
+  // SECURITY: never trust renderer-supplied privilege flags. Re-derive the
+  // Wizard's Full access / outside-workspace permission from the persisted
+  // Wizard profile on disk so a compromised renderer cannot escalate.
+  const wizardId = typeof runtime.wizardId === 'string' ? runtime.wizardId : undefined;
+  let persistedWizardFullAccess: boolean | undefined;
+  let persistedWizardAllowOutside: boolean | undefined;
+  if (wizardId) {
+    try {
+      const wizardChat = await chatStore.loadChat(wizardId);
+      if (wizardChat?.kind === 'wizard' && wizardChat.wizard) {
+        persistedWizardFullAccess = Boolean(wizardChat.wizard.fullAccess);
+        persistedWizardAllowOutside = Boolean(wizardChat.wizard.allowOutsideWorkspace);
+      }
+    } catch {
+      // Fail closed: if the profile can't be loaded, treat as no elevated access.
+    }
+  }
+
+  // SECURITY: re-derive Nexus team privileges from the persisted project.
+  const nexusId = typeof runtime.nexusId === 'string' ? runtime.nexusId : undefined;
+  let persistedNexus: NexusProject | undefined;
+  if (nexusId) {
+    try {
+      const nexusChat = await chatStore.loadChat(nexusId);
+      if (nexusChat?.kind === 'nexus' && nexusChat.nexus) {
+        persistedNexus = nexusChat.nexus;
+      }
+    } catch {
+      // Fail closed.
+    }
+  }
+
   return {
     workspaceRoot,
     activeFilePath,
     conversationId: runtime.conversationId,
-    wizardId: typeof runtime.wizardId === 'string' ? runtime.wizardId : undefined,
+    wizardId,
+    nexusId,
     wizardName: typeof runtime.wizardName === 'string' ? runtime.wizardName : undefined,
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === 'string' ? runtime.wizardSystemPrompt : undefined,
-    wizardFullAccess: typeof runtime.wizardFullAccess === 'boolean' ? runtime.wizardFullAccess : undefined,
-    wizardAllowOutsideWorkspace:
-      typeof runtime.wizardAllowOutsideWorkspace === 'boolean' ? runtime.wizardAllowOutsideWorkspace : undefined,
-    nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === 'boolean' ? runtime.nexusTeamFullAccess : undefined,
+    wizardFullAccess: wizardId ? persistedWizardFullAccess : undefined,
+    wizardAllowOutsideWorkspace: wizardId ? persistedWizardAllowOutside : undefined,
+    nexusTeamFullAccess: nexusId
+      ? Boolean(persistedNexus?.teamFullAccess)
+      : typeof runtime.nexusTeamFullAccess === 'boolean'
+        ? runtime.nexusTeamFullAccess
+        : undefined,
     nexusTeamWorkspaces: Array.isArray(runtime.nexusTeamWorkspaces)
       ? runtime.nexusTeamWorkspaces
           .map((member) => ({
@@ -636,9 +686,23 @@ const sanitizeRuntime = (runtime: {
             workspaceRoot: typeof member?.workspaceRoot === 'string' ? member.workspaceRoot : ''
           }))
           .filter((member) => member.wizardId.trim() && member.wizardName.trim() && member.workspaceRoot.trim())
+          // SECURITY: when the Nexus project is known, only accept teammate
+          // workspaces for wizardIds that actually belong to the project, so a
+          // forged payload can't aim teammate-file reads at arbitrary folders.
+          .filter((member) => {
+            if (!persistedNexus) return true;
+            const memberIds = new Set([
+              persistedNexus.leaderWizardId,
+              ...persistedNexus.members.map((m) => m.wizardId)
+            ]);
+            return memberIds.has(member.wizardId);
+          })
       : undefined,
-    nexusLeaderApprovesTools:
-      typeof runtime.nexusLeaderApprovesTools === 'boolean' ? runtime.nexusLeaderApprovesTools : undefined,
+    nexusLeaderApprovesTools: nexusId
+      ? Boolean(persistedNexus?.leaderApprovesTools) && !Boolean(persistedNexus?.teamFullAccess)
+      : typeof runtime.nexusLeaderApprovesTools === 'boolean'
+        ? runtime.nexusLeaderApprovesTools
+        : undefined,
     nexusLeaderProvider:
       runtime.nexusLeaderProvider === 'lmstudio' ||
       runtime.nexusLeaderProvider === 'openrouter' ||
@@ -936,40 +1000,27 @@ ipcMain.handle('tool:approval-response', async (_event, id: string, approved: bo
   resolveApproval(Boolean(approved));
 });
 
-ipcMain.handle('wizard:list-documents', async (_event, root: string) => workspaceService.listWizardWorkspaceDocuments(root));
+ipcMain.handle('wizard:list-documents', async (_event, root: string) => {
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
+  return workspaceService.listWizardWorkspaceDocuments(resolvedRoot);
+});
 
 ipcMain.handle('wizard:read-document', async (_event, root: string, target: string) => {
-  const resolvedRoot = resolve(root.trim());
-  const chats = await chatStore.listChats();
-  const normalizedRoot = resolvedRoot.toLowerCase();
-  const isKnownWizardRoot = chats.some(
-    (chat) => {
-      if (chat.kind !== 'wizard' || !chat.wizard) return false;
-      if (chat.wizard.workspaceRoot && resolve(chat.wizard.workspaceRoot) === resolvedRoot) return true;
-      const expectedFolder = sanitizeWizardFolderSegment(chat.wizard.name).toLowerCase();
-      return (chat.wizard.documents ?? []).some((doc) => {
-        let dir = dirname(resolve(doc.path));
-        for (let depth = 0; depth < 16; depth += 1) {
-          if (resolve(dir) === resolvedRoot && basename(dir).toLowerCase() === expectedFolder) return true;
-          const parent = dirname(dir);
-          if (parent === dir) break;
-          dir = parent;
-        }
-        return false;
-      });
-    }
-  );
-  if (!isKnownWizardRoot || normalizedRoot.includes('/library/cloudstorage/')) {
-    throw new Error('Wizard workspace is not registered.');
-  }
+  // Strict authority: the root must be a registered Wizard/Nexus workspace,
+  // not merely a folder whose name resembles a Wizard folder segment.
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
   return workspaceService.openFile(resolvedRoot, target, false);
 });
 
-ipcMain.handle('wizard:list-export-files', async (_event, root: string) =>
-  workspaceService.listWizardExportRelativeFiles(root)
-);
+ipcMain.handle('wizard:list-export-files', async (_event, root: string) => {
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
+  return workspaceService.listWizardExportRelativeFiles(resolvedRoot);
+});
 
 ipcMain.handle('wizard:export-mythwiz', async (event, req: WizardMythwizExportRequest) => {
+  // Only registered Wizard/Nexus workspaces may be packed into a .mythwiz bundle.
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(req.workspaceRoot);
+  req = { ...req, workspaceRoot: resolvedRoot };
   const winSafe = BrowserWindow.fromWebContents(event.sender);
   const baseName = sanitizeWizardFolderSegment(req.wizardDisplayName.trim() || 'wizard');
   const opts: SaveDialogOptions = {
@@ -1276,6 +1327,7 @@ ipcMain.handle(
       activeFilePath?: string;
       conversationId?: string;
       wizardId?: string;
+      nexusId?: string;
       wizardName?: string;
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
@@ -1294,7 +1346,7 @@ ipcMain.handle(
     }
 
     try {
-      await modelService.streamChat(event, mainWindow, requestId, sanitizeChatSettings(settings), messages, sanitizeRuntime(runtime));
+      await modelService.streamChat(event, mainWindow, requestId, sanitizeChatSettings(settings), messages, await sanitizeRuntime(runtime));
       return { ok: true };
     } catch (error) {
       modelService.sendError(mainWindow, requestId, error);
@@ -1305,13 +1357,26 @@ ipcMain.handle(
 
 ipcMain.handle('chat:stop', async (_event, requestId: string) => modelService.stopRequest(requestId));
 
+// SECURITY: the renderer terminal is only allowed to run commands when the
+// Command deck tool is enabled and the command is bound to the active
+// workspace. Without the cwd binding a command would run in Electron's own
+// working directory, and without the gate a compromised renderer could run
+// shell commands the user never enabled.
+const assertCommandExecutionAllowed = (cwd?: string) => {
+  if (!currentSettings.tools.commandDeck) {
+    throw new Error('Command deck is disabled in Settings → Tool access.');
+  }
+  if (cwd == null) {
+    throw new Error('Commands must run inside the active workspace.');
+  }
+  assertActiveWorkspace(cwd);
+};
+
 ipcMain.handle('commands:run', async (_event, command: string, cwd?: string) => {
   if (!mainWindow) {
     throw new Error('Main window is unavailable.');
   }
-  if (cwd != null) {
-    assertActiveWorkspace(cwd);
-  }
+  assertCommandExecutionAllowed(cwd);
 
   return commandService.run(mainWindow, command, cwd);
 });
@@ -1319,9 +1384,7 @@ ipcMain.handle('commands:run', async (_event, command: string, cwd?: string) => 
 ipcMain.handle('commands:kill', async (_event, jobId: string) => commandService.kill(jobId));
 
 ipcMain.handle('commands:run-capture', async (_event, command: string, cwd?: string) => {
-  if (cwd != null) {
-    assertActiveWorkspace(cwd);
-  }
+  assertCommandExecutionAllowed(cwd);
   const startedAt = Date.now();
   const result = await commandService.runAndCapture(command, cwd, 120_000);
   return { ...result, startedAt, finishedAt: Date.now() };

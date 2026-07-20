@@ -12,14 +12,14 @@ import type {
   ReleaseNotesCache
 } from '@shared/types';
 
-const RELEASES_API_URL = 'https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100';
+const RELEASES_API_URL = 'https://api.github.com/repos/m17h/Mythra/releases?per_page=100';
 const RELEASE_NOTES_CACHE_FILE = 'release-notes.json';
 const APP_UPDATE_CONFIG_FILE = 'app-update.yml';
 const { autoUpdater } = electronUpdater;
 const UPDATE_FEED = {
   provider: 'github' as const,
   owner: 'm17h',
-  repo: 'Mythra-Releases',
+  repo: 'Mythra',
   private: false
 };
 

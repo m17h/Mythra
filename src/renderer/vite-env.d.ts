@@ -99,6 +99,7 @@ declare global {
           activeFilePath?: string;
           conversationId?: string;
           wizardId?: string;
+          nexusId?: string;
           wizardName?: string;
           wizardSystemPrompt?: string;
           wizardFullAccess?: boolean;

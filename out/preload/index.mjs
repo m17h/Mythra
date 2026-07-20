@@ -17,6 +17,7 @@ const electronAPI = {
   openFile: (root, target) => ipcRenderer.invoke("workspace:open-file", root, target),
   saveFile: (root, target, content) => ipcRenderer.invoke("workspace:save-file", root, target, content),
   getWorkspaceChanges: (root) => ipcRenderer.invoke("workspace:changes", root),
+  discardWorkspacePatch: (root, patch) => ipcRenderer.invoke("workspace:discard-patch", root, patch),
   getRecommendedWizardWorkspace: (name) => ipcRenderer.invoke("wizard:recommended-workspace", name),
   chooseWizardWorkspace: (name, preferredDefaultPath) => ipcRenderer.invoke("wizard:choose-workspace", name, preferredDefaultPath),
   chooseWizardProjectsFolder: (preferredDefaultPath) => ipcRenderer.invoke("wizard:choose-projects-folder", preferredDefaultPath),
@@ -55,6 +56,7 @@ const electronAPI = {
   streamChat: (requestId, settings, messages, runtime) => ipcRenderer.invoke("chat:stream", requestId, settings, messages, runtime),
   stopChat: (requestId) => ipcRenderer.invoke("chat:stop", requestId),
   runCommand: (command, cwd) => ipcRenderer.invoke("commands:run", command, cwd),
+  runCommandCapture: (command, cwd) => ipcRenderer.invoke("commands:run-capture", command, cwd),
   killCommand: (jobId) => ipcRenderer.invoke("commands:kill", jobId),
   onCommandChunk: (callback) => {
     const listener = (_event, payload) => callback(payload);
@@ -103,8 +105,19 @@ const electronAPI = {
   },
   listChats: () => ipcRenderer.invoke("chats:list"),
   loadChat: (id) => ipcRenderer.invoke("chats:load", id),
+  searchChats: (query, limit) => ipcRenderer.invoke("chats:search", query, limit),
+  getCostDashboardSummary: () => ipcRenderer.invoke("chats:cost-summary"),
   saveChat: (chat) => ipcRenderer.invoke("chats:save", chat),
   deleteChat: (id) => ipcRenderer.invoke("chats:delete", id),
+  listPromptSnippets: () => ipcRenderer.invoke("productivity:snippets:list"),
+  savePromptSnippet: (snippet) => ipcRenderer.invoke("productivity:snippets:save", snippet),
+  deletePromptSnippet: (id) => ipcRenderer.invoke("productivity:snippets:delete", id),
+  getProjectSettings: (workspaceRoot) => ipcRenderer.invoke("productivity:project-settings:get", workspaceRoot),
+  saveProjectSettings: (settings) => ipcRenderer.invoke("productivity:project-settings:save", settings),
+  listToolHistory: (limit) => ipcRenderer.invoke("productivity:tool-history:list", limit),
+  appendToolHistory: (entry) => ipcRenderer.invoke("productivity:tool-history:append", entry),
+  listTestRuns: (workspaceRoot, limit) => ipcRenderer.invoke("productivity:test-runs:list", workspaceRoot, limit),
+  saveTestRun: (run) => ipcRenderer.invoke("productivity:test-runs:save", run),
   chooseChatThreadBackground: () => ipcRenderer.invoke("ui:choose-chat-thread-background"),
   readChatThreadBackground: (request) => ipcRenderer.invoke("ui:read-chat-thread-background", request)
 };

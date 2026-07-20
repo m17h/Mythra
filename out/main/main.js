@@ -23,6 +23,7 @@ const mythraBgMysticIce = join(__dirname, "./chunks/mythra_background1_ice-D2LCK
 const mythraBgMysticKiwi = join(__dirname, "./chunks/mythra_background1_kiwi-BGD5SfOs.png");
 const CHATS_DIR = "mythra-chats";
 const GENERATED_MEDIA_DIR$2 = "generated-media";
+const CHAT_INDEX_FILE = "mythra-chat-index.json";
 const LEGACY_CHAT_DIRS = ["openkiwi-chats", "pixel-forge-chats"];
 const CHAT_ID_RE = /^[a-zA-Z0-9_-]{1,80}$/;
 const assertSafeChatId = (id) => {
@@ -33,6 +34,7 @@ const assertSafeChatId = (id) => {
 class ChatStore {
   userData = app.getPath("userData");
   dir = join$1(this.userData, CHATS_DIR);
+  indexPath = join$1(this.userData, CHAT_INDEX_FILE);
   generatedMediaDir = join$1(this.userData, GENERATED_MEDIA_DIR$2);
   legacyMigrated = false;
   async migrateLegacyChatsIfNeeded() {
@@ -60,33 +62,24 @@ class ChatStore {
     await this.migrateLegacyChatsIfNeeded();
     await mkdir(this.dir, { recursive: true });
   }
-  async listChats() {
-    await this.ensureDir();
-    const files = await readdir(this.dir);
-    const metas = [];
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      try {
-        const raw = await readFile(join$1(this.dir, file), "utf8");
-        const chat = JSON.parse(raw);
-        metas.push({
-          id: chat.id,
-          kind: chat.kind ?? "normal",
-          title: chat.title,
-          titleOverride: chat.titleOverride ?? null,
-          createdAt: chat.createdAt,
-          updatedAt: chat.updatedAt,
-          pinned: chat.pinned ?? false,
-          chatOrder: typeof chat.chatOrder === "number" && Number.isFinite(chat.chatOrder) ? chat.chatOrder : null,
-          modelOverride: chat.modelOverride ?? null,
-          wizard: chat.wizard ?? null,
-          wizardId: chat.wizardId ?? null,
-          nexus: chat.nexus ?? null,
-          nexusId: chat.nexusId ?? null
-        });
-      } catch {
-      }
-    }
+  chatToMeta(chat) {
+    return {
+      id: chat.id,
+      kind: chat.kind ?? "normal",
+      title: chat.title,
+      titleOverride: chat.titleOverride ?? null,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+      pinned: chat.pinned ?? false,
+      chatOrder: typeof chat.chatOrder === "number" && Number.isFinite(chat.chatOrder) ? chat.chatOrder : null,
+      modelOverride: chat.modelOverride ?? null,
+      wizard: chat.wizard ?? null,
+      wizardId: chat.wizardId ?? null,
+      nexus: chat.nexus ?? null,
+      nexusId: chat.nexusId ?? null
+    };
+  }
+  sortMetas(metas) {
     return metas.sort((a, b) => {
       const ap = a.pinned ? 1 : 0;
       const bp = b.pinned ? 1 : 0;
@@ -97,6 +90,47 @@ class ChatStore {
       return b.updatedAt - a.updatedAt;
     });
   }
+  async chatFileIds() {
+    const files = await readdir(this.dir);
+    return files.filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)).filter((id) => CHAT_ID_RE.test(id));
+  }
+  async readIndexIfFresh() {
+    try {
+      const raw = await readFile(this.indexPath, "utf8");
+      const index = JSON.parse(raw);
+      if (index.version !== 1 || !Array.isArray(index.chats)) return null;
+      const idsOnDisk = new Set(await this.chatFileIds());
+      const idsInIndex = new Set(index.chats.map((chat) => chat.id));
+      if (idsOnDisk.size !== idsInIndex.size) return null;
+      for (const id of idsOnDisk) {
+        if (!idsInIndex.has(id)) return null;
+      }
+      return this.sortMetas([...index.chats]);
+    } catch {
+      return null;
+    }
+  }
+  async writeIndex(metas) {
+    const index = { version: 1, chats: this.sortMetas([...metas]) };
+    await writeFile(this.indexPath, JSON.stringify(index), "utf8");
+  }
+  async rebuildIndexFromChatFiles() {
+    const metas = [];
+    for (const id of await this.chatFileIds()) {
+      try {
+        const raw = await readFile(join$1(this.dir, `${id}.json`), "utf8");
+        const chat = JSON.parse(raw);
+        metas.push(this.chatToMeta(chat));
+      } catch {
+      }
+    }
+    await this.writeIndex(metas).catch(() => void 0);
+    return this.sortMetas(metas);
+  }
+  async listChats() {
+    await this.ensureDir();
+    return await this.readIndexIfFresh() ?? this.rebuildIndexFromChatFiles();
+  }
   async loadChat(id) {
     try {
       assertSafeChatId(id);
@@ -106,10 +140,88 @@ class ChatStore {
       return null;
     }
   }
+  async searchChats(query, limit = 30) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    await this.ensureDir();
+    const results = [];
+    for (const id of await this.chatFileIds()) {
+      if (results.length >= limit) break;
+      const chat = await this.loadChat(id);
+      if (!chat) continue;
+      const haystacks = [
+        chat.title,
+        chat.titleOverride ?? "",
+        chat.wizard?.name ?? "",
+        chat.nexus?.name ?? "",
+        ...chat.messages.map((message) => message.content)
+      ];
+      const matches = haystacks.filter((text) => text.toLowerCase().includes(q));
+      if (matches.length === 0) continue;
+      const source = matches.find((text) => text.toLowerCase().includes(q)) ?? chat.title;
+      const lower = source.toLowerCase();
+      const at = Math.max(0, lower.indexOf(q));
+      const start = Math.max(0, at - 80);
+      const end = Math.min(source.length, at + q.length + 120);
+      const snippet = `${start > 0 ? "..." : ""}${source.slice(start, end).replace(/\s+/g, " ").trim()}${end < source.length ? "..." : ""}`;
+      results.push({
+        chatId: chat.id,
+        title: chat.title,
+        kind: chat.kind,
+        updatedAt: chat.updatedAt,
+        snippet,
+        matchCount: matches.length
+      });
+    }
+    return results.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  async costSummary() {
+    await this.ensureDir();
+    const byModel = /* @__PURE__ */ new Map();
+    let chats = 0;
+    let pricedMessages = 0;
+    let totalTokens = 0;
+    let totalCostUsd = 0;
+    for (const id of await this.chatFileIds()) {
+      const chat = await this.loadChat(id);
+      if (!chat) continue;
+      chats += 1;
+      for (const message of chat.messages) {
+        const cost = message.costEstimate;
+        if (!cost) continue;
+        pricedMessages += 1;
+        totalTokens += cost.totalTokens;
+        totalCostUsd += cost.totalCostUsd;
+        const key = `${cost.provider}:${cost.model}`;
+        const row = byModel.get(key) ?? {
+          provider: cost.provider,
+          model: cost.model,
+          messages: 0,
+          totalTokens: 0,
+          totalCostUsd: 0
+        };
+        row.messages += 1;
+        row.totalTokens += cost.totalTokens;
+        row.totalCostUsd += cost.totalCostUsd;
+        byModel.set(key, row);
+      }
+    }
+    return {
+      chats,
+      pricedMessages,
+      totalTokens,
+      totalCostUsd,
+      byModel: [...byModel.values()].sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+    };
+  }
   async saveChat(chat) {
     assertSafeChatId(chat.id);
     await this.ensureDir();
     await writeFile(join$1(this.dir, `${chat.id}.json`), JSON.stringify(chat), "utf8");
+    const existing = await this.readIndexIfFresh() ?? await this.rebuildIndexFromChatFiles();
+    const next = existing.filter((meta) => meta.id !== chat.id);
+    next.push(this.chatToMeta(chat));
+    await this.writeIndex(next).catch(() => void 0);
   }
   isInsideGeneratedMedia(path) {
     const root = resolve(this.generatedMediaDir);
@@ -163,6 +275,10 @@ class ChatStore {
         await this.deleteGeneratedMediaForChat(chat);
       }
       await unlink(chatPath);
+      const existing = await this.readIndexIfFresh();
+      if (existing) {
+        await this.writeIndex(existing.filter((meta) => meta.id !== id)).catch(() => void 0);
+      }
       return true;
     } catch {
       return false;
@@ -895,6 +1011,16 @@ function resolveCustomThemeFallback(paletteHint) {
     return { tokens: { ...CUSTOM_THEME_FALLBACK_ICE_COOL_DARK }, id: "ice_cool_dark" };
   }
   return { tokens: { ...CUSTOM_THEME_FALLBACK_SOFT_NIGHT_KIWI }, id: "soft_kiwi_dark" };
+}
+function defineFunctionTool(name, description, parameters) {
+  return {
+    type: "function",
+    function: {
+      name,
+      description,
+      parameters
+    }
+  };
 }
 const pushUnique = (acc, line) => {
   const t = line.trim();
@@ -1657,6 +1783,16 @@ function safeChatToolLimit(value, fallback, max) {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : fallback;
 }
+function coerceToolBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1" || v === "yes" || v === "y") return true;
+    if (v === "false" || v === "0" || v === "no" || v === "n" || v === "") return false;
+  }
+  return fallback;
+}
 function formatUsd(value) {
   if (!Number.isFinite(value)) return null;
   if (value === 0) return "$0.00";
@@ -1753,10 +1889,27 @@ function lastUserPrompt(messages) {
 function resolveProviderUrl(pathOrUrl, baseUrl) {
   return new URL(pathOrUrl, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
 }
+function shouldSendProviderAuthHeader(url, baseUrl) {
+  try {
+    const resolved = new URL(url);
+    const providerBase = new URL(baseUrl);
+    return resolved.origin === providerBase.origin;
+  } catch {
+    return false;
+  }
+}
+async function responseErrorDetail(response) {
+  const text = await response.text().catch(() => "");
+  return text.trim().slice(0, 500);
+}
 function parseOpenRouterSseEvent(raw) {
   const data = raw.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n").trim();
   if (!data || data === "[DONE]") return null;
-  return JSON.parse(data);
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
 }
 const mythraSessionModeEmbedInstruction = `Mythra inline control: you may place this exact token alone on its own line in your reply. The app will replace it with a real Chat/Agent switch. Do not change characters, add spaces inside the token, or put other text on the same line. Use only when the user needs to change session mode. If this prompt already includes "UI session mode: Agent", do not ask them to switch to Agent and do not include this token. Token: ${MYTHRA_SESSION_MODE_TOGGLE}`;
 const mythraWebSearchEmbedInstruction = `Mythra inline Web toggle token ${MYTHRA_WEB_SEARCH_TOGGLE}: use ONLY when the chat header "Web" switch is OFF and you want an in-message control so the user can turn web_search on. When "Web" is already ON (see the UI state line in this prompt), do NOT include this token—it would duplicate the header and must not appear. If Web is on, use web_search directly for lookups. Do not change characters or spacing inside the token.`;
@@ -1786,7 +1939,7 @@ const mythraProductFeaturesInstruction = [
   "Good Wizard examples to suggest when useful: a writing-style or brand-voice assistant; a complex note system (PARA/Zettelkasten/second brain); a project or coding-stack specialist; meeting/research/journal workflows with dated notes; a creative persona or role-play character with a lore bible. Mythra does **not** create todo.md by default; users or Wizards can add extra `.md` guides/tasks if wanted.",
   "Nexus UI and behavior: the Wizards area has a **Wizards / Nexus** switch. New → Nexus creates a shared project workspace for two or more Wizards; the user picks one parent folder and Mythra creates a named project folder. Nexus projects can be pinned. Each member keeps private identity/personality/memory docs, while Nexus has a leader Wizard, mission text, relay mode, parallel mode, team/leader approval options, and a shared project workspace for file tools.",
   "Settings UI exact order in the right Inspector **SETTINGS** tab: **App Updates**, collapsible **Theme**, **Connection**, **System Prompt**, **Web Search**, **Tool Access**, then **Agent Autonomy** at the bottom. Do not tell users Session mode is under Theme; it is controlled from the Chat/Agent switch in the chat header or from the inline switch you can embed when appropriate.",
-  "Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Connection keeps the model selector visible and has collapsible details for provider, OpenRouter credits toggle, output cost estimates toggle, API key/base URL, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search keeps the search provider visible and has collapsible details for provider notes plus Tavily/Brave keys. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode, Continue until done, and Auto Step Limit.",
+  "Settings details: App Updates has Check for updates, Release notes, install update when available, and an info icon for support. Theme has app theme tiles, chat background source, Gaussian blur, and custom image controls. Connection keeps the model selector visible and has collapsible details for provider, OpenRouter credits toggle, output cost estimates toggle, API key/base URL, and Test + Refresh for LM Studio/Ollama. System Prompt has preset controls and prompt editor. Web Search keeps the search provider visible and has collapsible details for provider notes plus Tavily/Brave keys. Tool Access has Read files, Write files, Workspace search, Command deck, and AI can change system prompt. Agent Autonomy at the very bottom has Full access mode.",
   "Full access mode location: if a user asks where to turn on Full access mode, say: open the right Inspector → SETTINGS, scroll to the bottom, find **Agent Autonomy**, then toggle **Full access mode**. It is not inside Theme and not one of the Tool Access checkboxes. Explain that Full access lets AI write/delete files and run commands without per-action approval.",
   "Message formatting: Mythra supports safe colored text tags in assistant output, so when users ask for green/orange/red/etc. text, use the supported `[color=... tone=...]...[/color]` syntax rather than HTML. Mythra also supports interactive multiple-choice quiz blocks with clickable answer bubbles, interactive data tables, summary stat cards, and inline chart blocks for financial/numerical data; mention those features when users ask about studying, practice, quizzes, analysis, finance, reports, dashboards, or what Mythra can do. Thinking content appears in collapsible Thinking blocks while capable models stream reasoning."
 ].join(" ");
@@ -1833,7 +1986,7 @@ function parseToolCallArgumentsJson(raw) {
 function resolveStreamChatWallMs() {
   const raw = process.env.MYTHRA_STREAM_CHAT_WALL_MS;
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 18e5;
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 function mergeStreamDeadline(controller, wallMs) {
   if (wallMs <= 0) {
@@ -2051,7 +2204,6 @@ class ModelService {
     }
     active.stopped = true;
     active.controller.abort();
-    this.activeRequests.delete(requestId);
     return true;
   }
   async streamChat(_event, window, requestId, settings, messages, runtime) {
@@ -2065,7 +2217,6 @@ class ModelService {
       const client = createClient(settings);
       const isTalk = settings.ui.sessionMode === "talk";
       const sessionContext = await this.buildSessionContext(settings, runtime);
-      let lastVisibleAssistantContent = "";
       const streamDeadlineSignal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
       const apiMessages = [
         {
@@ -2089,10 +2240,8 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         }
         return;
       }
-      const maxAutoSteps = settings.agent.autoContinue ? Math.max(4, settings.agent.maxAutoSteps || 24) : 1;
       let turnUsage;
-      let lastRoundUsage;
-      for (let step = 0; step < maxAutoSteps; step += 1) {
+      for (; ; ) {
         this.assertNotStopped(requestId);
         const stream = await client.chat.completions.create(
           withOpenRouterReasoning(settings, settings.selectedProvider, {
@@ -2146,7 +2295,6 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         }
         this.assertNotStopped(requestId);
         if (lastStreamUsage) {
-          lastRoundUsage = lastStreamUsage;
           turnUsage = addCompletionUsage(turnUsage, lastStreamUsage);
         }
         const toolCallsFromStream = streamingToolAccToFunctionCalls(toolAcc);
@@ -2249,33 +2397,17 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
           this.emitActivity(window, requestId, "warning", "The model returned a blank message. Requesting a visible summary.");
           continue;
         }
-        lastVisibleAssistantContent = normalizedContent;
-        const done2 = {
+        const done = {
           requestId,
           content: normalizedContent,
           reasoning: assembledReasoning.trim() || void 0,
           usage: turnUsage ?? lastStreamUsage,
           costEstimate: await this.estimateOpenRouterResponseCost(settings, provider.model, turnUsage ?? lastStreamUsage)
         };
-        window.webContents.send("chat:done", done2);
+        window.webContents.send("chat:done", done);
         this.activeRequests.delete(requestId);
         return;
       }
-      this.emitActivity(
-        window,
-        requestId,
-        "warning",
-        `Step limit (${maxAutoSteps} tool rounds) reached. Returning the latest reply instead of failing.`
-      );
-      const done = {
-        requestId,
-        content: lastVisibleAssistantContent || `I hit the per-message step limit (${maxAutoSteps} tool rounds) before finishing. Ask me to continue and I can pick up from here.`,
-        usage: turnUsage ?? lastRoundUsage,
-        costEstimate: await this.estimateOpenRouterResponseCost(settings, provider.model, turnUsage ?? lastRoundUsage)
-      };
-      window.webContents.send("chat:done", done);
-      this.activeRequests.delete(requestId);
-      return;
     } finally {
       this.activeRequests.delete(requestId);
     }
@@ -2314,6 +2446,7 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
         const ch = chunk.choices[0];
         if (ch?.finish_reason === "tool_calls") {
           sawTool = true;
+          stream.controller.abort();
           break;
         }
         if (!ch?.delta) {
@@ -2440,6 +2573,18 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    const handleEvent = (event) => {
+      if (!event.trim()) return;
+      const parsed = parseOpenRouterSseEvent(event);
+      if (!parsed) return;
+      const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : void 0;
+      if (mappedUsage) usage = mappedUsage;
+      const delta = parsed.choices?.[0]?.delta;
+      if (!delta) return;
+      if (typeof delta.content === "string") text += delta.content;
+      if (typeof delta.audio?.data === "string" && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
+      if (typeof delta.audio?.transcript === "string" && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+    };
     for (; ; ) {
       this.assertNotStopped(requestId);
       const { done, value } = await reader.read();
@@ -2448,21 +2593,19 @@ ${mythraRuntimeVersionLine()}` : provider.systemPrompt
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? "";
       for (const event of events) {
-        if (!event.trim()) continue;
-        const parsed = parseOpenRouterSseEvent(event);
-        if (!parsed) continue;
-        const mappedUsage = parsed.usage ? mapCompletionUsage(parsed.usage) : void 0;
-        if (mappedUsage) usage = mappedUsage;
-        const delta = parsed.choices?.[0]?.delta;
-        if (!delta) continue;
-        if (typeof delta.content === "string") text += delta.content;
-        if (typeof delta.audio?.data === "string" && delta.audio.data.length > 0) audioChunks.push(delta.audio.data);
-        if (typeof delta.audio?.transcript === "string" && delta.audio.transcript.length > 0) transcript += delta.audio.transcript;
+        handleEvent(event);
       }
+    }
+    buffer += decoder.decode();
+    for (const event of buffer.split(/\r?\n\r?\n/)) {
+      handleEvent(event);
     }
     return { audioChunks, transcript, text, usage };
   }
   async runAudioGenerationStream(settings, window, requestId, model, apiMessages, controller, conversationId) {
+    if (settings.selectedProvider !== "openrouter") {
+      throw new Error("Music generation is currently supported for OpenRouter models only.");
+    }
     let result = await this.collectAudioGenerationChunks(settings, requestId, model, apiMessages, controller, ["text", "audio"]);
     this.assertNotStopped(requestId);
     if (result.audioChunks.length === 0) {
@@ -2554,22 +2697,26 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     }
     const provider = settings.providers.openrouter;
     const baseUrl = normalizeBaseUrl("openrouter", provider.baseUrl);
-    const headers = {
+    const authHeaders = {
       Authorization: `Bearer ${provider.apiKey}`,
-      "Content-Type": "application/json",
       "HTTP-Referer": provider.appUrl || "https://example.local",
       "X-OpenRouter-Title": provider.appName || "Mythra"
+    };
+    const jsonHeaders = {
+      ...authHeaders,
+      "Content-Type": "application/json"
     };
     const signal = mergeStreamDeadline(controller, resolveStreamChatWallMs());
     this.emitActivity(window, requestId, "tool", "Submitting video generation job.");
     const submitResponse = await fetch(`${baseUrl}/videos`, {
       method: "POST",
-      headers,
+      headers: jsonHeaders,
       body: JSON.stringify({ model, prompt }),
       signal
     });
     if (!submitResponse.ok) {
-      throw new Error(`Video generation request failed (${submitResponse.status}).`);
+      const detail = await responseErrorDetail(submitResponse);
+      throw new Error(`Video generation request failed (${submitResponse.status})${detail ? `: ${detail}` : "."}`);
     }
     const submitted = await submitResponse.json();
     const jobId = submitted.id;
@@ -2577,8 +2724,8 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       throw new Error("Video generation did not return a job id.");
     }
     const pollUrl = submitted.polling_url ? resolveProviderUrl(submitted.polling_url, baseUrl) : `${baseUrl}/videos/${jobId}`;
-    let status = submitted.status ?? "pending";
-    let unsignedUrls = [];
+    let statusResponse = submitted;
+    let status = statusResponse.status ?? "pending";
     let lastError = "";
     for (; ; ) {
       this.assertNotStopped(requestId);
@@ -2588,23 +2735,26 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       }
       this.emitActivity(window, requestId, "tool", `Video generation status: ${status}.`);
       await wait(5e3, signal);
-      const pollResponse = await fetch(pollUrl, { headers, signal });
+      const pollResponse = await fetch(pollUrl, { headers: authHeaders, signal });
       if (!pollResponse.ok) {
-        throw new Error(`Video generation polling failed (${pollResponse.status}).`);
+        const detail = await responseErrorDetail(pollResponse);
+        throw new Error(`Video generation polling failed (${pollResponse.status})${detail ? `: ${detail}` : "."}`);
       }
       const polled = await pollResponse.json();
-      status = polled.status ?? status;
-      unsignedUrls = Array.isArray(polled.unsigned_urls) ? polled.unsigned_urls.filter((url) => typeof url === "string") : [];
+      statusResponse = polled;
+      status = statusResponse.status ?? status;
       lastError = typeof polled.error === "string" ? polled.error : "";
     }
     this.emitActivity(window, requestId, "tool", "Downloading generated video.");
-    const contentUrl = unsignedUrls[0] ?? `${baseUrl}/videos/${jobId}/content`;
+    const unsignedUrls = Array.isArray(statusResponse.unsigned_urls) ? statusResponse.unsigned_urls.filter((url) => typeof url === "string") : [];
+    const contentUrl = unsignedUrls[0] ? resolveProviderUrl(unsignedUrls[0], baseUrl) : `${baseUrl}/videos/${jobId}/content?index=0`;
     const videoResponse = await fetch(contentUrl, {
-      headers: unsignedUrls[0] ? void 0 : headers,
+      headers: shouldSendProviderAuthHeader(contentUrl, baseUrl) ? authHeaders : void 0,
       signal
     });
     if (!videoResponse.ok) {
-      throw new Error(`Generated video download failed (${videoResponse.status}).`);
+      const detail = await responseErrorDetail(videoResponse);
+      throw new Error(`Generated video download failed (${videoResponse.status})${detail ? `: ${detail}` : "."}`);
     }
     const mimeType = videoResponse.headers.get("content-type")?.split(";")[0]?.trim() || "video/mp4";
     const bytes = Buffer.from(await videoResponse.arrayBuffer());
@@ -2794,18 +2944,15 @@ ${text}` : "The model did not return an image file. Try again or choose another 
     };
   }
   buildCurrentTimeTool() {
-    return {
-      type: "function",
-      function: {
-        name: "get_current_time",
-        description: "Return the current date and time from the user’s local machine clock, including local timezone, UTC timestamp, weekday, and UTC offset. Call this whenever the answer depends on current time/date.",
-        parameters: {
-          type: "object",
-          properties: {},
-          additionalProperties: false
-        }
+    return defineFunctionTool(
+      "get_current_time",
+      "Return the current date and time from the user’s local machine clock, including local timezone, UTC timestamp, weekday, and UTC offset. Call this whenever the answer depends on current time/date.",
+      {
+        type: "object",
+        properties: {},
+        additionalProperties: false
       }
-    };
+    );
   }
   buildSearchChatHistoryTool() {
     return {
@@ -3500,7 +3647,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
       runtime.wizardId ? "Wizard prompt edits (set_wizard_system_prompt) always use the built-in before/after approval dialog regardless of global Tool access." : "",
       runtime.wizardId ? runtime.wizardAllowOutsideWorkspace ? "Wizard **Allow paths outside workspace** is ON: read/write/replace/insert/rename/delete/get_file_outline may target ../ segments or absolute local paths (cloud-sync folders remain blocked). list_files, search_symbols, apply_patch, get_git_diff, run_tests, and run_command stay scoped to this Wizard’s workspace folder only." : "Wizard path-based file tools default to this workspace folder only. If the user wants reads/writes elsewhere on disk (another Wizard folder, home directory, etc.), tell them to enable **Allow paths outside workspace** for this Wizard in Inspector → Wizard settings. Until then Mythra rejects paths outside the workspace—even with approval. To reuse another Wizard’s docs without that setting, suggest copying files here or opening that Wizard’s session." : "",
       runtime.nexusTeamWorkspaces?.length ? "Nexus teammate Wizard workspaces are NOT auto-loaded into this prompt. You have read-only tools to inspect teammate identity/memory/docs on demand: list_nexus_teammate_workspaces and read_nexus_teammate_file. These tools never grant write access to teammate Wizard folders; normal file write tools still target only the shared Nexus workspace." : "",
-      `In one user message you may get several model turns: use tools when needed, then reply in plain language. Step cap per message: about ${settings.agent.maxAutoSteps} tool rounds.`,
+      "In one user message you may get several model turns: use tools when needed, then reply in plain language. Mythra does not impose a tool-round cap; continue until the work is done or the user presses Stop.",
       "If the user asks what you can do, say you can both chat and (when it helps) use the listed tools on the open workspace—without sounding like you will always run a task.",
       ...settings.ui.webSearch ? [mythraWebSearchToolRoutingHint] : [],
       "Visible workspace entries (truncated):",
@@ -3625,8 +3772,7 @@ ${text}` : "The model did not return an image file. Try again or choose another 
           },
           agentAutonomy: {
             fullAccessMode: settings.agent.fullAccess,
-            continueUntilDone: settings.agent.autoContinue,
-            autoStepLimit: settings.agent.maxAutoSteps
+            toolRounds: "uncapped until the model finishes, the provider errors, or the user presses Stop"
           },
           settingsUi: {
             exactOrder: [
@@ -4456,7 +4602,7 @@ ${truncate(patch, 2500)}`
         const path = String(args.path ?? "");
         const search = String(args.search ?? "");
         const replacement = String(args.replacement ?? "");
-        const replaceAll = Boolean(args.replace_all);
+        const replaceAll = coerceToolBoolean(args.replace_all);
         if (!path) throw new Error("replace_in_file requires a path.");
         const file = await this.workspaceService.openFile(workspaceRoot, path, wizardAllowOutside);
         let textDiff;
@@ -4616,7 +4762,7 @@ This cannot be undone from the app.`
           throw new Error("The search_symbols tool is disabled in settings.");
         }
         const query = String(args.query ?? "");
-        const limit = typeof args.limit === "number" ? Math.max(1, Math.min(200, args.limit)) : 50;
+        const limit = safeChatToolLimit(args.limit, 50, 200);
         return JSON.stringify({ ok: true, results: await this.workspaceService.searchSymbols(workspaceRoot, query, limit) }, null, 2);
       }
       case "get_file_outline": {
@@ -4997,13 +5143,11 @@ const defaultSettings = {
     allowModelSystemPrompt: false
   },
   agent: {
-    fullAccess: false,
-    autoContinue: true,
-    maxAutoSteps: 24
+    fullAccess: false
   },
   ui: {
     themeId: "neon-grid",
-    sessionMode: "agent",
+    sessionMode: "talk",
     webSearch: false,
     showOpenRouterCredits: false,
     showModelOutputCosts: true,
@@ -5161,8 +5305,7 @@ const mergeSettings = (saved) => syncProviderSystemPromptFields({
     ...saved?.tools
   },
   agent: {
-    ...defaultSettings.agent,
-    ...saved?.agent
+    fullAccess: typeof saved?.agent?.fullAccess === "boolean" ? saved.agent.fullAccess : defaultSettings.agent.fullAccess
   },
   ui: {
     ...defaultSettings.ui,
@@ -5224,14 +5367,104 @@ class SettingsStore {
     return synced;
   }
 }
-const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra-Releases/releases?per_page=100";
+const defaultData = () => ({
+  version: 1,
+  snippets: [],
+  projectSettings: {},
+  toolHistory: [],
+  testRuns: []
+});
+const HISTORY_LIMIT = 500;
+const TEST_RUN_LIMIT = 100;
+class ProductivityStore {
+  path = join$1(app.getPath("userData"), "mythra-productivity.json");
+  data = null;
+  async loadData() {
+    if (this.data) return this.data;
+    try {
+      const parsed = JSON.parse(await readFile(this.path, "utf8"));
+      this.data = {
+        ...defaultData(),
+        ...parsed,
+        snippets: Array.isArray(parsed.snippets) ? parsed.snippets : [],
+        projectSettings: parsed.projectSettings && typeof parsed.projectSettings === "object" ? parsed.projectSettings : {},
+        toolHistory: Array.isArray(parsed.toolHistory) ? parsed.toolHistory : [],
+        testRuns: Array.isArray(parsed.testRuns) ? parsed.testRuns : []
+      };
+    } catch {
+      this.data = defaultData();
+    }
+    return this.data;
+  }
+  async saveData(data) {
+    this.data = data;
+    await mkdir(dirname(this.path), { recursive: true });
+    await writeFile(this.path, JSON.stringify(data), "utf8");
+  }
+  async listPromptSnippets() {
+    const data = await this.loadData();
+    return [...data.snippets].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  async savePromptSnippet(snippet) {
+    const data = await this.loadData();
+    const next = data.snippets.filter((item) => item.id !== snippet.id);
+    next.push(snippet);
+    await this.saveData({ ...data, snippets: next });
+    return snippet;
+  }
+  async deletePromptSnippet(id) {
+    const data = await this.loadData();
+    await this.saveData({ ...data, snippets: data.snippets.filter((item) => item.id !== id) });
+    return true;
+  }
+  async getProjectSettings(workspaceRoot) {
+    const data = await this.loadData();
+    return data.projectSettings[workspaceRoot] ?? {
+      workspaceRoot,
+      defaultTestCommand: "npm test",
+      notes: "",
+      updatedAt: Date.now()
+    };
+  }
+  async saveProjectSettings(settings) {
+    const data = await this.loadData();
+    const next = { ...settings, updatedAt: Date.now() };
+    await this.saveData({
+      ...data,
+      projectSettings: { ...data.projectSettings, [next.workspaceRoot]: next }
+    });
+    return next;
+  }
+  async appendToolHistory(entry) {
+    const data = await this.loadData();
+    const toolHistory = [entry, ...data.toolHistory].slice(0, HISTORY_LIMIT);
+    await this.saveData({ ...data, toolHistory });
+    return entry;
+  }
+  async listToolHistory(limit = 100) {
+    const data = await this.loadData();
+    return data.toolHistory.slice(0, Math.max(1, Math.min(HISTORY_LIMIT, Math.floor(limit))));
+  }
+  async saveTestRun(run) {
+    const data = await this.loadData();
+    const testRuns = [run, ...data.testRuns.filter((item) => item.id !== run.id)].slice(0, TEST_RUN_LIMIT);
+    await this.saveData({ ...data, testRuns });
+    return run;
+  }
+  async listTestRuns(workspaceRoot, limit = 25) {
+    const data = await this.loadData();
+    const rows = workspaceRoot ? data.testRuns.filter((run) => run.workspaceRoot === workspaceRoot) : data.testRuns;
+    return rows.slice(0, Math.max(1, Math.min(TEST_RUN_LIMIT, Math.floor(limit))));
+  }
+}
+const RELEASES_API_URL = "https://api.github.com/repos/m17h/Mythra/releases?per_page=100";
 const RELEASE_NOTES_CACHE_FILE = "release-notes.json";
 const APP_UPDATE_CONFIG_FILE = "app-update.yml";
 const { autoUpdater } = electronUpdater;
 const UPDATE_FEED = {
   provider: "github",
   owner: "m17h",
-  repo: "Mythra-Releases",
+  repo: "Mythra",
   private: false
 };
 function releaseNotesCachePath() {
@@ -5778,6 +6011,37 @@ const walkFiles = async (root, current, bucket, depth = 0) => {
     }
   }
 };
+async function listWorkspaceFileEntriesFast(root) {
+  try {
+    const result = await execFileAsync(
+      "rg",
+      [
+        "--files",
+        "--hidden",
+        "--glob",
+        "!.git",
+        "--glob",
+        "!node_modules",
+        "--glob",
+        "!.next",
+        "--glob",
+        "!dist",
+        "--glob",
+        "!out",
+        "--glob",
+        "!build",
+        "--glob",
+        "!coverage"
+      ],
+      { cwd: root, maxBuffer: 2e6 }
+    );
+    return result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean).slice(0, MAX_LIST_ENTRIES).map((path) => ({ path, type: "file" }));
+  } catch {
+    const bucket = [];
+    await walkFiles(root, root, bucket);
+    return bucket.filter((entry) => entry.type === "file");
+  }
+}
 const RASTER_IMAGE_EXT = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -6471,7 +6735,7 @@ class WorkspaceService {
   async listRecentFiles(root, limit = 25) {
     const resolvedRoot = resolve(root);
     const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    const files = (await this.listFiles(resolvedRoot)).filter((entry) => entry.type === "file");
+    const files = await listWorkspaceFileEntriesFast(resolvedRoot);
     const rows = [];
     for (const entry of files) {
       try {
@@ -6539,12 +6803,20 @@ class WorkspaceService {
     }
     return this.getChanges(root);
   }
+  async discardPatch(root, patch) {
+    if (!patch.trim()) {
+      throw new Error("Patch cannot be empty.");
+    }
+    const cwd = resolve(root);
+    await spawnWithInput("git", ["apply", "-R", "--whitespace=nowarn", "-"], cwd, patch);
+    return this.getChanges(root);
+  }
   async searchSymbols(root, query, limit = 50) {
     const q = query.trim().toLowerCase();
     if (!q) {
       throw new Error("search_symbols requires a query.");
     }
-    const files = (await this.listFiles(root)).filter((entry) => entry.type === "file").slice(0, MAX_SEARCH_FILES);
+    const files = (await listWorkspaceFileEntriesFast(resolve(root))).slice(0, MAX_SEARCH_FILES);
     const results = [];
     for (const entry of files) {
       if (results.length >= limit) break;
@@ -6755,6 +7027,7 @@ function imageMimeFromFilename(filename) {
 }
 const settingsStore = new SettingsStore();
 const chatStore = new ChatStore();
+const productivityStore = new ProductivityStore();
 const workspaceService = new WorkspaceService();
 const commandService = new CommandService();
 let mainWindow = null;
@@ -6831,6 +7104,12 @@ const assertTrustedWorkspaceRoot = async (root) => {
   }
   if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
   throw new Error("Workspace is not trusted. Use Open workspace or a saved Wizard/Nexus workspace to attach it.");
+};
+const assertRegisteredWizardWorkspaceRoot = async (root) => {
+  const usable = await workspaceService.assertUsableLocalWorkspace(root);
+  const key = await workspaceRootKey(usable);
+  if ((await registeredWorkspaceRootKeys()).has(key)) return usable;
+  throw new Error("Wizard workspace is not registered.");
 };
 const assertRegisteredOrPendingDeleteRoot = async (root) => {
   const usable = await workspaceService.assertUsableLocalWorkspace(root);
@@ -7125,26 +7404,58 @@ const assertActiveWorkspace = (root) => {
     throw new Error("Workspace is not active.");
   }
 };
-const sanitizeRuntime = (runtime) => {
+const sanitizeRuntime = async (runtime) => {
   const workspaceRoot = runtime.workspaceRoot && activeWorkspaceRoot && resolve(runtime.workspaceRoot) === resolve(activeWorkspaceRoot) ? activeWorkspaceRoot : void 0;
   const activeFilePath = workspaceRoot && runtime.activeFilePath && workspaceService.isInsideRoot(workspaceRoot, runtime.activeFilePath) ? runtime.activeFilePath : void 0;
+  const wizardId = typeof runtime.wizardId === "string" ? runtime.wizardId : void 0;
+  let persistedWizardFullAccess;
+  let persistedWizardAllowOutside;
+  if (wizardId) {
+    try {
+      const wizardChat = await chatStore.loadChat(wizardId);
+      if (wizardChat?.kind === "wizard" && wizardChat.wizard) {
+        persistedWizardFullAccess = Boolean(wizardChat.wizard.fullAccess);
+        persistedWizardAllowOutside = Boolean(wizardChat.wizard.allowOutsideWorkspace);
+      }
+    } catch {
+    }
+  }
+  const nexusId = typeof runtime.nexusId === "string" ? runtime.nexusId : void 0;
+  let persistedNexus;
+  if (nexusId) {
+    try {
+      const nexusChat = await chatStore.loadChat(nexusId);
+      if (nexusChat?.kind === "nexus" && nexusChat.nexus) {
+        persistedNexus = nexusChat.nexus;
+      }
+    } catch {
+    }
+  }
   return {
     workspaceRoot,
     activeFilePath,
     conversationId: runtime.conversationId,
-    wizardId: typeof runtime.wizardId === "string" ? runtime.wizardId : void 0,
+    wizardId,
+    nexusId,
     wizardName: typeof runtime.wizardName === "string" ? runtime.wizardName : void 0,
     wizardSystemPrompt: typeof runtime.wizardSystemPrompt === "string" ? runtime.wizardSystemPrompt : void 0,
-    wizardFullAccess: typeof runtime.wizardFullAccess === "boolean" ? runtime.wizardFullAccess : void 0,
-    wizardAllowOutsideWorkspace: typeof runtime.wizardAllowOutsideWorkspace === "boolean" ? runtime.wizardAllowOutsideWorkspace : void 0,
-    nexusTeamFullAccess: typeof runtime.nexusTeamFullAccess === "boolean" ? runtime.nexusTeamFullAccess : void 0,
+    wizardFullAccess: wizardId ? persistedWizardFullAccess : void 0,
+    wizardAllowOutsideWorkspace: wizardId ? persistedWizardAllowOutside : void 0,
+    nexusTeamFullAccess: nexusId ? Boolean(persistedNexus?.teamFullAccess) : typeof runtime.nexusTeamFullAccess === "boolean" ? runtime.nexusTeamFullAccess : void 0,
     nexusTeamWorkspaces: Array.isArray(runtime.nexusTeamWorkspaces) ? runtime.nexusTeamWorkspaces.map((member) => ({
       wizardId: typeof member?.wizardId === "string" ? member.wizardId : "",
       wizardName: typeof member?.wizardName === "string" ? member.wizardName : "",
       role: member?.role === "leader" ? "leader" : "member",
       workspaceRoot: typeof member?.workspaceRoot === "string" ? member.workspaceRoot : ""
-    })).filter((member) => member.wizardId.trim() && member.wizardName.trim() && member.workspaceRoot.trim()) : void 0,
-    nexusLeaderApprovesTools: typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
+    })).filter((member) => member.wizardId.trim() && member.wizardName.trim() && member.workspaceRoot.trim()).filter((member) => {
+      if (!persistedNexus) return true;
+      const memberIds = /* @__PURE__ */ new Set([
+        persistedNexus.leaderWizardId,
+        ...persistedNexus.members.map((m) => m.wizardId)
+      ]);
+      return memberIds.has(member.wizardId);
+    }) : void 0,
+    nexusLeaderApprovesTools: nexusId ? Boolean(persistedNexus?.leaderApprovesTools) && !Boolean(persistedNexus?.teamFullAccess) : typeof runtime.nexusLeaderApprovesTools === "boolean" ? runtime.nexusLeaderApprovesTools : void 0,
     nexusLeaderProvider: runtime.nexusLeaderProvider === "lmstudio" || runtime.nexusLeaderProvider === "openrouter" || runtime.nexusLeaderProvider === "ollama" ? runtime.nexusLeaderProvider : void 0,
     nexusLeaderModel: typeof runtime.nexusLeaderModel === "string" ? runtime.nexusLeaderModel : void 0,
     nexusLeaderName: typeof runtime.nexusLeaderName === "string" ? runtime.nexusLeaderName : void 0,
@@ -7316,6 +7627,12 @@ ipcMain.handle("workspace:changes", async (_event, root) => {
   assertActiveWorkspace(root);
   return workspaceService.getChanges(root);
 });
+ipcMain.handle("workspace:discard-patch", async (_event, root, patch) => {
+  assertActiveWorkspace(root);
+  const changes = await workspaceService.discardPatch(root, patch);
+  mainWindow?.webContents.send("workspace:changed", { root });
+  return changes;
+});
 ipcMain.handle(
   "wizard:recommended-workspace",
   async (_event, name) => workspaceService.getRecommendedWizardWorkspace(name)
@@ -7391,38 +7708,21 @@ ipcMain.handle("tool:approval-response", async (_event, id, approved) => {
   pendingToolApprovals.delete(id);
   resolveApproval(Boolean(approved));
 });
-ipcMain.handle("wizard:list-documents", async (_event, root) => workspaceService.listWizardWorkspaceDocuments(root));
+ipcMain.handle("wizard:list-documents", async (_event, root) => {
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
+  return workspaceService.listWizardWorkspaceDocuments(resolvedRoot);
+});
 ipcMain.handle("wizard:read-document", async (_event, root, target) => {
-  const resolvedRoot = resolve(root.trim());
-  const chats = await chatStore.listChats();
-  const normalizedRoot = resolvedRoot.toLowerCase();
-  const isKnownWizardRoot = chats.some(
-    (chat) => {
-      if (chat.kind !== "wizard" || !chat.wizard) return false;
-      if (chat.wizard.workspaceRoot && resolve(chat.wizard.workspaceRoot) === resolvedRoot) return true;
-      const expectedFolder = sanitizeWizardFolderSegment(chat.wizard.name).toLowerCase();
-      return (chat.wizard.documents ?? []).some((doc) => {
-        let dir = dirname(resolve(doc.path));
-        for (let depth = 0; depth < 16; depth += 1) {
-          if (resolve(dir) === resolvedRoot && basename(dir).toLowerCase() === expectedFolder) return true;
-          const parent = dirname(dir);
-          if (parent === dir) break;
-          dir = parent;
-        }
-        return false;
-      });
-    }
-  );
-  if (!isKnownWizardRoot || normalizedRoot.includes("/library/cloudstorage/")) {
-    throw new Error("Wizard workspace is not registered.");
-  }
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
   return workspaceService.openFile(resolvedRoot, target, false);
 });
-ipcMain.handle(
-  "wizard:list-export-files",
-  async (_event, root) => workspaceService.listWizardExportRelativeFiles(root)
-);
+ipcMain.handle("wizard:list-export-files", async (_event, root) => {
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(root);
+  return workspaceService.listWizardExportRelativeFiles(resolvedRoot);
+});
 ipcMain.handle("wizard:export-mythwiz", async (event, req) => {
+  const resolvedRoot = await assertRegisteredWizardWorkspaceRoot(req.workspaceRoot);
+  req = { ...req, workspaceRoot: resolvedRoot };
   const winSafe = BrowserWindow.fromWebContents(event.sender);
   const baseName = sanitizeWizardFolderSegment(req.wizardDisplayName.trim() || "wizard");
   const opts = {
@@ -7693,7 +7993,7 @@ ipcMain.handle(
       throw new Error("Main window is unavailable.");
     }
     try {
-      await modelService.streamChat(event, mainWindow, requestId, sanitizeChatSettings(settings), messages, sanitizeRuntime(runtime));
+      await modelService.streamChat(event, mainWindow, requestId, sanitizeChatSettings(settings), messages, await sanitizeRuntime(runtime));
       return { ok: true };
     } catch (error) {
       modelService.sendError(mainWindow, requestId, error);
@@ -7702,18 +8002,33 @@ ipcMain.handle(
   }
 );
 ipcMain.handle("chat:stop", async (_event, requestId) => modelService.stopRequest(requestId));
+const assertCommandExecutionAllowed = (cwd) => {
+  if (!currentSettings.tools.commandDeck) {
+    throw new Error("Command deck is disabled in Settings → Tool access.");
+  }
+  if (cwd == null) {
+    throw new Error("Commands must run inside the active workspace.");
+  }
+  assertActiveWorkspace(cwd);
+};
 ipcMain.handle("commands:run", async (_event, command, cwd) => {
   if (!mainWindow) {
     throw new Error("Main window is unavailable.");
   }
-  if (cwd != null) {
-    assertActiveWorkspace(cwd);
-  }
+  assertCommandExecutionAllowed(cwd);
   return commandService.run(mainWindow, command, cwd);
 });
 ipcMain.handle("commands:kill", async (_event, jobId) => commandService.kill(jobId));
+ipcMain.handle("commands:run-capture", async (_event, command, cwd) => {
+  assertCommandExecutionAllowed(cwd);
+  const startedAt = Date.now();
+  const result = await commandService.runAndCapture(command, cwd, 12e4);
+  return { ...result, startedAt, finishedAt: Date.now() };
+});
 ipcMain.handle("chats:list", async () => chatStore.listChats());
 ipcMain.handle("chats:load", async (_event, id) => chatStore.loadChat(id));
+ipcMain.handle("chats:search", async (_event, query, limit) => chatStore.searchChats(query, limit));
+ipcMain.handle("chats:cost-summary", async () => chatStore.costSummary());
 ipcMain.handle("chats:save", async (_event, chat) => {
   await assertSavedChatWorkspaceRootsAreTrusted(chat);
   return chatStore.saveChat(chat);
@@ -7728,3 +8043,36 @@ ipcMain.handle("chats:delete", async (_event, id) => {
   }
   return chatStore.deleteChat(id);
 });
+ipcMain.handle("productivity:snippets:list", async () => productivityStore.listPromptSnippets());
+ipcMain.handle(
+  "productivity:snippets:save",
+  async (_event, snippet) => productivityStore.savePromptSnippet(snippet)
+);
+ipcMain.handle(
+  "productivity:snippets:delete",
+  async (_event, id) => productivityStore.deletePromptSnippet(id)
+);
+ipcMain.handle("productivity:project-settings:get", async (_event, workspaceRoot) => {
+  assertActiveWorkspace(workspaceRoot);
+  return productivityStore.getProjectSettings(workspaceRoot);
+});
+ipcMain.handle("productivity:project-settings:save", async (_event, settings) => {
+  assertActiveWorkspace(settings.workspaceRoot);
+  return productivityStore.saveProjectSettings(settings);
+});
+ipcMain.handle(
+  "productivity:tool-history:list",
+  async (_event, limit) => productivityStore.listToolHistory(limit)
+);
+ipcMain.handle(
+  "productivity:tool-history:append",
+  async (_event, entry) => productivityStore.appendToolHistory(entry)
+);
+ipcMain.handle(
+  "productivity:test-runs:list",
+  async (_event, workspaceRoot, limit) => productivityStore.listTestRuns(workspaceRoot, limit)
+);
+ipcMain.handle(
+  "productivity:test-runs:save",
+  async (_event, run) => productivityStore.saveTestRun(run)
+);

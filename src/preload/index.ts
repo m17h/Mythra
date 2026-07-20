@@ -17,6 +17,7 @@ import type {
   ModelListOptions,
   NexusSetupRequest,
   NexusSetupResult,
+  NexusTeamWorkspaceReference,
   OpenFile,
   OpenRouterCreditsResult,
   ProjectSettings,
@@ -133,11 +134,13 @@ const electronAPI = {
       activeFilePath?: string;
       conversationId?: string;
       wizardId?: string;
+      nexusId?: string;
       wizardName?: string;
       wizardSystemPrompt?: string;
       wizardFullAccess?: boolean;
       wizardAllowOutsideWorkspace?: boolean;
       nexusTeamFullAccess?: boolean;
+      nexusTeamWorkspaces?: NexusTeamWorkspaceReference[];
       nexusLeaderApprovesTools?: boolean;
       nexusLeaderProvider?: ProviderKind;
       nexusLeaderModel?: string;

@@ -32,6 +32,8 @@ const providerOptions: Array<{ value: ProviderKind; label: string }> = [
   { value: 'ollama', label: 'Ollama' }
 ];
 
+const pathLabel = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
+
 /** Preferred default when creating a Wizard (OpenRouter catalog id: Gemini 3.1 Flash Lite Preview). */
 const WIZARD_SETUP_DEFAULT_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 
@@ -40,18 +42,18 @@ const ONBOARDING_SYSTEM_TAIL =
 
 const defaultPrompt = (name: string) => `You are ${name || 'this Wizard'}, a persistent Mythra Wizard.
 
-Use your private workspace as your long-term home base:
+Use your private context folder as your long-term home base:
 - identity.md defines your name, role, specialty, and purpose.
 - personality.md defines your tone, style, values, boundaries, and working preferences.
 - tools.md defines tool preferences, workflows, and project conventions.
 - memory.md stores durable facts the user wants you to remember.
 - corrections.md stores mistakes, corrections, and lessons learned.
 - Mythra only seeds those five core files—not todo.md or other defaults. Add task lists or extra guides as new .md files if the user wants them.
-- File paths default to your workspace folder only; enable **Allow paths outside workspace** in Inspector → Wizard settings if cross-folder reads/writes are needed (local disks only).
+- File tools default to your context folder only; the user can explicitly allow other local paths when needed.
 
-Before making important decisions, read the relevant core documents. Keep your memory and corrections current when the user teaches you something durable. Work in Agent behavior by default: inspect files, use tools deliberately, and be explicit about what changed.
+Before making important decisions, use the relevant core documents. Keep memory and corrections current when the user teaches you something durable. Use enabled tools deliberately and be explicit about meaningful actions.
 
-Good fits for a Wizard include: learning the user’s writing style, maintaining a structured note system in this folder, specializing in one codebase or topic, or running recurring research/meeting workflows—help the user shape that in identity.md, personality.md, and extra markdown.
+Good fits for a Wizard include learning the user’s writing style, teaching from a body of learning material, maintaining structured knowledge, specializing in a topic, or supporting recurring research and planning workflows.
 
 At the start of every message in a Wizard chat, Mythra injects every Markdown (.md) file from your workspace into context (core docs first). Keep extra guides or notes as additional .md files if you want them always loaded.`;
 
@@ -303,8 +305,8 @@ export function WizardSetupModal({
                 <h3>{importedMythwiz ? 'Finish importing Wizard' : 'Create a Wizard'}</h3>
                 <p>
                   {importedMythwiz
-                    ? 'Pick provider, model, and where to store this Wizard’s workspace. Imported bundle content is applied when you create.'
-                    : 'A Wizard is a named AI with its own model, local workspace, memory documents, and system prompt.'}
+                    ? 'Pick a provider, model, and where to store this Wizard’s context. Imported content is applied when you create.'
+                    : 'A Wizard is a named AI with its own model, persistent Markdown context, memory, and system prompt.'}
                 </p>
 
                 <div className="wizard-setup__grid">
@@ -320,81 +322,80 @@ export function WizardSetupModal({
 
                   <div className="field wizard-setup__wide">
                     <span>Model</span>
-                    {modelOptions.length ? (
-                      <ModelSearch
-                        favoriteIds={settings?.ui.favoriteModels?.[provider] ?? defaultSettings.ui.favoriteModels[provider]}
-                        models={modelOptions}
-                        onChange={(next) => setModel(next)}
-                        onToggleFavorite={(id) => {
-                          if (!settings || !onSettingsChangeForFavorites || !onPresetPersist) return;
-                          const k = provider;
-                          const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
-                          const nextSet = new Set(baseFav[k] ?? []);
-                          if (nextSet.has(id)) nextSet.delete(id);
-                          else nextSet.add(id);
-                          const next: AppSettings = {
-                            ...settings,
-                            ui: {
-                              ...settings.ui,
-                              favoriteModels: {
-                                ...baseFav,
-                                [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
-                              }
+                    <ModelSearch
+                      disabled={loadingModels || modelOptions.length === 0}
+                      emptyMessage="No models available for this provider"
+                      favoriteIds={settings?.ui.favoriteModels?.[provider] ?? defaultSettings.ui.favoriteModels[provider]}
+                      models={modelOptions}
+                      onChange={(next) => setModel(next)}
+                      onToggleFavorite={(id) => {
+                        if (!settings || !onSettingsChangeForFavorites || !onPresetPersist) return;
+                        const k = provider;
+                        const baseFav = settings.ui.favoriteModels ?? defaultSettings.ui.favoriteModels;
+                        const nextSet = new Set(baseFav[k] ?? []);
+                        if (nextSet.has(id)) nextSet.delete(id);
+                        else nextSet.add(id);
+                        const next: AppSettings = {
+                          ...settings,
+                          ui: {
+                            ...settings.ui,
+                            favoriteModels: {
+                              ...baseFav,
+                              [k]: [...nextSet].sort((a, b) => a.localeCompare(b))
                             }
-                          };
-                          onSettingsChangeForFavorites(next);
-                          void onPresetPersist(next);
-                        }}
-                        value={model}
-                        portalDropdown
-                      />
-                    ) : (
-                      <input
-                        disabled
-                        placeholder={loadingModels ? 'Loading models...' : 'No models available'}
-                        value=""
-                        readOnly
-                      />
-                    )}
+                          }
+                        };
+                        onSettingsChangeForFavorites(next);
+                        void onPresetPersist(next);
+                      }}
+                      placeholder={loadingModels ? 'Loading models...' : 'Select a model'}
+                      value={model}
+                      portalDropdown
+                    />
                   </div>
 
-                  <div className="wizard-setup__wide wizard-setup__choice-block">
-                    <div className="field">
-                      <span>Wizards folder</span>
-                      <div className="wizard-setup__workspace-actions">
-                        <button className="btn btn--secondary" onClick={() => void chooseProjectsFolder()} type="button">
-                          Choose folder…
-                        </button>
-                      </div>
-                    </div>
-                    <div className="inline-hint">
-                      Pick one folder that will hold every Wizard&apos;s workspace. Each Wizard is created as a subfolder named
-                      from its title (sanitized). Two Wizards cannot use the same folder name here unless you choose a
-                      different Wizards folder later.
-                    </div>
-                    {wizardProjectsParentFolder ? (
-                      <div className="inline-hint">
-                        <strong>Parent:</strong> {wizardProjectsParentFolder}
-                      </div>
-                    ) : (
-                      <div className="inline-hint">Choose a local folder (cloud-synced paths are blocked).</div>
-                    )}
-                    {workspacePreview ? (
-                      <div className="inline-hint">
-                        <strong>This Wizard:</strong> <code>{workspacePreview}</code>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <label className="field wizard-setup__wide">
-                    <span>Custom Documents</span>
+                  <label className="field wizard-setup__wide wizard-setup__documents-field">
+                    <span>Extra Markdown context</span>
                     <textarea
                       onChange={(e) => setCustomDocsRaw(e.target.value)}
-                      placeholder={'Optional. One Markdown document per line.\nprojects.md\npreferences.md'}
+                      placeholder={'Optional. One document name per line.\nsource-material.md\nwriting-examples.md'}
                       rows={3}
                       value={customDocsRaw}
                     />
                   </label>
+
+                  <details className="wizard-setup__wide wizard-setup__storage" open={!wizardProjectsParentFolder}>
+                    <summary>
+                      <span>Storage location</span>
+                      <small>{wizardProjectsParentFolder ? pathLabel(wizardProjectsParentFolder) : 'Choose a local folder'}</small>
+                    </summary>
+                    <div className="wizard-setup__choice-block">
+                      <div className="field">
+                        <span>Wizard library folder</span>
+                        <div className="wizard-setup__workspace-actions">
+                          <button className="btn btn--secondary" onClick={() => void chooseProjectsFolder()} type="button">
+                            Choose folder…
+                          </button>
+                        </div>
+                      </div>
+                      <div className="inline-hint">
+                        Choose where Mythra should keep your Wizard context folders. Each Wizard gets its own local subfolder
+                        containing the Markdown that defines what it knows.
+                      </div>
+                      {wizardProjectsParentFolder ? (
+                        <div className="inline-hint">
+                          <strong>Parent:</strong> {wizardProjectsParentFolder}
+                        </div>
+                      ) : (
+                        <div className="inline-hint">Choose a local folder (cloud-synced paths are blocked).</div>
+                      )}
+                      {workspacePreview ? (
+                        <div className="inline-hint">
+                          <strong>This Wizard:</strong> <code>{workspacePreview}</code>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
                 </div>
 
                 <div className="wizard-setup__docs">
@@ -413,8 +414,8 @@ export function WizardSetupModal({
                 <h3>Personality &amp; memory</h3>
                 <p>
                   Describe how this Wizard should behave and what it should remember long-term. Your answers seed{' '}
-                  <code>personality.md</code> and <code>memory.md</code> in its workspace. You can refine them anytime in the
-                  editor or ask the Wizard to update them in chat (Agent mode).
+                  <code>personality.md</code> and <code>memory.md</code> in its context folder. You can refine them anytime in
+                  Mythra or ask the Wizard to update them in conversation.
                 </p>
 
                 <div className="wizard-setup__grid">

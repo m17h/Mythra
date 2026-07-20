@@ -1,6 +1,6 @@
 # Mythra Release Process
 
-Mythra is open source, but release downloads are still published manually in the public `m17h/Mythra-Releases` repo so the app updater has a stable place to fetch signed installer assets and metadata.
+Mythra release downloads are published with the public `m17h/Mythra` source repository so the code, release notes, signed installers, and update metadata live together.
 
 ## Release Assets Folder
 
@@ -33,7 +33,7 @@ Release Assets/v 1.0.0/
 5. Create macOS release assets only from that final signed, notarized, stapled `.app`.
 6. Build/create the Windows release asset for the same version.
 7. Place all release assets in the matching `Release Assets/v X.Y.Z/` folder.
-8. The user manually uploads those assets to `https://github.com/m17h/Mythra-Releases`.
+8. Upload those assets to the matching release at `https://github.com/m17h/Mythra/releases`.
 
 Do not create macOS release assets from an unsigned, unnotarized, or pre-stapled app bundle.
 
@@ -57,9 +57,9 @@ The `.dmg` is for direct user downloads. The `.zip` plus `latest-mac.yml` are re
 Mythra checks the public release repo for updates and release notes:
 
 ```text
-https://github.com/m17h/Mythra-Releases
+https://github.com/m17h/Mythra/releases
 ```
 
-Release notes shown in the app come from GitHub Release notes in that public repo. Editing release notes on GitHub does not require rebuilding Mythra.
+Release notes shown in the app come from GitHub Releases in the main repository. Editing release notes on GitHub does not require rebuilding Mythra.
 
-The in-app updater uses Electron updater metadata from the same public release repo. Do not upload only the `.dmg` or only the `.exe`; without the matching `latest-mac.yml` / `latest.yml` metadata and updater asset files, Mythra can detect that a version exists but cannot show download progress, restart, and install it automatically.
+The in-app updater uses Electron updater metadata from the same main repository. Do not upload only the `.dmg` or only the `.exe`; without the matching `latest-mac.yml` / `latest.yml` metadata and updater asset files, Mythra can detect that a version exists but cannot show download progress, restart, and install it automatically.

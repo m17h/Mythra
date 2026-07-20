@@ -22,7 +22,7 @@ export function SessionModeMessageEmbed({ sessionMode, onSessionModeToggle, disa
             onClick={() => {
               if (!isChat) onSessionModeToggle();
             }}
-            title="Chat mode (no tools)"
+            title="Plain chat (tools off)"
             type="button"
           >
             Chat
@@ -33,10 +33,10 @@ export function SessionModeMessageEmbed({ sessionMode, onSessionModeToggle, disa
             onClick={() => {
               if (isChat) onSessionModeToggle();
             }}
-            title="Agent mode (tools & workspace)"
+            title="Tools on"
             type="button"
           >
-            Agent
+            Tools
           </button>
           <span
             className="chat-panel__mode-slider"
